@@ -2,7 +2,7 @@
 
 ## Overview
 This is a Test Orchestration Framework for orchestrating Tests inside of Kubernetes between nodes and clusters. 
-For this we define Which tools we are using for the tests, how the tests are orechestrated which metrics are evaluated in the following. 
+For this we define which tools we are using for the tests, how the tests are orchestrated and which metrics we are using for the evulation and validation. 
 
 
 ## Prerequisites
@@ -10,10 +10,6 @@ For this we define Which tools we are using for the tests, how the tests are ore
 ## Testing Tools
 
 ### iperf2
-
-### iperf3
-
-### irtt
 
 
 ## Metrics
