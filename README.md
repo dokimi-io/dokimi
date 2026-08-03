@@ -19,7 +19,7 @@ Main goals:
 - Automatic value discovery if not clearly defined in robot or YAML (KUBECONFIG, etc)
 - Documentation
     - User Guide 
-    - How Tos (Contribution Guide, Who is what, ...)
+    - How Tos (Contribution Guide, Where is what, ...)
 
         
 
