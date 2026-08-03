@@ -17,6 +17,11 @@ Main goals:
 - Human-readable pass criteria backed by PromQL queries
 - Health Checks before starting tests
 - Automatic value discovery if not clearly defined in robot or YAML (KUBECONFIG, etc)
+- Documentation
+    - User Guide 
+    - How Tos (Contribution Guide, Who is what, ...)
+
+        
 
 Initial focus:
 
@@ -141,7 +146,7 @@ Examples:
 
 ### Exporter Interface
 
-Every test type provides a dedicated exporter.
+Every test type provides a dedicated exporter. In addition to the test type specific exporter, it also uses the [prometheus node exporter](https://github.com/prometheus/node_exporter) for node specific metrics. 
 
 Responsibilities:
 
@@ -405,6 +410,7 @@ libraries/TestOrchestratorLibrary.py
 - Execution errors
 - Throughput
 - Packet loss
+- Number of packets
 - Jitter
 - Latency, where supported
 - Transferred bytes
