@@ -15,6 +15,8 @@ Main goals:
 - YAML configuration where discovery is not sufficient
 - Common interfaces for different test types
 - Human-readable pass criteria backed by PromQL queries
+- Health Checks before starting tests
+- Automatic value discovery if not clearly defined in robot or YAML (KUBECONFIG, etc)
 
 Initial focus:
 
@@ -60,6 +62,7 @@ Required combination:
 - Prometheus as common metrics and query interface
 - Extensible test types and exporters
 - CSV archive for later database storage
+    - interface for multiple storage solution
 - Future cluster-to-cluster support
 
 The project acts as an abstraction layer between Robot Framework, Kubernetes test workloads, exporters and Prometheus.
@@ -132,6 +135,7 @@ Every test type defines:
 Examples:
 
 - `iperf2`
+- `iperf3`
 - `IRTT`
 - `TRex`
 
@@ -154,6 +158,7 @@ Required labels:
 - `source_node`
 - `target_node`
 - `protocol`
+- `start_time`
 
 Example normalized metrics:
 
@@ -249,8 +254,12 @@ sequenceDiagram
 
 Supported modes:
 
-- `explicit`
+- `one-to-one`
   - User defines every source and target
+- `one-to-many`
+  - User defined source and multiple defined or number of targets
+- `many-to-one`
+  - User defined multiple sources and one defined target
 - `all-to-all`
   - Every selected node tests every other selected node
 - `one-to-all`
@@ -466,6 +475,12 @@ Result artifacts:
 - Normalized CSV archive for later database storage
 
 ## Roadmap
+
+### Phase 0:
+- Deploy the kube-prometheus-stack to the cluster if no prometheus is already deployed
+- Deploy one sender pod and one receiver pod with running `iperf2`
+- Get the metrics from the sender and receiver
+- Evaluate the metrics
 
 ### Phase 1: Robot-Driven Single-Cluster Test
 
