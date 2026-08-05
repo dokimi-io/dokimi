@@ -162,6 +162,9 @@ Required labels:
 - `test_type`
 - `source_node`
 - `target_node`
+- `source_pod`
+- `target_pod`
+- `cpu_id`
 - `protocol`
 - `start_time`
 
@@ -421,6 +424,7 @@ libraries/TestOrchestratorLibrary.py
 Pod metrics:
 
 - CPU and memory usage
+- used CPU and memory
 - Network throughput
 - Container restarts
 - Scheduling and readiness
@@ -428,6 +432,8 @@ Pod metrics:
 Node metrics:
 
 - CPU and memory usage
+- used CPU and memory
+- Network throughput
 - Interface throughput
 - Packet drops
 - Interface errors
