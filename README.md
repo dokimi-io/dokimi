@@ -555,6 +555,36 @@ overridable per run or per installation. The orchestrator image's digest is reco
 metadata alongside the test-workload digests — a bug in orchestration logic needs to be attributable
 to a specific build, exactly as a bug in a test tool does.
 
+### Choosing the orchestrator image
+
+Precedence, highest first. There is deliberately no configuration file in this chain: the
+configuration-sources decision is still open, and a Milestone-01 precedence rule would be one a
+later decision has to overturn.
+
+| Source | How | Scope |
+| --- | --- | --- |
+| Run override | `--orchestrator-image ghcr.io/example/orchestrator@sha256:…` | one run |
+| Installation override | `TEST_ORCHESTRATOR_IMAGE` | one installation |
+| Release default | baked in at release time, by digest | the released build |
+
+```console
+$ test-orchestrator image
+ghcr.io/test-orchestrator/orchestrator@sha256:…
+  source: release-default
+  digest: sha256:…
+```
+
+A source checkout has no default: it was never published, so there is no digest of *this* code to
+submit, and resolution says so rather than falling back to a tag. Pass an override to run from a
+checkout. An override is used exactly as given — including a tag, which an air-gapped mirror may be
+all that offers — but the run metadata records whether what ran was actually pinned.
+
+Build it locally with:
+
+```console
+$ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
+```
+
 ## Development
 
 | | |

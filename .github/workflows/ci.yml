@@ -69,3 +69,44 @@ jobs:
 
       - name: Core library imports and its tests pass
         run: uv run pytest
+
+  image:
+    name: Orchestrator image builds and runs as non-root
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Single architecture and no push: this job asks whether the image still builds
+      # from the lockfile and still holds the properties ADR-05-08 and ADR-05-04 require.
+      # The release workflow is what publishes, multi-arch and signed.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/orchestrator/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: orchestrator:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The entry point runs
+        run: docker run --rm orchestrator:ci --version
+
+      - name: The container is not root
+        run: |
+          uid="$(docker run --rm --entrypoint id orchestrator:ci -u)"
+          if [ "$uid" = "0" ]; then
+            echo "the orchestrator image runs as root; ADR-05-04 requires non-root."
+            exit 1
+          fi
+          echo "runs as uid $uid."
+
+      # Robot is a runtime dependency of a run's phase 6 (ADR-01-08), so unlike the CLI
+      # distribution, this image must have it.
+      - name: Robot Framework is present in the image
+        run: |
+          docker run --rm --entrypoint python orchestrator:ci \
+            -c "import importlib.metadata as m; print('robotframework', m.version('robotframework'))"

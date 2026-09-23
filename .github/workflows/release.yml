@@ -1,0 +1,199 @@
+# Release: publish the orchestrator image, then build the distribution that points at it.
+#
+# The order is the decision, not an implementation detail. ADR-05-08 requires a released
+# CLI to ship the digest of the image built from its own commit, so the image is built
+# and pushed first, its digest is written into the generated constants file, and only
+# then is the distribution built. The two cannot be released independently — that is a
+# consequence ADR-05-08 accepts explicitly.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push and sign the image (off = build-only rehearsal)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.9.7"
+  IMAGE: ghcr.io/test-orchestrator/orchestrator
+
+jobs:
+  image:
+    name: Build, publish, sign and attest the orchestrator image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # keyless cosign signing and provenance attestation
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide whether this run publishes
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.mode.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      # Tags exist for humans reading the registry. Nothing the CLI submits resolves a
+      # tag: the reference baked into the release below is the digest this step returns.
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/orchestrator/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.mode.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: steps.mode.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image
+        if: steps.mode.outputs.publish == 'true'
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Attest build provenance
+        if: steps.mode.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Report the digest
+        run: |
+          echo "### Orchestrator image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+  distribution:
+    name: Build the CLI distribution against that digest
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # attach the distribution to the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Bake the image digest into the distribution
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          digest = os.environ["DIGEST"]
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise SystemExit(f"not a sha256 digest: {digest!r}")
+
+          path = pathlib.Path("src/test_orchestrator/_image_digest.py")
+          source = path.read_text()
+          patched, count = re.subn(
+              r"^ORCHESTRATOR_IMAGE_DIGEST: str \| None = .*$",
+              f'ORCHESTRATOR_IMAGE_DIGEST: str | None = "{digest}"',
+              source,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
+              raise SystemExit(f"{path} no longer has the assignment this step rewrites")
+          path.write_text(patched)
+          PY
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+
+      # ADR-05-08's requirement, checked rather than assumed: a released CLI resolves its
+      # default image to the digest of the image built from this same commit.
+      - name: Verify the baked-in default resolves to that digest
+        run: |
+          uv sync --locked
+          uv run python - <<'PY'
+          import os
+
+          from test_orchestrator.images import IMAGE_REPOSITORY, ImageSource, resolve_image
+
+          expected = f"{IMAGE_REPOSITORY}@{os.environ['DIGEST']}"
+          image = resolve_image(env={})
+          assert image.reference == expected, f"{image.reference} != {expected}"
+          assert image.source is ImageSource.RELEASE_DEFAULT
+          assert image.digest == os.environ["DIGEST"]
+          print(f"default resolves to {image.reference}")
+          PY
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+
+      - run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution
+          path: dist/
+
+      # A tag push does not create a release on its own, so create one if the tag does
+      # not have one yet. The image reference goes in the notes: the digest is the part
+      # of a release someone actually needs when pinning it in a cluster.
+      - name: Attach the distribution to the release
+        if: github.event_name == 'push' && needs.image.outputs.publish == 'true'
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --generate-notes \
+              --notes "Orchestrator image: \`${IMAGE}@${DIGEST}\`"
+          fi
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ needs.image.outputs.digest }}
