@@ -9,7 +9,10 @@ permissions:
   contents: read
 
 env:
-  UV_VERSION: "0.9.7"
+  # 0.12.18 addresses GHSA-2cv4-cqwr-gwf7, a path-traversal weakness during wheel
+  # installation on Windows. These runners are Linux and unaffected, but the pin should not
+  # tell a developer that an older uv is the supported one (ADR-01-09).
+  UV_VERSION: "0.12.18"
 
 jobs:
   quality:

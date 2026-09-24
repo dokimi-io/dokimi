@@ -43,6 +43,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/test_orchestrator"]
 
+[tool.uv]
+# 0.12.18 is the release that fixes GHSA-2cv4-cqwr-gwf7, a path-traversal weakness during
+# wheel installation on Windows. Unlike the other floors in ADR-01-09 this one is chosen on
+# security grounds rather than recency, so it is enforced rather than merely documented.
+required-version = ">=0.12.18"
+
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
