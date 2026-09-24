@@ -307,7 +307,7 @@ Every framework metric carries:
 
 | Label | Meaning |
 | --- | --- |
-| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is a sortable `<timestamp>-<short-random>`, not a UUID — it stays readable in a log line and orders naturally in the result artifact |
+| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is a sortable `<timestamp>-<short-random>`, not a UUID — it stays readable in a log line and orders naturally in the result artifact. Concretely `YYYYMMDD-HHMMSS-xxxxxx`, UTC, with six characters of `[0-9a-z]`, e.g. `20260924-143012-k3f9x2` |
 | `test_id` | Unique per test within a run; one source/target/parameter combination. Stable across repetitions |
 | `repetition` | A separate label rather than folded into `test_id`, so aggregating a pair's repetitions is a plain `avg by (test_id)` |
 | `test_type` | `iperf2`, `iperf3`, `irtt`, … |
@@ -421,6 +421,8 @@ Further rules:
   the cluster, regardless of test type or namespace — two concurrent runs would contend for the same
   nodes' network capacity. The framework checks for existing run-owned resources across all
   test-type namespaces before creating any, and refuses to start if it finds any.
+  Two submissions racing to start are serialised by a `Lease` named `test-orchestrator-run-lock` in
+  the `test-orchestrator` namespace, which must exist; exactly one of them starts.
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
   inspection; flags force either. It runs **after** the post-run diagnostic snapshot, which needs
   the run's pods and placement to still exist, and is bounded by its own timeout so a stuck snapshot
