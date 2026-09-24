@@ -72,8 +72,8 @@ without it. Tests that exercise that plugin are marked:
 
 ```python
 @pytest.mark.requires_robot
-def test_something_about_robot_parsing() -> None:
-    ...
+def test_a_robot_suite_round_trips() -> None:
+    assert parse_robot(render_robot(definition)) == definition
 ```
 
 [`conftest.py`](conftest.py) skips them when the distribution is absent, so the job that
