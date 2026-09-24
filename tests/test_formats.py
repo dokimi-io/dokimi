@@ -58,6 +58,7 @@ def _definition() -> TestDefinition:
 
 
 # --------------------------------------------------------------------------- AC 1
+@pytest.mark.requires_robot
 def test_a_definition_round_trips_through_the_rendered_suite() -> None:
     """parse to model, render to .robot, re-parse, and the model is equivalent."""
     original = _definition()
@@ -66,6 +67,18 @@ def test_a_definition_round_trips_through_the_rendered_suite() -> None:
     assert reparsed == original
 
 
+def test_the_yaml_round_trip_needs_no_robot_framework() -> None:
+    """parse -> render -> re-parse, entirely within YAML.
+
+    Unmarked on purpose: this is the half of the round-trip property that holds with
+    Robot Framework absent, so the core-without-robot job still checks something real.
+    """
+    original = _definition()
+
+    assert parse_yaml(render_yaml(original)) == original
+
+
+@pytest.mark.requires_robot
 def test_the_round_trip_also_holds_through_yaml() -> None:
     original = _definition()
 
@@ -74,6 +87,7 @@ def test_the_round_trip_also_holds_through_yaml() -> None:
 
 
 # --------------------------------------------------------------------------- AC 2
+@pytest.mark.requires_robot
 @pytest.mark.parametrize("metric", list(Metric))
 def test_no_criterion_is_expressible_in_one_format_but_not_the_other(metric: Metric) -> None:
     """Every criterion the model allows survives both renderers and both parsers."""
@@ -241,6 +255,7 @@ def test_the_rendered_criterion_columns_line_up() -> None:
     assert len({line.index("At ") for line in criteria}) == 1
 
 
+@pytest.mark.requires_robot
 def test_parse_file_chooses_the_format_from_the_suffix(tmp_path: Path) -> None:
     document = tmp_path / "pair.yaml"
     document.write_text(YAML_SOURCE, encoding="utf-8")
