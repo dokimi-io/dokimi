@@ -6,4 +6,4 @@ consumes only that model (ADR-04-05).
 
 The two files here express the **same test** in both formats. They are the examples from
 the repository README, kept here so they can be exercised once the format plugins land
-with M1-03 (#38). Nothing parses them yet.
+with M1-03 (adrs#38). Nothing parses them yet.

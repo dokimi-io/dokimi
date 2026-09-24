@@ -546,7 +546,7 @@ Built and published from Dockerfiles in this repository, to
 | Image | Base | Notes |
 | --- | --- | --- |
 | Test workloads and exporters, one per test type | slim Alpine | The exporter ships in the same image as the tool where practical — one image per test type, and the parser always matches the tool version it parses. A tool that turns out to need glibc gets a slim Debian base as a named exception rather than forcing every image onto one base |
-| `orchestrator` | `python:3.12-slim` | A deliberate departure from Alpine: the Python ecosystem's wheels are predominantly built against glibc, and musl means packages compiled from source or missing wheels entirely. Built with `uv sync --locked` against the repository-root lockfile |
+| `orchestrator` | `python:3.14-slim` | A deliberate departure from Alpine: the Python ecosystem's wheels are predominantly built against glibc, and musl means packages compiled from source or missing wheels entirely. Built with `uv sync --locked` against the repository-root lockfile |
 
 **The CLI ships with a pinned default orchestrator image reference, by digest, matching its own
 release.** The CLI and the image are built from the same commit and the same lockfile, so a released
@@ -559,9 +559,10 @@ to a specific build, exactly as a bug in a test tool does.
 
 | | |
 | --- | --- |
-| Language | Python **3.12+** |
-| Packaging | **`uv`**, with a single `uv.lock` at the repository root as the one source of resolved versions |
-| Kubernetes client | the official `kubernetes` library, **1.35+** |
+| Language | Python **3.14+** |
+| Packaging | **`uv` 0.12.18+**, with a single `uv.lock` at the repository root as the one source of resolved versions |
+| Kubernetes client | the official `kubernetes` library, **35+** (its major tracks the Kubernetes minor it targets, so this is Kubernetes **1.35+**) |
+| Robot Framework | **7.5+**, an optional extra rather than a core dependency — see below |
 
 The orchestration logic is a library with **no Robot Framework imports in its core**. The Robot
 resource library, the CLI, a CI entry point and a future Operator are all thin adapters over the
