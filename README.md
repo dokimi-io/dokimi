@@ -23,6 +23,10 @@ artifact, and removes everything it created.
 - [Not yet decided](#not-yet-decided)
 - [Related projects](#related-projects)
 
+The guides in [`docs/`](docs/) cover the practical side: [installation](docs/installation.md),
+[usage](docs/usage.md), [development setup](docs/setup.md) and [building](docs/building.md).
+The [test suite's README](tests/README.md) explains what is tested and how to run a subset.
+
 ## Execution model
 
 **The orchestrator runs inside the cluster as a one-shot Job, submitted from outside.**
