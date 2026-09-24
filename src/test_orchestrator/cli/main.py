@@ -1,81 +1,186 @@
-"""CLI entry point.
+"""CLI entry point: parse arguments, dispatch, translate failures into exit codes.
 
-Still scaffolding. Argument parsing, validation, dry-run rendering and Job submission
-arrive with M1-04 (issue #39); the run's exit-code contract arrives with M1-16 (issue
-#51).
+Phase 1 of a run and the only part that executes outside the cluster (ADR-01-06). The
+commands themselves live in :mod:`test_orchestrator.cli.commands`; this module is the
+adapter between a command line and those functions, and the single place where an
+exception becomes an exit code.
 
-The one real command here is ``image``, which resolves the orchestrator image reference
-this build would submit. M1-02 (issue #37) needs the resolution and its override to be
-inspectable and testable before there is a ``submit`` to use them, and M1-04 wires the
-same :func:`~test_orchestrator.images.resolve_image` call into the Job it renders.
+That translation is the reason the commands raise rather than return codes. ADR-05-05
+classifies a bad definition as ``config_error`` — detected before any resource is
+created — and ADR-01-08 numbers it 3. Having exactly one place that knows this is what
+keeps the numbering from drifting per command.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from test_orchestrator import __version__
-from test_orchestrator.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError, resolve_image
+from test_orchestrator.cli.commands import (
+    Console,
+    attach,
+    execute,
+    show_image,
+    submit_run,
+    validate,
+)
+from test_orchestrator.cli.exit_codes import ExitCode
+from test_orchestrator.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
+from test_orchestrator.k8s.cluster import ClusterError
+from test_orchestrator.k8s.submission import RunNotFound
+from test_orchestrator.model import ConfigError
 
-_USAGE = f"""\
-usage: test-orchestrator [--version] <command>
+__all__ = ["build_parser", "main"]
 
-commands:
-  image [--orchestrator-image REFERENCE]
-                              show the orchestrator image a run would submit
+_DESCRIPTION = """\
+Submit and follow network validation runs in a Kubernetes cluster.
 
-The reference is taken from --orchestrator-image, then from ${IMAGE_OVERRIDE_ENV_VAR},
-then from the digest baked in at release time.
+The run itself executes in the cluster as a one-shot Job. This command validates the
+definition, submits that Job and streams its logs; --dry-run stops before submitting and
+touches nothing.
 """
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="test-orchestrator",
+        description=_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=f"test-orchestrator {__version__}",
+    )
+    commands = parser.add_subparsers(dest="command", metavar="<command>")
+
+    validate_parser = commands.add_parser(
+        "validate",
+        help="check a test definition without contacting a cluster",
+    )
+    validate_parser.add_argument("definition", type=Path, help="a .yaml or .robot test definition")
+
+    submit_parser = commands.add_parser(
+        "submit",
+        help="submit a run and stream its logs",
+    )
+    submit_parser.add_argument("definition", type=Path, help="a .yaml or .robot test definition")
+    submit_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render the planned matrix and manifests, create nothing",
+    )
+    submit_parser.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="submit and return immediately instead of streaming",
+    )
+    submit_parser.add_argument("--run-id", help="use this run id instead of generating one")
+    submit_parser.add_argument(
+        "--service-account",
+        help="service account for the run's Job, if the cluster needs a specific one",
+    )
+    _add_cluster_arguments(submit_parser)
+    _add_image_argument(submit_parser)
+
+    attach_parser = commands.add_parser(
+        "attach",
+        help="reattach to a running run and resume streaming",
+    )
+    attach_parser.add_argument("run_id", metavar="run-id", help="the run to follow")
+    _add_cluster_arguments(attach_parser)
+
+    image_parser = commands.add_parser(
+        "image",
+        help="show the orchestrator image a run would submit",
+    )
+    _add_image_argument(image_parser)
+
+    # Not for people: this is what the submitted Job runs, and the CLI/Job contract is
+    # one decision (ADR-01-06) rather than two programs that must agree by convention.
+    execute_parser = commands.add_parser("execute", help=argparse.SUPPRESS)
+    execute_parser.add_argument("--definition", type=Path, required=True)
+    execute_parser.add_argument("--run-id", required=True)
+
+    return parser
+
+
+def _add_cluster_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--namespace", "-n", help="namespace to use instead of the test type's")
+    parser.add_argument("--kubeconfig", help="path to a kubeconfig file")
+    parser.add_argument("--context", help="kubeconfig context to use")
+
+
+def _add_image_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--orchestrator-image",
+        dest="image_override",
+        help=f"image reference to submit, overriding ${IMAGE_OVERRIDE_ENV_VAR} and the default",
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the CLI. Returns the process exit code."""
-    args = list(sys.argv[1:] if argv is None else argv)
+    """Run the CLI. Returns the process exit code (ADR-01-08's table)."""
+    parser = build_parser()
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    console = Console(out=sys.stdout, err=sys.stderr)
 
-    if args and args[0] in {"--version", "-V"}:
-        print(f"test-orchestrator {__version__}")
-        return 0
-
-    if args and args[0] in {"--help", "-h"}:
-        print(_USAGE, end="")
-        return 0
-
-    if args and args[0] == "image":
-        return _image_command(args[1:])
-
-    if args:
-        print(f"test-orchestrator: unknown command {args[0]!r}", file=sys.stderr)
-        print(_USAGE, end="", file=sys.stderr)
-        return 2
-
-    print(f"test-orchestrator {__version__} (scaffolding — no run commands implemented yet)")
-    return 0
-
-
-def _image_command(args: Sequence[str]) -> int:
-    override: str | None = None
-    remaining = list(args)
-    if remaining and remaining[0] == "--orchestrator-image":
-        if len(remaining) < 2:
-            print("test-orchestrator: --orchestrator-image needs a reference", file=sys.stderr)
-            return 2
-        override, remaining = remaining[1], remaining[2:]
-    if remaining:
-        print(f"test-orchestrator: unexpected argument {remaining[0]!r}", file=sys.stderr)
-        return 2
+    if args.command is None:
+        parser.print_help()
+        return ExitCode.PASS
 
     try:
-        image = resolve_image(override)
-    except ImageResolutionError as error:
-        print(f"test-orchestrator: {error}", file=sys.stderr)
-        return 1
+        return _dispatch(console, args)
+    except (ConfigError, ImageResolutionError) as error:
+        # Before anything was created, by construction: every path that can raise
+        # either of these runs before the first cluster call. Having no image to submit
+        # is a problem with the request, exactly like a malformed definition.
+        console.fail(str(error))
+        return ExitCode.CONFIG_ERROR
+    except FileNotFoundError as error:
+        console.fail(f"{error.filename}: no such file")
+        return ExitCode.CONFIG_ERROR
+    except RunNotFound as error:
+        console.fail(str(error))
+        return ExitCode.CONFIG_ERROR
+    except ClusterError as error:
+        console.fail(str(error))
+        return ExitCode.INTERNAL
 
-    print(image.reference)
-    print(f"  source: {image.source}")
-    print(f"  digest: {image.digest or 'not pinned by digest'}")
-    return 0
+
+def _dispatch(console: Console, args: argparse.Namespace) -> int:
+    if args.command == "validate":
+        return validate(console, path=args.definition)
+    if args.command == "submit":
+        return submit_run(
+            console,
+            path=args.definition,
+            dry_run=args.dry_run,
+            namespace=args.namespace,
+            run_id=args.run_id,
+            image_override=args.image_override,
+            service_account=args.service_account,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+            follow_logs=not args.no_follow,
+        )
+    if args.command == "attach":
+        return attach(
+            console,
+            run_id=args.run_id,
+            namespace=args.namespace,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+        )
+    if args.command == "image":
+        return show_image(console, image_override=args.image_override)
+    if args.command == "execute":
+        return execute(console, path=args.definition, run_id=args.run_id)
+    raise AssertionError(f"unreachable: argparse accepted {args.command!r}")
 
 
 if __name__ == "__main__":
