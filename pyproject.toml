@@ -11,7 +11,9 @@ license = { file = "LICENSE" }
 # A literal ">=1.35" would be satisfied by every release ever published.
 dependencies = [
     "kubernetes>=35",
-    "pyyaml>=6",
+    # 6.0.3 is the floor, the newest release, chosen the same way as the Python,
+    # kubernetes and Robot Framework floors below.
+    "pyyaml>=6.0.3",
 ]
 
 # Robot Framework is a runtime dependency of a *run* (ADR-01-08), not of the core
