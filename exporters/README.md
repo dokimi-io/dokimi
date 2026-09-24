@@ -9,4 +9,4 @@ separated prefix, and reports completion state explicitly via
 `test_orchestrator_test_completed` so that "test failed", "test never ran" and "metric
 absent" stay distinguishable.
 
-The first exporter, for `iperf2`, arrives with M1-10 (#45).
+The first exporter, for `iperf2`, arrives with M1-10 (adrs#45).

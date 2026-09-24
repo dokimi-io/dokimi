@@ -9,7 +9,7 @@ not (ADR-01-02, ADR-01-08).
 | `resources/` | Robot resource files a user-facing suite imports |
 | `libraries/` | Thin adapter exposing the orchestration library as Robot keywords |
 
-The keyword vocabulary arrives with M1-11 (#46); both files here are scaffolding.
+The keyword vocabulary arrives with M1-11 (adrs#46); both files here are scaffolding.
 
 ## A gotcha worth knowing
 

@@ -2,7 +2,7 @@
 
 # The orchestrator's own image: the one-shot in-cluster Job a run submits (ADR-01-06).
 #
-# Base is `python:3.12-slim`, deliberately not the Alpine base ADR-05-04 picks for
+# Base is `python:3.14-slim`, deliberately not the Alpine base ADR-05-04 picks for
 # test-workload images: the Python ecosystem's wheels are predominantly built against
 # glibc, and musl means packages compiled from source or missing wheels entirely
 # (ADR-05-08).
@@ -11,8 +11,12 @@
 # which fails rather than re-resolving if the lockfile does not match `pyproject.toml`.
 # The same lockfile builds the CLI distribution, so the two cannot drift apart.
 
-ARG PYTHON_VERSION=3.12
-ARG UV_VERSION=0.9.7
+# Both floors come from ADR-01-09. PYTHON_VERSION tracks `requires-python` in
+# pyproject.toml, and UV_VERSION is the release fixing GHSA-2cv4-cqwr-gwf7, which
+# `[tool.uv] required-version` enforces — an older uv here fails the build rather than
+# silently installing with a vulnerable installer.
+ARG PYTHON_VERSION=3.14
+ARG UV_VERSION=0.12.18
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 

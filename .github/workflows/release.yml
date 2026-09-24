@@ -22,7 +22,9 @@ permissions:
   contents: read
 
 env:
-  UV_VERSION: "0.9.7"
+  # 0.12.18 fixes GHSA-2cv4-cqwr-gwf7 (Windows wheel-install path traversal) and is the
+  # floor ADR-01-09 sets and `[tool.uv] required-version` enforces.
+  UV_VERSION: "0.12.18"
   IMAGE: ghcr.io/test-orchestrator/orchestrator
 
 jobs:

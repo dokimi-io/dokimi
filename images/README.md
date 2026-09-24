@@ -6,8 +6,12 @@ attestation (ADR-05-04, ADR-05-08).
 
 | Image | Base | Status |
 | --- | --- | --- |
-| [`orchestrator`](orchestrator/Dockerfile) | `python:3.12-slim`, built with `uv sync --locked` against the repository-root lockfile | M1-02 (#37) |
-| One per test type, tool plus its exporter | slim Alpine, with a glibc exception where a tool needs it | M1-10 (#45) |
+| [`orchestrator`](orchestrator/Dockerfile) | `python:3.14-slim`, built with `uv sync --locked` against the repository-root lockfile | M1-02 (adrs#37) |
+| One per test type, tool plus its exporter | slim Alpine, with a glibc exception where a tool needs it | M1-10 (adrs#45) |
+
+Version floors for the base image and the build toolchain are fixed by
+[ADR-01-09](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/01-09-implementation-dependency-version-floors.md),
+not here — this table records which image uses which base, not what the floor should be.
 
 ## `orchestrator`
 
@@ -25,7 +29,7 @@ is built from.
 
 Three properties worth stating, because each is a decision rather than a habit:
 
-- **`python:3.12-slim`, not Alpine.** A deliberate departure from ADR-05-04's base for
+- **`python:3.14-slim`, not Alpine.** A deliberate departure from ADR-05-04's base for
   test-workload images: Python wheels are predominantly built against glibc, and musl
   means packages compiled from source or missing wheels entirely (ADR-05-08).
 - **Installed with `uv sync --locked`,** which fails rather than re-resolving if the

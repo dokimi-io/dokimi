@@ -17,6 +17,7 @@ import re
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCKERFILE = REPOSITORY_ROOT / "images" / "orchestrator" / "Dockerfile"
+PYPROJECT = REPOSITORY_ROOT / "pyproject.toml"
 RELEASE_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
 GENERATED_DIGEST = REPOSITORY_ROOT / "src" / "test_orchestrator" / "_image_digest.py"
 
@@ -30,9 +31,33 @@ def _instructions() -> str:
 def test_base_image_is_debian_slim_not_alpine() -> None:
     dockerfile = DOCKERFILE.read_text()
 
-    assert "ARG PYTHON_VERSION=3.12" in dockerfile
     assert "FROM python:${PYTHON_VERSION}-slim AS runtime" in dockerfile
     assert "alpine" not in _instructions().lower()
+
+
+def test_the_image_python_matches_the_declared_floor() -> None:
+    # Derived rather than hard-coded: these drifted apart once already, when the floor
+    # moved to 3.14 and the Dockerfile kept building on 3.12 (ADR-01-09).
+    pyproject = PYPROJECT.read_text()
+    floor = re.search(r'requires-python = ">=(\d+\.\d+)"', pyproject)
+    assert floor, "pyproject.toml no longer declares requires-python"
+
+    assert f"ARG PYTHON_VERSION={floor.group(1)}" in DOCKERFILE.read_text(), (
+        f"the image builds on a different Python than the declared floor "
+        f"{floor.group(1)}, so the image and the CLI distribution are not the same "
+        "environment"
+    )
+
+
+def test_the_image_uv_matches_the_enforced_floor() -> None:
+    # `[tool.uv] required-version` makes uv refuse to run below the floor, so a stale
+    # ARG here is a broken build rather than a silent downgrade. Catch it in a test
+    # instead of in a release.
+    pyproject = PYPROJECT.read_text()
+    floor = re.search(r'required-version = ">=(\S+?)"', pyproject)
+    assert floor, "pyproject.toml no longer enforces a uv floor"
+
+    assert f"ARG UV_VERSION={floor.group(1)}" in DOCKERFILE.read_text()
 
 
 def test_dependencies_come_from_the_lockfile_alone() -> None:
