@@ -286,3 +286,17 @@ def test_an_unknown_command_is_a_usage_error() -> None:
         main(["teleport"])
 
     assert exit_info.value.code == 2
+
+
+def test_the_in_cluster_command_is_not_advertised(capsys: pytest.CaptureFixture[str]) -> None:
+    # `execute` is the Job's entry point, not something a person runs. It still works
+    # when named, but listing it invites someone to run a phase-2-only orchestrator by
+    # hand and wonder why it exits 5.
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+    listed = capsys.readouterr().out
+    commands = [line.strip().split()[0] for line in listed.splitlines() if line.startswith("    ")]
+    assert "validate" in commands
+    assert "execute" not in commands
+    assert "SUPPRESS" not in listed

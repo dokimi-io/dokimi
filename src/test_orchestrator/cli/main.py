@@ -102,7 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Not for people: this is what the submitted Job runs, and the CLI/Job contract is
     # one decision (ADR-01-06) rather than two programs that must agree by convention.
-    execute_parser = commands.add_parser("execute", help=argparse.SUPPRESS)
+    # Passing no `help` is what keeps it out of the command list; `help=SUPPRESS` would
+    # list it with "==SUPPRESS==" as its description.
+    execute_parser = commands.add_parser("execute")
     execute_parser.add_argument("--definition", type=Path, required=True)
     execute_parser.add_argument("--run-id", required=True)
 
