@@ -1,0 +1,32 @@
+apiVersion: test-orchestrator/v1alpha1
+kind: NetworkTest
+
+metadata:
+  name: worker-01-to-worker-02-udp
+
+placement:
+  mode: explicit
+  source: worker-01
+  target: worker-02
+
+test:
+  type: iperf2
+  protocol: udp
+  duration: 30s
+  targetBandwidth: 1G
+
+monitoring:
+  mode: managed
+
+validation:
+  - metric: throughput
+    comparison: atLeast
+    threshold: 950
+    unit: megabits per second
+  - metric: packetLoss
+    comparison: atMost
+    threshold: 0
+    unit: percent
+
+results:
+  directory: ./results

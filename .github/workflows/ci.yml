@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # 0.12.18 addresses GHSA-2cv4-cqwr-gwf7, a path-traversal weakness during wheel
+  # installation on Windows. These runners are Linux and unaffected, but the pin should not
+  # tell a developer that an older uv is the supported one (ADR-01-09).
+  UV_VERSION: "0.12.18"
+
+jobs:
+  quality:
+    name: Lint, format and type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Type-check
+        run: uv run mypy
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv run pytest
+
+  core-without-robot:
+    name: Core library without Robot Framework
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      # No extras: the `robot` extra carries Robot Framework, so this environment does
+      # not have it. ADR-01-02 requires the core library to work anyway.
+      - run: uv sync --locked
+
+      # Deliberately not `import robot`: this repository has a `robot/` directory at
+      # its root, which Python treats as a PEP 420 namespace package when Robot
+      # Framework is absent, so the import succeeds and proves nothing. The installed
+      # distribution is the thing to check.
+      - name: Assert Robot Framework really is absent
+        run: |
+          if uv run python -c "import importlib.metadata as m; m.version('robotframework')" 2>/dev/null; then
+            echo "Robot Framework is installed - this job cannot prove independence."
+            exit 1
+          fi
+          echo "Robot Framework is not installed, as this job requires."
+
+      - name: Core library imports and its tests pass
+        run: uv run pytest
