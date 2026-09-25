@@ -10,6 +10,7 @@ artifact, and removes everything it created.
 
 - [Execution model](#execution-model)
 - [The phases of a run](#the-phases-of-a-run)
+- [Using the CLI](#using-the-cli)
 - [Authoring a test](#authoring-a-test)
 - [Validation criteria](#validation-criteria)
 - [Metric contract](#metric-contract)
@@ -141,6 +142,59 @@ snapshot (phase 10) happens after it has exited. Neither can appear in Robot's r
 structural reason rather than an implementation one. Those two phases have their own reporting
 surface. If a failed run produced no `log.html` at all, it failed in phase 4 and no suite was ever
 executed.
+
+## Using the CLI
+
+```console
+$ test-orchestrator validate test.yaml          # parse and check, no cluster involved
+$ test-orchestrator submit test.yaml --dry-run  # render the matrix and the manifests
+$ test-orchestrator submit test.yaml            # create the run and stream its logs
+$ test-orchestrator attach <run-id>             # resume streaming a run already going
+```
+
+`submit` validates the definition locally first, so an invalid one never reaches the
+cluster. What it then creates is three objects: a ConfigMap that owns the run, a ConfigMap
+carrying the definition, and the Job that is the run. The definition travels with the run
+rather than being re-read from your disk, which is what lets `attach` work from a machine
+that has neither the file nor any record of the submission.
+
+`--dry-run` writes the manifests to stdout and everything else to stderr, so the rendering
+can be saved or diffed on its own. It contacts nothing.
+
+| Flag | |
+| --- | --- |
+| `--dry-run` | render and stop |
+| `--no-follow` | submit and return, rather than streaming |
+| `--run-id` | use a specific run id instead of generating one |
+| `--namespace`, `-n` | override the test type's namespace |
+| `--orchestrator-image` | override the image the Job runs |
+| `--service-account` | run the Job as a specific service account |
+| `--kubeconfig`, `--context` | pick cluster credentials |
+
+Ctrl-C stops the log stream, not the run: the Job is a server-side resource and keeps
+going. The command prints the `attach` line that picks it back up.
+
+### Exit codes
+
+Automation-facing from the first release, so they are an interface rather than an
+implementation detail.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | run completed, overall pass |
+| `1` | run completed, at least one non-optional pair failed |
+| `2` | at least one non-optional pair errored, or a post-run anomaly |
+| `3` | invalid request, detected before anything was created |
+| `4` | run-level preflight failure |
+| `5` | internal or unexpected orchestrator error |
+
+The highest applicable code wins. A run with both failures and errors exits `2`: an error
+means part of the matrix was not validly measured, and an incomplete picture matters more
+than any single finding within it.
+
+Codes 0 to 2 are the run's own verdict, computed in the cluster and propagated unchanged —
+the CLI does not re-derive it. `130` (Ctrl-C) is deliberately outside the table, because
+interrupting the stream is not a verdict.
 
 ## Authoring a test
 

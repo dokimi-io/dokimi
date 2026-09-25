@@ -65,6 +65,13 @@ python_version = "3.14"
 strict = true
 files = ["src", "tests"]
 
+# The official `kubernetes` distribution ships no py.typed marker and no stubs, and the
+# available third-party stubs lag its releases. Everything that touches it is confined to
+# `k8s/_kubernetes.py` behind a typed protocol, so the untyped surface stops there.
+[[tool.mypy.overrides]]
+module = ["kubernetes.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
