@@ -15,7 +15,7 @@ from test_orchestrator.cli import commands
 from test_orchestrator.cli.exit_codes import ExitCode
 from test_orchestrator.cli.main import main
 from test_orchestrator.images import IMAGE_OVERRIDE_ENV_VAR, IMAGE_REPOSITORY
-from tests.fake_cluster import ExplodingCluster, FakeCluster
+from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = f"{IMAGE_REPOSITORY}@{DIGEST}"
@@ -87,7 +87,7 @@ def test_dry_run_renders_the_matrix_and_the_manifests(
     # saved or diffed without a summary mixed into it.
     assert "kind: Job" in captured.out
     assert "kind: ConfigMap" in captured.out
-    assert "Planned matrix (1 test)" in captured.err
+    assert "Planned matrix (1 test, sequential" in captured.err
     assert "worker-01 -> worker-02" in captured.err
     assert "nothing was created" in captured.err
 
@@ -221,16 +221,94 @@ def test_interrupting_leaves_the_run_alone(
 # -- execute (the in-cluster side) --------------------------------------------
 
 
-def test_execute_parses_the_mounted_definition(capsys: pytest.CaptureFixture[str]) -> None:
+def test_execute_parses_then_plans(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
     code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
 
     out = capsys.readouterr()
     assert f"run {RUN_ID}" in out.out
     assert "phase 2 (ingestion): definition parsed" in out.out
-    # Phases 3 to 11 do not exist yet, and a run that stops early must not look like one
-    # that passed.
+    assert "phase 3 (planning): 1 test, sequential" in out.out
+    assert "pair-001  worker-01 -> worker-02" in out.out
+    assert cluster.node_reads == 1
+    # Phases 4 to 11 do not exist yet, and a run that stops early must not look like
+    # one that passed.
     assert code == ExitCode.INTERNAL
-    assert "not implemented in this build" in out.err
+    assert "phases 4 to 11 are not implemented" in out.err
+
+
+def test_execute_rejects_a_missing_node_as_a_config_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeCluster(nodes=[node("worker-01"), node("worker-03")])
+    monkeypatch.setattr(commands, "connect", lambda **_k: fake)
+
+    code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
+
+    assert code == ExitCode.CONFIG_ERROR
+    assert "target node 'worker-02' does not exist" in capsys.readouterr().err
+    # Resolution happens before phase 6 deploys anything, so there is nothing to undo.
+    assert fake.created == []
+
+
+def test_execute_rejects_an_unschedulable_node_as_a_config_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeCluster(nodes=[node("worker-01"), node("worker-02", cordoned=True)])
+    monkeypatch.setattr(commands, "connect", lambda **_k: fake)
+
+    code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
+
+    assert code == ExitCode.CONFIG_ERROR
+    assert "cordoned" in capsys.readouterr().err
+
+
+# -- the plan in a dry run ----------------------------------------------------
+
+
+def test_a_plain_dry_run_says_the_nodes_were_not_checked(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["submit", str(EXAMPLE), "--dry-run"]) == ExitCode.PASS
+
+    err = capsys.readouterr().err
+    assert "nodes not checked" in err
+    assert "Nodes were not checked against a cluster" in err
+
+
+def test_a_dry_run_with_a_kubeconfig_shows_the_resolved_plan(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["submit", str(EXAMPLE), "--dry-run", "--kubeconfig", "/some/kubeconfig"])
+
+    err = capsys.readouterr().err
+    assert code == ExitCode.PASS
+    assert "Planned matrix (1 test, sequential)" in err
+    assert "pair-001  worker-01 -> worker-02" in err
+    assert "Both nodes exist and can accept a test pod" in err
+
+
+def test_a_dry_run_with_a_kubeconfig_only_reads(cluster: FakeCluster) -> None:
+    # ADR-01-06 allows a provided kubeconfig "for read-only cluster info". Read-only
+    # means the fake records not one write.
+    main(["submit", str(EXAMPLE), "--dry-run", "--context", "kind-test"])
+
+    assert cluster.node_reads == 1
+    assert cluster.created == []
+    assert cluster.namespaces == []
+
+
+def test_a_dry_run_with_a_kubeconfig_catches_a_missing_node(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeCluster(nodes=[node("worker-01")])
+    monkeypatch.setattr(commands, "connect", lambda **_k: fake)
+
+    code = main(["submit", str(EXAMPLE), "--dry-run", "--context", "kind-test"])
+
+    assert code == ExitCode.CONFIG_ERROR
+    assert "target node 'worker-02' does not exist" in capsys.readouterr().err
 
 
 # -- image and top level ------------------------------------------------------

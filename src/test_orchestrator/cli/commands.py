@@ -21,6 +21,7 @@ from test_orchestrator.k8s.identity import default_namespace, validate_run_id
 from test_orchestrator.k8s.manifests import deadline_seconds
 from test_orchestrator.k8s.submission import Submission, follow, plan_submission, submit
 from test_orchestrator.model import ConfigError, Criterion, TestDefinition, TestType
+from test_orchestrator.planning import Plan, discover, plan_run
 
 __all__ = ["Console", "attach", "execute", "show_image", "submit_run", "validate"]
 
@@ -79,7 +80,14 @@ def submit_run(
     )
 
     if dry_run:
-        _render(console, definition, submission)
+        # ADR-01-06: a dry run uses local discovery only, "or a provided kubeconfig for
+        # read-only cluster info". Provided means provided: the ambient KUBECONFIG is not
+        # consulted, so a plain dry run stays one that cannot contact anything.
+        plan = None
+        if kubeconfig is not None or context is not None:
+            cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
+            plan = plan_run(definition, discover(cluster))
+        _render(console, definition, submission, plan)
         return ExitCode.PASS
 
     cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
@@ -112,18 +120,23 @@ def attach(
     return _follow(console, cluster, resolved_namespace, resolved_run_id)
 
 
-def execute(console: Console, *, path: Path, run_id: str) -> int:
+def execute(
+    console: Console,
+    *,
+    path: Path,
+    run_id: str,
+    connect_to: Callable[..., ClusterClient] | None = None,
+) -> int:
     """The in-cluster entry point: what the submitted Job runs.
 
     The CLI/Job boundary is one decision (ADR-01-06) and both of its sides belong to
     M1-04, so the contract is fixed here: the Job is invoked with the mounted definition
     and the run's id, and it owns phases 2 to 11.
 
-    Phase 2 is implemented, because parsing exists. The rest does not yet: planning is
-    M1-06 (#41), preflight M1-07 (#42), execution M1-11 (#46), validation M1-13 (#48),
-    results M1-14 (#49), cleanup and the real exit code M1-16 (#51). Rather than exit 0
-    and let a submitter read that as a passing run, this reports an orchestrator error
-    and names what is missing.
+    Phases 2 and 3 are implemented. The rest are not yet: preflight is M1-07 (#42),
+    execution M1-11 (#46), validation M1-13 (#48), results M1-14 (#49), cleanup and the
+    real exit code M1-16 (#51). Rather than exit 0 and let a submitter read that as a
+    passing run, this reports an orchestrator error and names what is missing.
     """
     console.say(f"run {run_id}")
     definition = parse_file(path)
@@ -131,10 +144,22 @@ def execute(console: Console, *, path: Path, run_id: str) -> int:
     console.say()
     _describe(console, definition)
     console.say()
+
+    # Phase 3. Discovery happens here, in the cluster, with the Job's own credentials:
+    # this is the resolution the run is held to, and it happens before phase 6 deploys
+    # anything, so a node that is missing or unschedulable is a config_error with
+    # nothing to clean up (ADR-04-01, ADR-05-05).
+    cluster = (connect_to or connect)()
+    plan = plan_run(definition, discover(cluster))
+    console.say(f"phase 3 (planning): {_plan_summary(plan)}")
+    for line in _plan_lines(plan):
+        console.say(line)
+    console.say()
+
     console.warn(
-        "phases 3 to 11 are not implemented in this build: planning (#41), preflight "
-        "(#42), execution (#46), validation (#48), results (#49), cleanup and outcome "
-        "(#51). The run stops here without a verdict."
+        "phases 4 to 11 are not implemented in this build: preflight (#42), execution "
+        "(#46), validation (#48), results (#49), cleanup and outcome (#51). The run stops "
+        "here without a verdict."
     )
     return ExitCode.INTERNAL
 
@@ -170,18 +195,41 @@ def _resolve_image(override: str | None) -> str:
         raise ConfigError(str(error)) from error
 
 
-def _render(console: Console, definition: TestDefinition, submission: Submission) -> int:
+def _render(
+    console: Console,
+    definition: TestDefinition,
+    submission: Submission,
+    plan: Plan | None,
+) -> int:
     """``--dry-run``: the planned matrix and the manifests, and nothing created.
 
     The manifests go to stdout and everything a person reads goes to stderr, so the
     rendering can be diffed or saved without a summary mixed into it.
+
+    With *plan* the matrix shown is the resolved one, checked read-only against a
+    cluster. Without it, it is the pair the definition asks for, and the output says the
+    nodes were not checked rather than implying they were.
     """
-    console.warn("Planned matrix (1 test)")
-    console.warn("")
-    console.warn(f"  {definition.source_node} -> {definition.target_node}")
+    if plan is not None:
+        console.warn(f"Planned matrix ({_plan_summary(plan)})")
+        console.warn("")
+        for line in _plan_lines(plan):
+            console.warn(line)
+    else:
+        console.warn("Planned matrix (1 test, sequential; nodes not checked)")
+        console.warn("")
+        console.warn(f"  {definition.source_node} -> {definition.target_node}")
     console.warn(f"    type       {definition.test_type.value} over {definition.protocol.value}")
     console.warn(f"    duration   {definition.duration}")
     console.warn(f"    bandwidth  {definition.target_bandwidth}")
+    console.warn("")
+    if plan is not None:
+        console.warn("Both nodes exist and can accept a test pod.")
+    else:
+        console.warn(
+            "Nodes were not checked against a cluster. A dry run contacts nothing unless "
+            "given --kubeconfig or --context, and then only to read."
+        )
     console.warn("")
     console.warn(f"Run id     {submission.run_id}")
     console.warn(f"Namespace  {submission.namespace}")
@@ -256,3 +304,12 @@ def _phrase(criterion: Criterion) -> str:
         f"{statistic}{criterion.metric.value} {criterion.comparison.value} "
         f"{criterion.threshold} {criterion.unit.value}"
     )
+
+
+def _plan_summary(plan: Plan) -> str:
+    tests = "1 test" if len(plan.pairs) == 1 else f"{len(plan.pairs)} tests"
+    return f"{tests}, {plan.concurrency.value}"
+
+
+def _plan_lines(plan: Plan) -> list[str]:
+    return [f"  {pair.test_id}  {pair.source.name} -> {pair.target.name}" for pair in plan.pairs]

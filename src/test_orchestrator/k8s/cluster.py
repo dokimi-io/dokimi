@@ -1,6 +1,6 @@
 """The narrow slice of the Kubernetes API a submission actually uses.
 
-Everything the CLI does to a cluster goes through :class:`ClusterClient`: seven
+Everything a run does to a cluster goes through :class:`ClusterClient`: eight
 operations, every namespaced one addressing objects by label selector rather than by name
 (ADR-05-02). The
 protocol exists so the submission and reattach paths can be exercised without a cluster —
@@ -55,6 +55,9 @@ class ClusterClient(Protocol):
 
         By selector, never by name, like every delete a run makes (ADR-05-02).
         """
+
+    def list_nodes(self) -> list[dict[str, Any]]:
+        """Every Node object. Read-only, and the only cluster-scoped call a run makes."""
 
 
 def connect(kubeconfig: str | None = None, context: str | None = None) -> ClusterClient:
