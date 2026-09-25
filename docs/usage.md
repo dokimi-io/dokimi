@@ -73,6 +73,11 @@ test-orchestrator.
 
 The grant widens as later phases land, one commented rule per phase.
 
+The service account exists only in `test-orchestrator-iperf2`, the namespace
+`deploy/rbac.yaml` creates. A run submitted with `--namespace` somewhere else will not find
+it there. For another namespace, copy the file, change the namespace in the `Namespace`,
+the `ServiceAccount` and the binding's subject, and apply that copy.
+
 ## validate
 
 ```console
@@ -177,8 +182,9 @@ The owner uid is empty above because the API server assigns it; submission fills
 The manifests go to **stdout** and everything a person reads goes to **stderr**, so the
 rendering can be saved or diffed on its own, as above.
 
-A dry run is fully local. It renders from the same function `submit` uses, so the two
-cannot drift, but it never contacts a cluster — not even to read.
+A dry run renders from the same function `submit` uses, so the two cannot drift. By
+default it is fully local and contacts no cluster at all. The one exception is described
+next, and even then it only reads.
 
 **Resolving the plan.** Given `--kubeconfig` or `--context`, a dry run also reads the
 cluster's nodes and resolves the plan against them — read-only, creating nothing:
@@ -286,7 +292,8 @@ unchanged — the CLI does not re-derive it from what it saw in the log.
 Codes `3` to `5` can come from either side of the cluster boundary. The CLI produces `3`
 for a request it rejects locally, and `5` when submitting or following breaks — an API
 server it cannot reach, a log stream that drops, or a bug. The run in the cluster produces
-them for the same classes of problem it finds there. Either way the code is what CI sees,
+them for the same classes of problem it finds there — a definition naming a node that does
+not exist, or one that is cordoned, makes the run itself exit `3` in phase 3. Either way the code is what CI sees,
 so nothing but these six ever reaches it from a run:
 
 - **A container that exits outside the table** — `137` after an out-of-memory kill, `143`

@@ -1,6 +1,6 @@
 # The test suite
 
-257 tests, none of which need a cluster, a network or a container runtime. Everything runs
+294 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -24,7 +24,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
-| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 7 | How the real Kubernetes adapter translates the client library's failures |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 9 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |

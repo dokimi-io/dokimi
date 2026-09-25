@@ -47,6 +47,10 @@ class CoreApi:
         self._call("list_namespaced_pod")
         return client.V1PodList(items=[])
 
+    def list_node(self) -> Any:
+        self._call("list_node")
+        return client.V1NodeList(items=[])
+
     def read_namespaced_pod_log(self, **_: Any) -> Any:
         self._call("read_namespaced_pod_log")
         return DroppingStream()
@@ -141,3 +145,21 @@ def test_a_log_stream_that_drops_is_a_cluster_error_and_releases_its_connection(
 
     assert received == ["phase 2"]
     assert DroppingStream.released
+
+
+# -- listing nodes (M1-06) ------------------------------------------------------
+
+
+def test_a_refused_node_list_names_the_fix() -> None:
+    # The first cluster-scoped call a run makes, and so its most likely RBAC failure.
+    core = CoreApi(list_node=_api_error(403))
+
+    with pytest.raises(ClusterError, match=r"deploy/rbac\.yaml.*--service-account"):
+        adapter(core).list_nodes()
+
+
+def test_an_unreachable_api_server_while_listing_nodes_is_a_cluster_error() -> None:
+    core = CoreApi(list_node=MaxRetryError(None, "/api/v1/nodes", "connection refused"))  # type: ignore[arg-type]
+
+    with pytest.raises(ClusterError, match="listing nodes: lost contact"):
+        adapter(core).list_nodes()
