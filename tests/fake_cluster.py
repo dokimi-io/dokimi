@@ -15,7 +15,35 @@ from typing import Any
 from test_orchestrator.k8s.cluster import ClusterError
 from test_orchestrator.k8s.submission import CONTAINER_NAME
 
-__all__ = ["ExplodingCluster", "FakeCluster"]
+__all__ = ["ExplodingCluster", "FakeCluster", "node"]
+
+
+def node(
+    name: str,
+    *,
+    ready: str | None = "True",
+    cordoned: bool = False,
+    taints: Sequence[tuple[str, str, str]] = (),
+) -> dict[str, Any]:
+    """A Node object in the API's shape, with only the fields discovery reads.
+
+    ``ready`` is the Ready condition's status string — ``"True"``, ``"False"``,
+    ``"Unknown"`` — or ``None`` for a node that reports no Ready condition at all.
+    ``taints`` are ``(key, value, effect)``.
+    """
+    spec: dict[str, Any] = {}
+    if cordoned:
+        spec["unschedulable"] = True
+    if taints:
+        spec["taints"] = [
+            {"key": key, "value": value, "effect": effect} for key, value, effect in taints
+        ]
+    conditions = [] if ready is None else [{"type": "Ready", "status": ready}]
+    return {"metadata": {"name": name}, "spec": spec, "status": {"conditions": conditions}}
+
+
+#: The nodes the shipped example names, both able to take a test pod.
+EXAMPLE_NODES = (node("worker-01"), node("worker-02"))
 
 
 class FakeCluster:
@@ -37,6 +65,7 @@ class FakeCluster:
         job_conditions: Sequence[dict[str, str]] = (),
         fail_on_kind: str | None = None,
         fail_deleting: bool = False,
+        nodes: Sequence[dict[str, Any]] = EXAMPLE_NODES,
     ) -> None:
         self.log_lines = list(log_lines)
         self.exit_code = exit_code
@@ -52,6 +81,8 @@ class FakeCluster:
         self.fail_on_kind = fail_on_kind
         self.fail_deleting = fail_deleting
         self.deleted: list[tuple[str, str]] = []
+        self.nodes = list(nodes)
+        self.node_reads = 0
 
         self.namespaces: list[str] = []
         self.created: list[dict[str, Any]] = []
@@ -121,6 +152,10 @@ class FakeCluster:
             raise ClusterError("deleting ConfigMaps: 403 Forbidden")
         self.deleted.append((namespace, selector))
 
+    def list_nodes(self) -> list[dict[str, Any]]:
+        self.node_reads += 1
+        return list(self.nodes)
+
     # -- assertions helpers ---------------------------------------------------
 
     @property
@@ -141,3 +176,4 @@ class ExplodingCluster:
     read_pod = _explode
     stream_logs = _explode
     delete_config_maps = _explode
+    list_nodes = _explode

@@ -20,29 +20,36 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_formats.py`](test_formats.py) | 23 | The YAML and Robot plugins, and that they are genuinely peers |
 | [`test_robot_strictness.py`](test_robot_strictness.py) | 31 | The Robot parser reads every criterion Robot would call, or rejects the suite |
 | [`test_examples.py`](test_examples.py) | 8 | The shipped examples parse and agree; every test definition in the docs parses, and the README shows the examples verbatim |
+| [`test_planning.py`](test_planning.py) | 24 | Discovery, explicit node resolution, and the plan |
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 7 | How the real Kubernetes adapter translates the client library's failures |
-| [`test_cli.py`](test_cli.py) | 34 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
+| [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
 
 ## How the cluster-facing tests work without a cluster
 
-Everything the CLI does to a cluster goes through a seven-method protocol,
+Everything a run does to a cluster goes through an eight-method protocol,
 `ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
 
 - **`FakeCluster`** records every write and answers reads from a script — a list of pod
-  phases, a log, an exit code. Assertions are then made about the calls: that the owner
+  phases, a log, an exit code, the cluster's nodes. Assertions are then made about the calls: that the owner
   object was created first, that the pod was located by label selector and not by name,
   that the container's exit code was propagated unchanged.
 - **`ExplodingCluster`** raises on contact. Any code path that must not reach a cluster
   gets one of these, and the test passing *is* the assertion. It is what `--dry-run` and
   "invalid input never reaches the cluster" are tested with, and it is a stronger claim
   than a comment saying so.
+
+`node()` builds a Node object in the API's shape — `node("worker-02", cordoned=True)`,
+`node("cp", taints=[("node-role.kubernetes.io/control-plane", "", "NoSchedule")])` — with
+only the fields discovery reads. Planning itself needs no fake at all: it is a pure function
+of a definition and a node snapshot, so `test_planning.py` builds the snapshot directly.
 
 The one thing the fakes cannot reach is the real adapter, `KubernetesCluster`, and how it
 translates the client library's failures — an `ApiException`, or a urllib3 error when the
@@ -56,7 +63,7 @@ without waiting for either.
 
 ## Tests that are about decisions, not behaviour
 
-Four files assert things that would otherwise decay quietly, because the code keeps
+Five files assert things that would otherwise decay quietly, because the code keeps
 working while being wrong:
 
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
@@ -74,6 +81,11 @@ working while being wrong:
 - [`test_manifests.py`](test_manifests.py) asserts `backoffLimit: 0` and
   `restartPolicy: Never`. A Job with the defaults runs perfectly well and silently re-runs
   the entire matrix when a run exits non-zero for a plain failure.
+- [`test_rbac.py`](test_rbac.py) parses `deploy/rbac.yaml` and checks it against the code:
+  the namespace runs actually use, the service account the error message tells people to
+  pass, and a grant that is read-only. An administrator applies that file by hand and the
+  code never reads it, so nothing else would notice the two drifting apart until a real
+  cluster refused a call.
 - [`test_core_independence.py`](test_core_independence.py) imports every core module in a
   subprocess and fails if anything named `robot` appears in `sys.modules`. The subprocess
   is the point: the result must not be contaminated by whatever the rest of the session

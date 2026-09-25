@@ -68,31 +68,8 @@ what a consumer of the library may resolve.
 ## A cluster to submit runs against
 
 Any Kubernetes 1.35+ cluster works. For a local one, [kind](https://kind.sigs.k8s.io) is
-the least ceremony:
-
-```console
-$ kind create cluster --name test-orchestrator
-```
-
-The cluster needs the orchestrator image, and a local build is not in any registry it can
-reach — so build it and load it in directly:
-
-```console
-$ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
-$ kind load docker-image orchestrator:dev --name test-orchestrator
-$ export TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
-```
-
-Then submit:
-
-```console
-$ uv run test-orchestrator submit examples/worker-01-to-worker-02-udp.yaml
-```
-
-The example names `worker-01` and `worker-02`, which a one-node kind cluster does not
-have. That does not matter yet — node resolution is M1-06 (#41), and today's run stops
-after parsing. It will matter once planning lands, at which point a multi-node cluster is
-what you want:
+the least ceremony. A test needs two nodes that can take a pod, and kind's control-plane
+node is tainted against exactly that, so create two workers:
 
 ```console
 $ kind create cluster --name test-orchestrator --config - <<'YAML'
@@ -105,8 +82,43 @@ nodes:
 YAML
 ```
 
-kind names those nodes `<cluster>-worker` and `<cluster>-worker2`, not `worker-01`, so
-adjust the definition's `placement` to match.
+The cluster needs the orchestrator image, and a local build is not in any registry it can
+reach — so build it and load it in directly:
+
+```console
+$ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
+$ kind load docker-image orchestrator:dev --name test-orchestrator
+$ export TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
+```
+
+Grant the run's Job what it needs to plan, once:
+
+```console
+$ kubectl apply -f deploy/rbac.yaml
+```
+
+kind names the workers `test-orchestrator-worker` and `test-orchestrator-worker2`, not
+the `worker-01` and `worker-02` the example uses, so point a copy of the example at them:
+
+```console
+$ sed -e 's/worker-01/test-orchestrator-worker/' -e 's/worker-02/test-orchestrator-worker2/' \
+    examples/worker-01-to-worker-02-udp.yaml > kind-pair.yaml
+```
+
+Check the plan without creating anything, then submit:
+
+```console
+$ uv run test-orchestrator submit kind-pair.yaml --dry-run --context kind-test-orchestrator > /dev/null
+$ uv run test-orchestrator submit kind-pair.yaml --service-account test-orchestrator
+```
+
+The first command resolves both nodes read-only and prints the plan. The second runs it:
+phases 2 and 3 in the cluster, then an exit `5` because phases 4 to 11 are still being
+built — see [what a run does today](usage.md#what-a-run-does-today).
+
+Worth trying once, to see the errors a first run can hit: point the definition at
+`test-orchestrator-control-plane` (tainted), `kubectl cordon` a worker, or leave off
+`--service-account`. Each fails with a message that names its fix.
 
 A caution worth stating early: emulated nodes on one machine share that machine's network
 stack, so inter-node traffic is bounded by host CPU and memory bandwidth rather than by a
@@ -137,6 +149,7 @@ src/test_orchestrator/
     cli/            local CLI entry point
 robot/              Robot resources and a thin adapter over the core library
 images/             Dockerfiles
+deploy/             what an administrator applies once per cluster (RBAC)
 exporters/          per-test-type exporters
 tests/              the test suite
 examples/           example .robot and .yaml definitions

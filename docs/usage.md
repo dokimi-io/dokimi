@@ -12,32 +12,66 @@ $ test-orchestrator attach <run-id>             # resume streaming a run already
 ```
 
 - [What a run does today](#what-a-run-does-today)
+- [Before the first run](#before-the-first-run)
 - [validate](#validate)
 - [submit](#submit)
 - [attach](#attach)
 - [image](#image)
 - [Exit codes](#exit-codes)
+- [How nodes are resolved](#how-nodes-are-resolved)
 - [What a submission creates](#what-a-submission-creates)
 - [Choosing the orchestrator image](#choosing-the-orchestrator-image)
 - [Cleaning up](#cleaning-up)
 
 ## What a run does today
 
-Milestone-01 is not finished. A submitted run parses its definition and stops:
+Milestone-01 is not finished. A submitted run parses its definition, resolves its two
+nodes against the cluster, plans the pair, and stops:
 
 ```
-run 20260924-200229-ca532a
+run 20260925-083457-9e7c31
 phase 2 (ingestion): definition parsed
 ...
-phases 3 to 11 are not implemented in this build: planning (#41), preflight (#42),
-execution (#46), validation (#48), results (#49), cleanup and outcome (#51).
-The run stops here without a verdict.
+phase 3 (planning): 1 test, sequential
+  pair-001  worker-01 -> worker-02
+phases 4 to 11 are not implemented in this build: preflight (#42), execution (#46),
+validation (#48), results (#49), cleanup and outcome (#51). The run stops here without
+a verdict.
 ```
 
-It exits `5`, not `0`. A run that stops early must not look like a run that passed.
+It exits `5`, not `0`. A run that stops early must not look like a run that passed. A
+node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`.
 
-Everything else on this page — validation, dry-run rendering, submission, streaming,
-reattachment, exit-code propagation — works now.
+Everything else on this page — validation, dry-run rendering, node resolution,
+submission, streaming, reattachment, exit-code propagation — works now.
+
+## Before the first run
+
+The run's Job reads the cluster's nodes to plan, and nodes are cluster-scoped, so the
+namespace's default service account cannot. Grant it once per cluster:
+
+```console
+$ kubectl apply -f deploy/rbac.yaml
+```
+
+That creates the `test-orchestrator-iperf2` namespace, a `test-orchestrator` service
+account in it, and a read-only ClusterRole — `get` and `list` on nodes, nothing else.
+Then submit with that service account:
+
+```console
+$ test-orchestrator submit test.yaml --service-account test-orchestrator
+```
+
+Without it, the run gets as far as phase 3 and stops with the fix spelled out:
+
+```
+test-orchestrator: listing nodes was refused. Planning resolves the definition's nodes
+against the cluster, which needs `get` and `list` on nodes — a cluster-wide permission.
+deploy/rbac.yaml grants exactly that; apply it, then submit with --service-account
+test-orchestrator.
+```
+
+The grant widens as later phases land, one commented rule per phase.
 
 ## validate
 
@@ -146,6 +180,24 @@ rendering can be saved or diffed on its own, as above.
 A dry run is fully local. It renders from the same function `submit` uses, so the two
 cannot drift, but it never contacts a cluster — not even to read.
 
+**Resolving the plan.** Given `--kubeconfig` or `--context`, a dry run also reads the
+cluster's nodes and resolves the plan against them — read-only, creating nothing:
+
+```console
+$ test-orchestrator submit test.yaml --dry-run --context kind-test > /dev/null
+Planned matrix (1 test, sequential)
+
+  pair-001  worker-01 -> worker-02
+...
+Both nodes exist and can accept a test pod.
+```
+
+Without either flag it does not, and says so — `Planned matrix (1 test, sequential;
+nodes not checked)` — rather than implying the nodes were verified. The ambient
+`KUBECONFIG` is deliberately not enough: ADR-01-06 allows a dry run "a provided
+kubeconfig for read-only cluster info", and a plain `--dry-run` stays one that cannot
+contact anything. This is the way to check node names before submitting.
+
 The rendered `ownerReferences` carry an empty `uid`, which is why the output is not
 directly appliable with `kubectl`. The API server assigns that uid when the owner object
 is created, and submission fills it in before creating anything that points at it.
@@ -250,6 +302,46 @@ reporting one would claim an outcome that does not exist yet.
 
 Robot Framework's own exit codes are never propagated. It returns the number of failed
 tests, which collides numerically with this table and means something entirely different.
+
+## How nodes are resolved
+
+Phase 3 reads the cluster's nodes **once**, at the start of the run, and plans against
+that snapshot. The plan does not change if the cluster does mid-run (ADR-04-01).
+
+Each named node must exist, and must be able to take a test pod. A node cannot if it is:
+
+| | |
+| --- | --- |
+| **cordoned** | `spec.unschedulable`, set by `kubectl cordon` |
+| **not Ready** | the `Ready` condition is `False`, `Unknown`, or missing |
+| **tainted** | a `NoSchedule` or `NoExecute` taint — test pods carry no tolerations |
+
+`PreferNoSchedule` is a preference, not a prohibition, and does not block. A
+control-plane node is usually tainted `NoSchedule`, so naming one fails:
+
+```
+target node 'kind-control-plane' cannot accept a test pod: it has the taint
+node-role.kubernetes.io/control-plane:NoSchedule, and test pods carry no tolerations
+```
+
+Every reason is reported, not just the first. A name that does not exist gets the
+nearest match and the list of nodes the cluster does have:
+
+```
+target node 'worker-2' does not exist in the cluster (did you mean 'worker-02'?).
+The cluster's nodes are: control-plane, worker-01, worker-02
+```
+
+All of these are `config_error`, exit `3`, and happen before anything is deployed.
+
+Whether a node has *room* for the pod is a different question — it depends on requests,
+other workloads and timing — and belongs to preflight (M1-07), which asks the scheduler
+rather than guessing on its behalf.
+
+The plan is recorded in the run's metadata: the placement mode (`explicit`), the
+concurrency (`sequential`), and each pair's `test_id` and nodes. Test ids are
+`pair-001`, `pair-002` and so on, in the plan's order — which is deterministic, because
+nodes are sorted by name before anything is planned.
 
 ## What a submission creates
 

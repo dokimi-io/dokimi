@@ -8,7 +8,7 @@ Job, and you never install that — the CLI submits it.
 | | |
 | --- | --- |
 | Python | **3.14 or newer** |
-| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps in the run's namespace — and create that namespace, the first time, if nobody has yet |
+| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps in the run's namespace — and, once, an administrator to apply `deploy/rbac.yaml`, which also creates that namespace |
 | A container registry | only if your cluster cannot reach `ghcr.io` |
 
 Robot Framework is **not** required to install or run the CLI. It is a runtime dependency
@@ -71,6 +71,17 @@ Submitting needs to create Jobs and ConfigMaps in the run's namespace. It checks
 namespace exists before anything else and creates it only if it does not, so once an
 administrator has created it — or a first run has — later submissions need only those
 namespaced permissions, not the cluster-wide right to create namespaces.
+
+The Job a run submits authenticates as a service account of its own, not as you. It
+needs to read the cluster's nodes to plan, which is a cluster-wide permission, so an
+administrator grants it once per cluster:
+
+```console
+$ kubectl apply -f deploy/rbac.yaml
+```
+
+Runs then pass `--service-account test-orchestrator`. See
+[before the first run](usage.md#before-the-first-run).
 
 There is deliberately no configuration file of our own in that chain. The
 configuration-sources decision (ADR-04-02) is still open, and Milestone-01 must not

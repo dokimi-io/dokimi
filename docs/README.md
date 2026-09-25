@@ -23,8 +23,8 @@ a subset of it.
 
 ## Status
 
-Milestone-01 is in progress. The CLI submits a run and follows it, but the in-cluster
-orchestrator stops after parsing the definition — planning, preflight, execution,
-measurement, validation, results and cleanup are still being built, so a submitted run
-currently exits `5` rather than producing a verdict. [Usage](usage.md#what-a-run-does-today)
+Milestone-01 is in progress. The CLI submits a run and follows it, and the in-cluster
+orchestrator parses the definition and plans the run against the cluster's real nodes —
+but preflight, execution, measurement, validation, results and cleanup are still being
+built, so a submitted run currently exits `5` rather than producing a verdict. [Usage](usage.md#what-a-run-does-today)
 says exactly how far a run gets.

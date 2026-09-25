@@ -31,7 +31,7 @@ _NOT_FOUND = 404
 
 
 class KubernetesCluster:
-    """Seven operations against a real cluster.
+    """Eight operations against a real cluster.
 
     Every method translates both ways the client library can fail into
     :class:`ClusterError`: an ``ApiException`` when the API server answered and refused,
@@ -181,6 +181,27 @@ class KubernetesCluster:
                 )
         except ApiException as error:
             raise ClusterError(_explain(error, f"deleting ConfigMaps in {namespace}")) from error
+
+    def list_nodes(self) -> list[dict[str, Any]]:
+        """Every node in the cluster.
+
+        Nodes are cluster-scoped, so this needs a ClusterRole where every other call
+        here needs only a namespaced Role. A refusal is therefore the most likely RBAC
+        failure a run meets, and it gets a message that says what to grant.
+        """
+        try:
+            with _transport("listing nodes"):
+                nodes = self._core.list_node()
+        except ApiException as error:
+            if error.status == 403:
+                raise ClusterError(
+                    "listing nodes was refused. Planning resolves the definition's nodes "
+                    "against the cluster, which needs `get` and `list` on nodes — a "
+                    "cluster-wide permission. deploy/rbac.yaml grants exactly that; apply "
+                    "it, then submit with --service-account test-orchestrator."
+                ) from error
+            raise ClusterError(_explain(error, "listing nodes")) from error
+        return [self._to_dict(node) for node in nodes.items]
 
     # -- helpers --------------------------------------------------------------
 
