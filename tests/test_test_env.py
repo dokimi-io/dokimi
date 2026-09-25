@@ -227,3 +227,18 @@ def test_files_bash_reads_keep_unix_line_endings_on_every_checkout() -> None:
 
     for pattern in ("*.sh", "*.env"):
         assert any(r.split()[:1] == [pattern] and "eol=lf" in r for r in rules), pattern
+
+
+def test_the_only_sudo_is_behind_load_modules() -> None:
+    # Nothing changes the host kernel unless the user asked: either they run the command
+    # themselves, or they pass --load-modules and are told first. So the script may run
+    # sudo in exactly one place, and only after that flag was checked.
+    lines = SCRIPT.read_text().splitlines()
+    sudo = [i for i, line in enumerate(lines) if re.match(r"^\s*sudo ", line)]
+
+    assert len(sudo) == 1, f"expected exactly one sudo, found lines {[i + 1 for i in sudo]}"
+    before = "\n".join(lines[: sudo[0]])
+    function = before[before.rindex("require_br_netfilter() {") :]
+    assert 'if [[ "$1" != yes ]]; then' in function
+    assert "die " in function.split('if [[ "$1" != yes ]]; then', 1)[1]
+    assert (TEST_ENV / "install-tools.sh").read_text().count("sudo") == 0

@@ -1,6 +1,6 @@
 # The test suite
 
-318 tests, none of which need a cluster, a network or a container runtime. Everything runs
+319 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -28,7 +28,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
-| [`test_test_env.py`](test_test_env.py) | 24 | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_test_env.py`](test_test_env.py) | 25 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |

@@ -53,7 +53,7 @@ not because a run needs them.
 
 | | |
 | --- | --- |
-| `up PROFILE` | Provision the cluster, install the CNI if the tool has not, wait until every node is Ready |
+| `up PROFILE [--load-modules]` | Provision the cluster, install the CNI if the tool has not, wait until every node is Ready. `--load-modules` lets it load a kernel module the profile needs, with `sudo` — see below |
 | `check` | Verify the cluster provides what a run needs — see below |
 | `nodes` | Print the schedulable workers, one per line, for use in a test definition |
 | `load IMAGE` | Side-load a locally built image into every node |
@@ -67,6 +67,34 @@ State lives in `.test-env/` at the repository root, which is git-ignored: the cl
 kubeconfig and the name of the active profile. **Your default kubeconfig is never touched and
 your current context is never switched** — point at the cluster with
 `export KUBECONFIG=.test-env/kubeconfig`.
+
+## What it changes on your machine
+
+Everything, listed, so nothing is a surprise:
+
+| | Undone by |
+| --- | --- |
+| Docker containers, a network and volumes for the cluster | `down`, which fails if any of them remain |
+| `.test-env/`: the cluster's kubeconfig and the active profile | `down` |
+| Your default kubeconfig and current context | never touched |
+| **Kernel modules** | see below — they stay loaded until reboot |
+
+**This script never changes your kernel unless you ask it to.** One profile needs a module that
+not every host loads: `kind-flannel` needs `br_netfilter`. If it's missing, `up` stops before
+creating anything and tells you. Then either load it yourself:
+
+```console
+$ sudo modprobe br_netfilter
+```
+
+or pass `--load-modules`, and `up` loads it for you. It says what it's about to do before it
+runs `sudo`, so you see the prompt and why it appears.
+
+**The components it starts are not always as careful.** k3s, a CNI such as Cilium or Calico, or
+the kernel's own automatic loading can pull modules in while a cluster comes up — tunnel drivers
+like `vxlan`, `geneve` and `ipip`, for instance. `up` compares the host kernel's modules before
+and after, and names any that appeared, whoever loaded them. On macOS, "the host kernel" is the
+Linux VM your Docker runs in, not macOS itself.
 
 ## What `check` verifies
 
@@ -127,18 +155,12 @@ whichever this cluster has.
   plugin, which kind's node image does not ship. Without it every pod fails with "failed to
   delegate add: failed to find plugin" and CoreDNS never starts, although every node reports
   Ready. `up kind-flannel` adds that one binary from the pinned reference plugins.
-- **flannel on kind needs the `br_netfilter` kernel module**, which not every Linux host loads.
-  GitHub's Ubuntu runners don't, for one. OrbStack does, and so does k3s, which loads it itself.
-  Without it, every flannel pod crash-loops with "Failed to check br_netfilter".
-  `up kind-flannel` checks before creating anything and tells you what to run, but it does not
-  load a kernel module on your machine for you:
-
-  ```console
-  $ sudo modprobe br_netfilter
-  $ echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf   # to keep it across reboots
-  ```
-
-  CI loads it for this profile. The other six profiles don't need it.
+- **flannel on kind needs the `br_netfilter` kernel module**, which not every Linux host loads —
+  GitHub's Ubuntu runners don't, OrbStack does. Without it every flannel pod crash-loops with
+  "Failed to check br_netfilter". `up kind-flannel` checks first; see
+  [what it changes on your machine](#what-it-changes-on-your-machine) for the two ways to provide
+  it. To keep it across reboots:
+  `echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf`.
 - **Cilium on k3d needs to be told where the API server is.** cilium-cli takes the address from
   the kubeconfig. k3d's kubeconfig points at `0.0.0.0` and a host-mapped port, which means
   nothing inside the cluster, so the agents retry forever and stay Pending. `up k3d-cilium`

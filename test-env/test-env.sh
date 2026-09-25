@@ -3,6 +3,7 @@
 #
 #   test-env/test-env.sh profiles           list the profiles
 #   test-env/test-env.sh up PROFILE         provision a cluster: one control plane, three workers
+#                        [--load-modules]  and load a kernel module the profile needs, with sudo
 #   test-env/test-env.sh check              verify it provides what a run needs
 #   test-env/test-env.sh nodes              print the schedulable worker names
 #   test-env/test-env.sh load IMAGE         side-load a locally built image into every node
@@ -94,8 +95,15 @@ node_containers() { # the Docker containers that are this cluster's nodes
 # -- up ------------------------------------------------------------------------------------
 
 cmd_up() {
-  local profile="${1:-}"
-  [[ -n "$profile" ]] || die "usage: test-env.sh up PROFILE. Profiles: ${PROFILES[*]}"
+  local profile="" load_modules=no arg
+  for arg in "$@"; do
+    case "$arg" in
+      --load-modules) load_modules=yes ;;
+      -*) die "unknown option '$arg'. usage: test-env.sh up PROFILE [--load-modules]" ;;
+      *) [[ -z "$profile" ]] || die "one profile at a time"; profile="$arg" ;;
+    esac
+  done
+  [[ -n "$profile" ]] || die "usage: test-env.sh up PROFILE [--load-modules]. Profiles: ${PROFILES[*]}"
   require_profile "$profile"
   [[ -f "$state/profile" ]] && die "an environment is already up ($(cat "$state/profile")). Tear it down first: test-env/test-env.sh down"
 
@@ -107,7 +115,8 @@ cmd_up() {
   mkdir -p "$state"
 
   case "$profile" in kind-kindnet | k3d-flannel) config="$here/$tool/cluster.yaml" ;; *) config="$here/$tool/cluster-no-cni.yaml" ;; esac
-  [[ "$profile" == kind-flannel ]] && require_br_netfilter
+  [[ "$profile" == kind-flannel ]] && require_br_netfilter "$load_modules"
+  local modules_before; modules_before="$(kernel_modules)"
 
   say "creating $profile: 1 control plane + $WORKERS workers, Kubernetes from versions.env"
   case "$tool" in
@@ -128,6 +137,7 @@ cmd_up() {
   say "waiting for every node to be Ready"
   kubectl wait --for=condition=Ready node --all --timeout=300s >/dev/null
   kubectl -n kube-system rollout status deployment/coredns --timeout=300s >/dev/null
+  report_kernel_changes "$modules_before" "$profile"
   say "$profile is up. export KUBECONFIG=$KUBECONFIG"
 }
 
@@ -187,15 +197,45 @@ install_cni() {
   esac
 }
 
-require_br_netfilter() {
+require_br_netfilter() { # require_br_netfilter LOAD(yes|no)
   # flannel refuses to start without the br_netfilter kernel module ("Failed to check
   # br_netfilter"), crash-looping on every node. Not every host loads it: GitHub's Ubuntu
   # runners do not, OrbStack's kernel does. A container shares the host kernel, and the
   # module's settings appear in every network namespace once it is loaded, so a
-  # throwaway container can tell before any cluster exists. This only checks: loading a
-  # kernel module is a change to your machine, and it is yours to make.
-  if ! docker run --rm "$CHECK_IMAGE" test -e /proc/sys/net/bridge/bridge-nf-call-iptables >/dev/null 2>&1; then
-    die "kind-flannel needs the br_netfilter kernel module, which this host has not loaded. Load it with: sudo modprobe br_netfilter (to keep it across reboots: echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf). Every other profile works without it."
+  # throwaway container can tell before any cluster exists.
+  #
+  # Loading a kernel module changes the host, so it never happens unasked: without
+  # --load-modules this stops and says what to run; with it, it says what it is about to
+  # do, then does it with sudo, where you can see it.
+  has_br_netfilter && return 0
+  if [[ "$1" != yes ]]; then
+    die "kind-flannel needs the br_netfilter kernel module, which this host has not loaded. Either load it yourself: sudo modprobe br_netfilter (to keep it across reboots: echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf), or rerun with --load-modules to have this script run that modprobe for you. Every other profile works without it."
+  fi
+  say "loading the br_netfilter kernel module into this host's kernel, with sudo, because you passed --load-modules. It stays loaded until reboot, or until: sudo modprobe -r br_netfilter"
+  sudo modprobe br_netfilter || die "could not load br_netfilter. Load it yourself (sudo modprobe br_netfilter) and rerun without --load-modules"
+  has_br_netfilter || die "br_netfilter was loaded but its settings are not visible to containers; this host's Docker cannot run kind-flannel"
+}
+
+has_br_netfilter() {
+  docker run --rm "$CHECK_IMAGE" test -e /proc/sys/net/bridge/bridge-nf-call-iptables >/dev/null 2>&1
+}
+
+kernel_modules() {
+  # The host kernel's loaded modules, as a container sees them: /proc/modules is not
+  # namespaced, so this is the kernel the cluster's nodes share - the Linux VM, on macOS.
+  docker run --rm "$CHECK_IMAGE" cut -d' ' -f1 /proc/modules 2>/dev/null | sort
+}
+
+report_kernel_changes() { # report_kernel_changes MODULES_BEFORE PROFILE
+  # This script loads a kernel module only when asked. The tools it drives are not so
+  # careful: k3s, a CNI, or the kernel's own auto-loading can pull modules in while a
+  # cluster comes up. Nothing changes the host kernel without the user being told, so
+  # whatever appeared during provisioning is reported, whoever loaded it.
+  local added
+  added="$(comm -13 <(echo "$1") <(kernel_modules) | tr '\n' ' ')"
+  if [[ -n "${added// /}" ]]; then
+    say "note: while $2 came up, these kernel modules were loaded into the host kernel: $added"
+    say "      This script did not load them; the cluster's components or the kernel did. They stay loaded until reboot."
   fi
 }
 

@@ -44,6 +44,10 @@ jobs:
             consecutive: true
           - profile: k3d-flannel
             consecutive: true
+          # flannel needs br_netfilter, which GitHub's Ubuntu runners do not load. The
+          # script never changes the kernel unasked; --load-modules is the asking.
+          - profile: kind-flannel
+            up_args: --load-modules
     steps:
       - uses: actions/checkout@v4
 
@@ -52,15 +56,8 @@ jobs:
           test-env/install-tools.sh .test-env/bin
           echo "$PWD/.test-env/bin" >> "$GITHUB_PATH"
 
-      # flannel needs the br_netfilter module, which GitHub's Ubuntu runners do not load.
-      # test-env.sh only checks for it, since on a workstation loading a kernel module is
-      # the owner's call; a runner is disposable, so it is loaded here.
-      - name: Load br_netfilter for flannel
-        if: matrix.profile == 'kind-flannel'
-        run: sudo modprobe br_netfilter
-
       - name: Provision
-        run: test-env/test-env.sh up ${{ matrix.profile }}
+        run: test-env/test-env.sh up ${{ matrix.profile }} ${{ matrix.up_args }}
 
       - name: Check
         run: test-env/test-env.sh check
@@ -71,7 +68,7 @@ jobs:
       - name: Provision again from the torn-down state
         if: matrix.consecutive
         run: |
-          test-env/test-env.sh up ${{ matrix.profile }}
+          test-env/test-env.sh up ${{ matrix.profile }} ${{ matrix.up_args }}
           test-env/test-env.sh down
 
       # Only reached when a step above failed and left a cluster up. It collects what is
