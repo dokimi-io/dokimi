@@ -163,12 +163,14 @@ own exit code.
 
 ```console
 $ test-orchestrator submit test.yaml --dry-run > manifests.yaml
-Planned matrix (1 test)
+Planned matrix (1 test, sequential; nodes not checked)
 
   worker-01 -> worker-02
     type       iperf2 over udp
     duration   30s
     bandwidth  1G
+
+Nodes were not checked against a cluster. A dry run contacts nothing unless given --kubeconfig or --context, and then only to read.
 
 Run id     20260924-200229-ca532a
 Namespace  test-orchestrator-iperf2
