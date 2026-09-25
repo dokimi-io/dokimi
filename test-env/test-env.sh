@@ -247,13 +247,13 @@ kernel_settings() {
   # The host-wide kernel settings under /proc/sys, as `path=value`. Only kernel/, vm/ and
   # fs/: net/ is per network namespace, so a container sees its own values there, not the
   # host's. Left out too are values that change by themselves - counters, a random UUID,
-  # the last PID - and the container's own hostname, measured by snapshotting twice with
-  # nothing in between.
+  # the last PID, disk-quota statistics - and the container's own hostname. Found by
+  # snapshotting twice with nothing in between, and by what CI's clean runners reported.
   docker run --rm "$CHECK_IMAGE" sh -c '
     cd /proc/sys && find kernel vm fs -type f | sort | while read -r f; do
       v="$(tr "\n\t" "  " < "$f" | sed "s/ *\$//")" && printf "%s=%s\n" "$f" "$v"
     done' 2>/dev/null \
-    | grep -v -E '^(fs/(dentry-state|file-nr|inode-nr|inode-state|aio-nr)|kernel/(hostname|domainname|ns_last_pid|random/uuid|random/entropy_avail|pty/nr))='
+    | grep -v -E '^(fs/(dentry-state|file-nr|inode-nr|inode-state|aio-nr|quota/(lookups|drops|reads|writes|cache_hits|allocated_dquots|free_dquots|syncs))|kernel/(hostname|domainname|ns_last_pid|random/uuid|random/entropy_avail|pty/nr))='
 }
 
 report_kernel_changes() { # report_kernel_changes MODULES_BEFORE SETTINGS_BEFORE PROFILE
@@ -276,7 +276,8 @@ report_kernel_changes() { # report_kernel_changes MODULES_BEFORE SETTINGS_BEFORE
       old="$(echo "$2" | grep "^$key=" | cut -d= -f2- || true)"
       say "        ${key//\//.}: ${old:-(not present)} -> ${line#*=}"
     done <<< "$changed"
-    say "      This script did not set them; the cluster's components did. They stay until reboot, or until set back with sysctl."
+    say "      This script did not set them; the cluster's components did. They stay until reboot. To undo one: sudo sysctl KEY=OLD-VALUE"
+    say "      (kernel.unprivileged_bpf_disabled=1 is the exception: the kernel refuses to change it again until reboot)."
   fi
 }
 
