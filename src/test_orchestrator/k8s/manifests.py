@@ -53,12 +53,12 @@ DEADLINE_MARGIN_SECONDS = 900
 
 
 def resource_name(run_id: str, suffix: str = "") -> str:
-    """A DNS-1123 object name for a run.
+    """A DNS-1123 object name for a run: ``run-<run_id><suffix>``.
 
-    The ``run_id`` keeps its canonical spelling in labels, which permit uppercase, and is
-    lowercased here, which object names do not.
+    The run id is used verbatim. ADR-02-08's format is lowercase letters, digits and
+    hyphens precisely so that an object name and a label spell the same run the same way.
     """
-    return f"run-{run_id.lower()}{suffix}"
+    return f"run-{run_id}{suffix}"
 
 
 def definition_file_name(source_suffix: str) -> str:

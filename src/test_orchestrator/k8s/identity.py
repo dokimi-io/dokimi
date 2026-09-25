@@ -1,7 +1,10 @@
 """Run identity and the ownership labels every created object carries.
 
-ADR-02-04 fixes the ``run_id`` format — a sortable ``<timestamp>-<short-random>``, not a
-UUID, so it stays readable in a log line and orders naturally in the archive. ADR-05-02
+The ``run_id`` format is ADR-02-08's — ``YYYYMMDD-HHMMSS-xxxxxx``, a UTC timestamp to the
+second and six characters of ``[0-9a-z]`` — the same format M1-05 (#28) implements, so
+the two agree on the join key of the whole architecture before either merges. ADR-02-08
+refines ADR-02-04's "sortable ``<timestamp>-<short-random>``, not a UUID"; it is still
+``proposed``, and this module changes with it if its deciders do. ADR-05-02
 fixes the labels: ``app.kubernetes.io/managed-by`` and ``test-orchestrator/run-id`` at
 minimum, and nothing without them is ever modified or deleted.
 
@@ -38,14 +41,31 @@ COMPONENT_LABEL = "app.kubernetes.io/component"
 
 MANAGED_BY = "test-orchestrator"
 
-#: ``<timestamp>-<short-random>``: 20250924T101530Z-4f2a9c. Sortable as plain text.
-_RUN_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{6}$")
+#: ``YYYYMMDD-HHMMSS-xxxxxx`` (ADR-02-08): 20260924-143012-k3f9x2.
+#:
+#: Fixed width, so plain string order is chronological order. Lowercase letters, digits
+#: and hyphens only, so one spelling is valid as a label value, as part of an object name,
+#: as a Prometheus label value and as a CSV cell, with no conversion in any of them.
+_RUN_ID = re.compile(r"^(?P<timestamp>\d{8}-\d{6})-(?P<suffix>[0-9a-z]{6})$")
+_TIMESTAMP = "%Y%m%d-%H%M%S"
+_SUFFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+_SUFFIX_LENGTH = 6
+_EXAMPLE = "20260924-143012-k3f9x2"
 
 
 def new_run_id(now: datetime | None = None) -> str:
-    """Generate a run identifier for a run starting at *now* (UTC)."""
-    moment = (now or datetime.now(UTC)).astimezone(UTC)
-    return f"{moment.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
+    """Generate the run id for a run starting at *now*.
+
+    A timezone-naive *now* is refused rather than guessed at (ADR-02-08): read as local
+    time, it would put a run started in Berlin an hour or two out of order against one
+    started in London, and the format exists to order runs.
+    """
+    moment = datetime.now(UTC) if now is None else now
+    if moment.tzinfo is None:
+        raise ValueError("new_run_id needs a timezone-aware datetime")
+    timestamp = moment.astimezone(UTC).strftime(_TIMESTAMP)
+    suffix = "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(_SUFFIX_LENGTH))
+    return f"{timestamp}-{suffix}"
 
 
 def validate_run_id(run_id: str) -> str:
@@ -54,12 +74,23 @@ def validate_run_id(run_id: str) -> str:
     Reattaching takes a ``run_id`` from a human or a CI variable and puts it straight
     into a label selector, so it is checked here rather than trusted. A malformed one is
     a ``config_error``, not a failed lookup that looks like "your run has finished".
+
+    Validation is strict, as ADR-02-08 requires: the value must match the pattern *and*
+    encode a real calendar date and time. Surrounding whitespace is the only thing
+    stripped; nothing else is normalised, so ``K3F9X2`` is refused rather than lowercased.
     """
     candidate = run_id.strip()
-    if not _RUN_ID.match(candidate):
+    match = _RUN_ID.match(candidate)
+    if match is not None:
+        try:
+            datetime.strptime(match["timestamp"], _TIMESTAMP)
+        except ValueError:
+            match = None
+    if match is None:
         raise ConfigError(
-            f"malformed run id {run_id!r}. Expected <timestamp>-<short-random>, "
-            "for example '20250924T101530Z-4f2a9c' (ADR-02-04)"
+            f"malformed run id {run_id!r}. Expected YYYYMMDD-HHMMSS-xxxxxx — a UTC "
+            f"timestamp, then six characters of [0-9a-z] — for example {_EXAMPLE!r} "
+            "(ADR-02-08)"
         )
     return candidate
 

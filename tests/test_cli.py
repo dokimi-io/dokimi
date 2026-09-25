@@ -19,7 +19,7 @@ from tests.fake_cluster import ExplodingCluster, FakeCluster
 
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = f"{IMAGE_REPOSITORY}@{DIGEST}"
-RUN_ID = "20260101T100000Z-4f2a9c"
+RUN_ID = "20260101-100000-4f2a9c"
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "worker-01-to-worker-02-udp.yaml"
 
 

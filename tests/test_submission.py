@@ -40,7 +40,7 @@ from test_orchestrator.model import (
 )
 from tests.fake_cluster import FakeCluster
 
-RUN_ID = "20260101T100000Z-4f2a9c"
+RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/test-orchestrator/orchestrator@sha256:" + "ab" * 32
 
 
@@ -194,7 +194,7 @@ def test_a_job_that_never_schedules_a_pod_times_out_with_a_way_back() -> None:
 # -- review of #27 --------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", ["My Run", "a" * 70, "run,id=x", "20260101T100000Z-4f2a9c,x=y"])
+@pytest.mark.parametrize("bad", ["My Run", "a" * 70, "run,id=x", "20260101-100000-4f2a9c,x=y"])
 def test_a_given_run_id_is_validated_before_anything_is_rendered(
     definition: TestDefinition, bad: str
 ) -> None:

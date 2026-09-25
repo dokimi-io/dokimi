@@ -33,7 +33,7 @@ from test_orchestrator.model import (
     Unit,
 )
 
-RUN_ID = "20260101T100000Z-4f2a9c"
+RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/test-orchestrator/orchestrator@sha256:" + "ab" * 32
 
 #: Kubernetes object names: DNS-1123 labels, which forbid the uppercase a run id has.
@@ -152,7 +152,7 @@ def test_object_names_are_valid_and_derived_from_the_run_id(
     for manifest in manifests:
         name = manifest["metadata"]["name"]
         assert DNS_1123.match(name), f"{name} is not a valid object name"
-        assert RUN_ID.lower() in name
+        assert RUN_ID in name
 
 
 def test_the_definition_travels_with_the_run(manifests: list[dict[str, Any]]) -> None:
@@ -238,5 +238,7 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
     assert _job(with_account)["spec"]["template"]["spec"]["serviceAccountName"] == "runner"
 
 
-def test_resource_names_lowercase_the_run_id() -> None:
-    assert resource_name(RUN_ID) == "run-20260101t100000z-4f2a9c"
+def test_resource_names_use_the_run_id_verbatim() -> None:
+    # ADR-02-08's format is already a valid object-name segment, so an object name and a
+    # label spell the same run the same way. The previous format needed lowercasing here.
+    assert resource_name(RUN_ID) == f"run-{RUN_ID}"
