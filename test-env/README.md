@@ -78,6 +78,7 @@ Everything, listed, so nothing is a surprise:
 | `.test-env/`: the cluster's kubeconfig and the active profile | `down` |
 | Your default kubeconfig and current context | never touched |
 | **Kernel modules** | see below — they stay loaded until reboot |
+| **Host-wide kernel settings** a cluster component changes | see below — they stay until reboot |
 
 **This script never changes your kernel unless you ask it to.** One profile needs a module that
 not every host loads: `kind-flannel` needs `br_netfilter`. If it's missing, `up` stops before
@@ -111,8 +112,25 @@ test-env: note: while kind-kindnet came up, these kernel modules were loaded int
 test-env:       This script did not load them; the cluster's components or the kernel did. They stay loaded until reboot.
 ```
 
-On a machine that has run Kubernetes before, most of these are already loaded, and `up` has
-nothing to report. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
+**It does the same for host-wide kernel settings.** kubelet and some CNIs set sysctls when they
+start, for example `vm.overcommit_memory` or `kernel.panic`, or `kernel.unprivileged_bpf_disabled`
+for Cilium. Those aren't namespaced, so a node container that sets one changes it for the whole
+host. `up` reads every setting under `kernel.*`, `vm.*` and `fs.*` before and after, and names
+each one that changed, with its old and new value:
+
+```
+test-env: note: while kind-kindnet came up, these host-wide kernel settings changed:
+test-env:         vm.overcommit_memory: 0 -> 1
+test-env:       This script did not set them; the cluster's components did. They stay until reboot, or until set back with sysctl.
+```
+
+To undo one, set the old value back, for example `sudo sysctl vm.overcommit_memory=0`. Counters
+that change by themselves, such as open-file counts and the random UUID, aren't compared. Neither
+is `net.*`: most of it belongs to a network namespace, so each node gets its own copy and the
+host's isn't touched.
+
+On a machine that has run Kubernetes before, most of these are already loaded or set, and `up`
+has nothing to report. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
 itself.
 
 ## What `check` verifies

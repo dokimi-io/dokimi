@@ -242,3 +242,18 @@ def test_the_only_sudo_is_behind_load_modules() -> None:
     assert 'if [[ "$1" != yes ]]; then' in function
     assert "die " in function.split('if [[ "$1" != yes ]]; then', 1)[1]
     assert (TEST_ENV / "install-tools.sh").read_text().count("sudo") == 0
+
+
+def test_up_records_the_profile_before_it_creates_anything() -> None:
+    # `down` tears down whichever profile is recorded. Recorded only after creation, a
+    # failure inside the create command left a cluster that `down` refused to touch.
+    body = re.search(r"^cmd_up\(\) \{\n(.*?)\n\}", SCRIPT.read_text(), re.S | re.M)
+    assert body, "test-env.sh no longer defines cmd_up"
+    up = body.group(1)
+    recorded = up.index('echo "$profile" > "$state/profile"')
+
+    for create in ("kind create cluster", "k3d cluster create"):
+        command = re.search(r"^[ \t]+" + create, up, re.M)  # the command, not a comment
+        assert command, f"cmd_up no longer runs {create}"
+        assert recorded < command.start(), f"the profile is recorded after {create}"
+    assert up.count('> "$state/profile"') == 1

@@ -1,6 +1,6 @@
 # The test suite
 
-319 tests, none of which need a cluster, a network or a container runtime. Everything runs
+324 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -28,7 +28,8 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
-| [`test_test_env.py`](test_test_env.py) | 25 | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_test_env.py`](test_test_env.py) | 26 | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
 | [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
@@ -64,7 +65,7 @@ without waiting for either.
 
 ## Tests that are about decisions, not behaviour
 
-Six files assert things that would otherwise decay quietly, because the code keeps
+Seven files assert things that would otherwise decay quietly, because the code keeps
 working while being wrong:
 
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
@@ -93,10 +94,17 @@ working while being wrong:
   - every version lives in `versions.env`, with images pinned by digest and manifests by checksum;
   - the script, the CI workflow and the README list the same profiles, with the same measured
     NetworkPolicy enforcement;
-  - the scripts avoid bash-4-only syntax, because macOS still ships bash 3.2.
+  - the scripts avoid bash-4-only syntax, because macOS still ships bash 3.2;
+  - `up` records the profile before it creates a cluster, so a failed `up` never leaves one
+    that `down` refuses to remove.
 
   CI's test-environment workflow does the provisioning. This is what catches the one-line edit
   that breaks it before anyone does.
+- [`test_workflows.py`](test_workflows.py) checks that every action in `.github/workflows/`
+  is pinned to a 40-character commit SHA, with the version in a trailing comment. A tag such as
+  `@v4` can be moved to different code by whoever controls that repository, and the release
+  workflow runs with `packages: write` and `id-token: write`. A tag works just as well until
+  the day it is moved, so only a test notices it coming back.
 - [`test_core_independence.py`](test_core_independence.py) imports every core module in a
   subprocess and fails if anything named `robot` appears in `sys.modules`. The subprocess
   is the point: the result must not be contaminated by whatever the rest of the session
