@@ -8,7 +8,7 @@ Job, and you never install that — the CLI submits it.
 | | |
 | --- | --- |
 | Python | **3.14 or newer** |
-| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps |
+| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps in the run's namespace — and create that namespace, the first time, if nobody has yet |
 | A container registry | only if your cluster cannot reach `ghcr.io` |
 
 Robot Framework is **not** required to install or run the CLI. It is a runtime dependency
@@ -58,14 +58,19 @@ fetches a matching interpreter if your system has none.
 
 ## Cluster credentials
 
-The CLI finds a cluster the way any Kubernetes tool does, in this order:
+The CLI picks cluster credentials in this order:
 
-1. in-cluster service account credentials, when running inside a pod;
-2. `--kubeconfig` and `--context`, when given;
-3. `$KUBECONFIG`, or `~/.kube/config`.
+1. `--kubeconfig` and `--context`, when either is given — and then only those;
+2. otherwise, in-cluster service account credentials, when running inside a pod;
+3. otherwise, `$KUBECONFIG`, or `~/.kube/config`.
 
-The first entry is why the same command works unchanged in a CI job that runs inside the
-cluster it is testing.
+The second entry is why the same command works unchanged in a CI job that runs inside the
+cluster it is testing. The first is how to override it there.
+
+Submitting needs to create Jobs and ConfigMaps in the run's namespace. It checks that the
+namespace exists before anything else and creates it only if it does not, so once an
+administrator has created it — or a first run has — later submissions need only those
+namespaced permissions, not the cluster-wide right to create namespaces.
 
 There is deliberately no configuration file of our own in that chain. The
 configuration-sources decision (ADR-04-02) is still open, and Milestone-01 must not

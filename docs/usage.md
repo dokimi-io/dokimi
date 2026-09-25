@@ -218,7 +218,7 @@ implementation detail (ADR-01-08).
 | `0` | run completed, overall pass |
 | `1` | run completed, at least one non-optional pair failed |
 | `2` | at least one non-optional pair errored, or a post-run anomaly |
-| `3` | invalid request, detected before anything was created |
+| `3` | invalid request — a bad definition, run id or flag — detected before anything was created |
 | `4` | run-level preflight failure |
 | `5` | internal or unexpected orchestrator error |
 | `130` | you pressed Ctrl-C |
@@ -228,8 +228,21 @@ error means part of the matrix was not validly measured, and an incomplete pictu
 more than any single finding within it.
 
 Codes `0` to `2` are the run's own verdict. It is computed in the cluster and propagated
-unchanged — the CLI does not re-derive it from what it saw in the log. `3` and `5` are the
-CLI's own: a definition that never reached the cluster, and a submission path that broke.
+unchanged — the CLI does not re-derive it from what it saw in the log.
+
+Codes `3` to `5` can come from either side of the cluster boundary. The CLI produces `3`
+for a request it rejects locally, and `5` when submitting or following breaks — an API
+server it cannot reach, a log stream that drops, or a bug. The run in the cluster produces
+them for the same classes of problem it finds there. Either way the code is what CI sees,
+so nothing but these six ever reaches it from a run:
+
+- **A container that exits outside the table** — `137` after an out-of-memory kill, `143`
+  after a `SIGTERM` — exits `5`, with the raw code and what it usually means. Passing `137`
+  through would hand CI a number that means nothing here.
+- **A run stopped by its deadline** exits `5` with a message saying so. The deadline is the
+  Job's `activeDeadlineSeconds`; see [what a submission creates](#what-a-submission-creates).
+- **A crash in the CLI itself** exits `5` with a traceback to report, rather than Python's
+  default `1`, which would read as a failed test.
 
 `130` is deliberately outside that table. Interrupting a log stream is not a verdict, and
 reporting one would claim an outcome that does not exist yet.
@@ -250,7 +263,13 @@ Three objects, in this order:
 They live in a namespace derived from the test type — `test-orchestrator-iperf2` — shared
 by every run of that type rather than created per run, which would need cluster-level
 permission on every invocation and make cleanup wait on namespace deletion (ADR-05-02).
-The namespace is created if it is not already there.
+The namespace is checked first and created only if it is not already there, so once it
+exists, submitting needs only namespaced permissions.
+
+If a later step of the submission fails — the Job is refused, say — the owner object is
+deleted again, and takes with it anything already bound to it. That is different from a
+failed *run*, whose objects are kept as evidence: a submission that never got as far as
+a Job has no evidence to keep.
 
 Every object carries `app.kubernetes.io/managed-by: test-orchestrator` and
 `test-orchestrator/run-id: <id>`. Nothing without those labels is ever modified or

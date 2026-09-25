@@ -1,6 +1,6 @@
 # The test suite
 
-211 tests, none of which need a cluster, a network or a container runtime. Everything runs
+247 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -22,8 +22,9 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_examples.py`](test_examples.py) | 4 | The shipped examples parse, and the two formats agree |
 | [`test_identity.py`](test_identity.py) | 13 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
-| [`test_submission.py`](test_submission.py) | 10 | Submitting, following and reattaching |
-| [`test_cli.py`](test_cli.py) | 28 | Every command, and the exit code each produces |
+| [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 7 | How the real Kubernetes adapter translates the client library's failures |
+| [`test_cli.py`](test_cli.py) | 34 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
@@ -42,6 +43,12 @@ Everything the CLI does to a cluster goes through a six-method protocol,
   gets one of these, and the test passing *is* the assertion. It is what `--dry-run` and
   "invalid input never reaches the cluster" are tested with, and it is a stronger claim
   than a comment saying so.
+
+The one thing the fakes cannot reach is the real adapter, `KubernetesCluster`, and how it
+translates the client library's failures — an `ApiException`, or a urllib3 error when the
+API server cannot be reached at all. [`test_cluster_adapter.py`](test_cluster_adapter.py)
+covers that by handing a real `KubernetesCluster` a stand-in for the library's `CoreV1Api`
+that raises whatever the test asks for.
 
 Time is injected too: `follow()` takes `sleep` and `clock`, so a test can exercise the
 "pod is still Pending" and "the log stream ended before the status caught up" paths
