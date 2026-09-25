@@ -96,7 +96,14 @@ it looks for still exists.
 | Core library without Robot Framework | the library works with Robot absent — installs without extras, asserts the distribution really is missing, runs the suite |
 | Orchestrator image | the image builds, its entry point runs, it is not root, and Robot Framework *is* present in it |
 
-The third job is the one that keeps an architectural rule real rather than aspirational.
+`.github/workflows/test-env.yml` provisions the [test environment](../test-env/README.md): every
+profile, each checked and torn down, and the two tools' default profiles provisioned a second
+time to prove teardown leaves nothing behind. It runs when `test-env/` changes, weekly, and on
+demand, rather than on every pull request, because seven clusters cost minutes that an
+unrelated change gains nothing from. Its job summary states, on every run, that the
+environment validates orchestration and not measurement.
+
+The third job in `ci.yml` is the one that keeps an architectural rule real rather than aspirational.
 It deliberately does not test `import robot`: this repository has a `robot/` directory at
 its root, which Python treats as a namespace package, so that import succeeds with Robot
 Framework absent and proves nothing. It asks the installed distribution instead.

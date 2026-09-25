@@ -1,0 +1,23 @@
+# k3d, with k3s's own CNI (flannel): one server and three agents.
+# The k3s image comes from versions.env (K3S_IMAGE), passed with --image.
+#
+# Two changes from k3s's defaults, both so a k3d cluster has the same shape as a kind one:
+#   - the server is tainted NoSchedule, as kind's control plane is, so test pods land only
+#     on the three agents;
+#   - Traefik, the service load balancer and metrics-server are off. kind ships none of
+#     them, and nothing a run does needs them.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+servers: 1
+agents: 3
+options:
+  k3s:
+    extraArgs:
+      - arg: --node-taint=node-role.kubernetes.io/control-plane:NoSchedule
+        nodeFilters: [server:*]
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+      - arg: --disable=servicelb
+        nodeFilters: [server:*]
+      - arg: --disable=metrics-server
+        nodeFilters: [server:*]

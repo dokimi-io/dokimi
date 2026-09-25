@@ -1,12 +1,13 @@
 # Documentation
 
-Four guides, in the order you are likely to need them.
+Four guides, in the order you are likely to need them, and the test environment's own README.
 
 | | |
 | --- | --- |
 | [Installation](installation.md) | Getting the CLI onto a machine, and what it needs |
 | [Usage](usage.md) | Every command, every flag, and what the exit codes mean |
 | [Setup](setup.md) | A development environment, including a throwaway cluster |
+| [Test environment](../test-env/README.md) | The multi-node cluster: its profiles, what `check` verifies, and what its numbers do not mean |
 | [Building](building.md) | The distribution, the container image, and the release |
 
 Two documents sit outside this folder and are the ones to read first if you want to know

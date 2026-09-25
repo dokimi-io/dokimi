@@ -651,6 +651,7 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 | Packaging | **`uv` 0.12.18+**, with a single `uv.lock` at the repository root as the one source of resolved versions |
 | Kubernetes client | the official `kubernetes` library, **35+** (its major tracks the Kubernetes minor it targets, so this is Kubernetes **1.35+**) |
 | Robot Framework | **7.5+**, an optional extra rather than a core dependency — see below |
+| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism ([ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md)) |
 
 The orchestration logic is a library with **no Robot Framework imports in its core**. The Robot
 resource library, the CLI, a CI entry point and a future Operator are all thin adapters over the
