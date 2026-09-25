@@ -281,11 +281,79 @@ def test_version_reports_the_version(capsys: pytest.CaptureFixture[str]) -> None
     assert capsys.readouterr().out.startswith("test-orchestrator ")
 
 
-def test_an_unknown_command_is_a_usage_error() -> None:
+def test_an_unknown_command_is_a_config_error() -> None:
+    # argparse would exit 2, which ADR-01-08 reserves for `error`: a typo on the command
+    # line would read to CI as a run that errored. It is an invalid request: 3.
     with pytest.raises(SystemExit) as exit_info:
         main(["teleport"])
 
-    assert exit_info.value.code == 2
+    assert exit_info.value.code == ExitCode.CONFIG_ERROR
+
+
+def test_an_unknown_flag_is_a_config_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["submit", str(EXAMPLE), "--dry-rn"])
+
+    assert exit_info.value.code == ExitCode.CONFIG_ERROR
+    assert "unrecognized arguments: --dry-rn" in capsys.readouterr().err
+
+
+def test_help_still_exits_cleanly() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["submit", "--help"])
+
+    assert exit_info.value.code == 0
+
+
+def test_a_bad_run_id_on_submit_is_a_config_error(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Previously only `attach` validated it; `submit` sent it to the API server.
+    assert (
+        main(["submit", str(EXAMPLE), "--run-id", "My Run", "--dry-run"]) == ExitCode.CONFIG_ERROR
+    )
+    assert "malformed run id" in capsys.readouterr().err
+
+
+def test_an_unexpected_exception_is_internal_not_fail(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Python exits 1 on an unhandled exception, and 1 is `fail`: CI would read a crash as
+    # a run that measured something and did not pass.
+    def crash(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("something nobody anticipated")
+
+    monkeypatch.setattr(commands, "connect", lambda **_k: FakeCluster())
+    monkeypatch.setattr(commands, "submit", crash)
+
+    assert main(["submit", str(EXAMPLE)]) == ExitCode.INTERNAL
+    err = capsys.readouterr().err
+    assert "internal error (RuntimeError: something nobody anticipated)" in err
+    assert "Traceback" in err
+
+
+def test_an_interrupt_is_still_not_swallowed_by_the_catch_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # KeyboardInterrupt is not an Exception, so Ctrl-C outside the log stream still stops
+    # the CLI rather than being reported as an internal error.
+    def interrupt(*_args: object, **_kwargs: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(commands, "connect", lambda **_k: FakeCluster())
+    monkeypatch.setattr(commands, "submit", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        main(["submit", str(EXAMPLE)])
+
+
+def test_a_cluster_error_carries_its_notes_to_the_user(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(commands, "connect", lambda **_k: FakeCluster(fail_on_kind="Job"))
+
+    assert main(["submit", str(EXAMPLE)]) == ExitCode.INTERNAL
+    assert "422" in capsys.readouterr().err
 
 
 def test_the_in_cluster_command_is_not_advertised(capsys: pytest.CaptureFixture[str]) -> None:

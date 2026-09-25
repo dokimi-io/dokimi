@@ -6,15 +6,20 @@ three are statements about which calls happen and what they are given.
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from test_orchestrator.cli.exit_codes import ExitCode
 from test_orchestrator.k8s.cluster import ClusterError
-from test_orchestrator.k8s.identity import RUN_ID_LABEL
+from test_orchestrator.k8s.identity import RUN_ID_LABEL, run_selector
+from test_orchestrator.k8s.manifests import OWNER_COMPONENT
 from test_orchestrator.k8s.submission import (
     CONTAINER_NAME,
+    RUN_OUTCOMES,
     RunNotFound,
     Submission,
     follow,
@@ -24,6 +29,7 @@ from test_orchestrator.k8s.submission import (
 from test_orchestrator.model import (
     Bandwidth,
     Comparison,
+    ConfigError,
     Criterion,
     Duration,
     Metric,
@@ -183,3 +189,132 @@ def test_a_job_that_never_schedules_a_pod_times_out_with_a_way_back() -> None:
             sleep=_never_sleep,
             clock=lambda: next(clock),
         )
+
+
+# -- review of #27 --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["My Run", "a" * 70, "run,id=x", "20260101T100000Z-4f2a9c,x=y"])
+def test_a_given_run_id_is_validated_before_anything_is_rendered(
+    definition: TestDefinition, bad: str
+) -> None:
+    # The id becomes a label value, part of every object name and a selector term. A bad
+    # one used to reach the API server as a 422 (exit 5 instead of 3), and `,` or `=`
+    # would have changed what the selector matched.
+    with pytest.raises(ConfigError, match="malformed run id"):
+        plan_submission(definition, source="", source_path=Path("p.yaml"), image=IMAGE, run_id=bad)
+
+
+def test_submitting_does_not_change_the_submission(definition: TestDefinition) -> None:
+    # `Submission` is frozen, but its nested dictionaries were not: binding the owner uid
+    # in place changed what a dry run of the same submission would print afterwards.
+    submission = _plan(definition)
+    before = copy.deepcopy(submission.manifests)
+
+    submit(FakeCluster(), submission)
+
+    assert submission.manifests == before
+
+
+def test_a_failed_submission_removes_its_owner(definition: TestDefinition) -> None:
+    # The owner was created, the Job was refused. Left behind, the owner is debris that
+    # run exclusivity would count as an active run, blocking every later one.
+    cluster = FakeCluster(fail_on_kind="Job")
+
+    with pytest.raises(ClusterError, match="422"):
+        submit(cluster, _plan(definition))
+
+    assert cluster.deleted == [("test-orchestrator-iperf2", run_selector(RUN_ID, OWNER_COMPONENT))]
+
+
+def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
+    definition: TestDefinition,
+) -> None:
+    # ADR-05-02: cleanup failures are reported with what remains, never swallowed. The
+    # original error is still the one raised.
+    cluster = FakeCluster(fail_on_kind="Job", fail_deleting=True)
+
+    with pytest.raises(ClusterError, match="422") as error:
+        submit(cluster, _plan(definition))
+
+    notes = " ".join(error.value.__notes__)
+    assert "kubectl delete configmap" in notes
+    assert run_selector(RUN_ID, OWNER_COMPONENT) in notes
+
+
+def test_every_run_outcome_matches_the_cli_table() -> None:
+    # Two modules name ADR-01-08's codes; this is what keeps them the same list.
+    assert frozenset(code.value for code in ExitCode if code.value <= 5) == RUN_OUTCOMES
+
+
+@pytest.mark.parametrize("code", sorted(RUN_OUTCOMES))
+def test_a_run_outcome_is_propagated_unchanged(code: int) -> None:
+    cluster = FakeCluster(exit_code=code)
+
+    assert follow(cluster, namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep) == code
+
+
+@pytest.mark.parametrize(
+    ("code", "reason", "expected"),
+    [
+        (137, "OOMKilled", "OOMKilled"),
+        (137, "Error", "SIGKILL"),
+        (143, "Error", "SIGTERM"),
+        (139, "Error", "signal 11"),
+        (42, "Error", "outside the outcome table"),
+    ],
+)
+def test_an_exit_code_outside_the_table_is_not_passed_off_as_a_verdict(
+    code: int, reason: str, expected: str
+) -> None:
+    # 137 passed straight through would reach CI as a number that means nothing in
+    # ADR-01-08's table. It is reported as what it is, and the CLI exits 5.
+    cluster = FakeCluster(exit_code=code, termination_reason=reason)
+
+    with pytest.raises(ClusterError, match=expected) as error:
+        follow(cluster, namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
+
+    assert "without a verdict" in str(error.value)
+
+
+_DEADLINE = {"type": "Failed", "status": "True", "reason": "DeadlineExceeded"}
+
+
+def test_a_deadline_is_recognised_when_the_job_has_deleted_the_pod() -> None:
+    # The deadline is on the Job, and the Job controller deletes the pod when it passes,
+    # so the pod-level check this replaced could never fire. The Job's conditions can.
+    cluster = FakeCluster(has_pod_after_stream=False, job_conditions=[_DEADLINE])
+
+    with pytest.raises(ClusterError, match="activeDeadlineSeconds"):
+        follow(cluster, namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
+
+
+def test_a_deadline_is_recognised_when_the_pod_was_killed_for_it() -> None:
+    # Timing can leave the pod long enough to report the SIGTERM it was killed with.
+    cluster = FakeCluster(exit_code=143, termination_reason="Error", job_conditions=[_DEADLINE])
+
+    with pytest.raises(ClusterError, match="activeDeadlineSeconds"):
+        follow(cluster, namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
+
+
+def test_a_vanished_pod_without_a_deadline_says_so() -> None:
+    cluster = FakeCluster(has_pod_after_stream=False)
+
+    with pytest.raises(ClusterError, match="disappeared before it reported"):
+        follow(cluster, namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
+
+
+def test_a_dropped_log_stream_points_back_at_attach() -> None:
+    class DroppingCluster(FakeCluster):
+        def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
+            yield "phase 2"
+            raise ClusterError("streaming logs: lost contact with the Kubernetes API server")
+
+    with pytest.raises(ClusterError) as error:
+        follow(DroppingCluster(), namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
+
+    assert f"test-orchestrator attach {RUN_ID}" in " ".join(error.value.__notes__)
+
+
+def _ignore(_line: str) -> None:
+    return None

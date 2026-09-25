@@ -105,9 +105,12 @@ def test_the_owner_uid_is_bound_after_creation(manifests: list[dict[str, Any]]) 
     job = _job(manifests)
     assert job["metadata"]["ownerReferences"][0]["uid"] == ""
 
-    bind_owner(job, "uid-from-the-api-server")
+    bound = bind_owner(job, "uid-from-the-api-server")
 
-    assert job["metadata"]["ownerReferences"][0]["uid"] == "uid-from-the-api-server"
+    assert bound["metadata"]["ownerReferences"][0]["uid"] == "uid-from-the-api-server"
+    # A copy: the rendered manifest keeps its placeholder, so rendering it again after a
+    # submission prints the same thing it printed before.
+    assert job["metadata"]["ownerReferences"][0]["uid"] == ""
 
 
 def test_the_job_never_retries(manifests: list[dict[str, Any]]) -> None:

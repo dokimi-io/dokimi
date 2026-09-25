@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+from test_orchestrator.k8s.cluster import ClusterError
 from test_orchestrator.k8s.submission import CONTAINER_NAME
 
 __all__ = ["ExplodingCluster", "FakeCluster"]
@@ -31,6 +32,11 @@ class FakeCluster:
         has_job: bool = True,
         terminated_after: int = 0,
         owner_uid: str = "owner-uid-1",
+        termination_reason: str = "",
+        has_pod_after_stream: bool = True,
+        job_conditions: Sequence[dict[str, str]] = (),
+        fail_on_kind: str | None = None,
+        fail_deleting: bool = False,
     ) -> None:
         self.log_lines = list(log_lines)
         self.exit_code = exit_code
@@ -40,6 +46,12 @@ class FakeCluster:
         self.has_job = has_job
         self.terminated_after = terminated_after
         self.owner_uid = owner_uid
+        self.termination_reason = termination_reason
+        self.has_pod_after_stream = has_pod_after_stream
+        self.job_conditions = list(job_conditions)
+        self.fail_on_kind = fail_on_kind
+        self.fail_deleting = fail_deleting
+        self.deleted: list[tuple[str, str]] = []
 
         self.namespaces: list[str] = []
         self.created: list[dict[str, Any]] = []
@@ -54,6 +66,8 @@ class FakeCluster:
         self.namespaces.append(manifest["metadata"]["name"])
 
     def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
+        if manifest["kind"] == self.fail_on_kind:
+            raise ClusterError(f"creating {manifest['kind']}: 422 Unprocessable Entity")
         stored = dict(manifest)
         metadata = dict(stored["metadata"])
         metadata["uid"] = self.owner_uid if not self.created else f"uid-{len(self.created)}"
@@ -65,7 +79,10 @@ class FakeCluster:
         self.selectors.append(selector)
         if not self.has_job:
             return None
-        return {"metadata": {"name": "run-job", "namespace": namespace, "labels": {}}}
+        return {
+            "metadata": {"name": "run-job", "namespace": namespace, "labels": {}},
+            "status": {"conditions": list(self.job_conditions)},
+        }
 
     def find_pod(self, namespace: str, selector: str) -> dict[str, Any] | None:
         self.selectors.append(selector)
@@ -80,8 +97,10 @@ class FakeCluster:
 
     def read_pod(self, namespace: str, name: str) -> dict[str, Any] | None:
         self._pod_reads += 1
+        if not self.has_pod_after_stream:
+            return None
         state: dict[str, Any] = (
-            {"terminated": {"exitCode": self.exit_code}}
+            {"terminated": {"exitCode": self.exit_code, "reason": self.termination_reason}}
             if self._pod_reads > self.terminated_after
             else {"running": {}}
         )
@@ -96,6 +115,11 @@ class FakeCluster:
     def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
         self.streamed.append((namespace, pod, container))
         yield from self.log_lines
+
+    def delete_config_maps(self, namespace: str, selector: str) -> None:
+        if self.fail_deleting:
+            raise ClusterError("deleting ConfigMaps: 403 Forbidden")
+        self.deleted.append((namespace, selector))
 
     # -- assertions helpers ---------------------------------------------------
 
@@ -116,3 +140,4 @@ class ExplodingCluster:
     find_pod = _explode
     read_pod = _explode
     stream_logs = _explode
+    delete_config_maps = _explode

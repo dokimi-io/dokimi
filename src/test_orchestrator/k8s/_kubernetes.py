@@ -13,22 +13,33 @@ spellings it is holding.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
-from kubernetes import client, config, watch  # noqa: F401  (watch: see stream_logs)
+from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
+from urllib3.exceptions import HTTPError as TransportError
 
 from test_orchestrator.k8s.cluster import ClusterError
 
 __all__ = ["KubernetesCluster"]
 
 _ALREADY_EXISTS = 409
+_FORBIDDEN = 403
 _NOT_FOUND = 404
 
 
 class KubernetesCluster:
-    """Six operations against a real cluster."""
+    """Seven operations against a real cluster.
+
+    Every method translates both ways the client library can fail into
+    :class:`ClusterError`: an ``ApiException`` when the API server answered and refused,
+    and a urllib3 error when it could not be reached or dropped the connection. The
+    second kind is easy to miss — it is not an ``ApiException`` — and an untranslated one
+    escapes as a traceback, which Python exits with 1: ``fail`` in ADR-01-08's table, for
+    a run that nobody measured.
+    """
 
     def __init__(self, api: client.ApiClient) -> None:
         self._api = api
@@ -57,47 +68,78 @@ class KubernetesCluster:
     # -- writes ---------------------------------------------------------------
 
     def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
-        try:
-            self._core.create_namespace(body=dict(manifest))
-        except ApiException as error:
-            if error.status == _ALREADY_EXISTS:
+        """Make sure the namespace exists, creating it only if it does not.
+
+        Reading first matters for RBAC. Creating a namespace is a cluster-wide permission,
+        and the point of per-test-type namespaces (ADR-05-02) is that a user or a CI
+        service account needs only namespaced rights once an administrator has created
+        it. Always calling ``create`` would demand the cluster-wide right on every submit.
+
+        A refused read is not an error either: a namespace-scoped identity may be unable
+        to read the Namespace object while being able to use it. The creates that follow
+        are what establish whether it really exists.
+        """
+        name = _name(manifest)
+        with _transport(f"checking namespace {name}"):
+            try:
+                self._core.read_namespace(name)
                 return
-            raise ClusterError(_explain(error, f"creating namespace {_name(manifest)}")) from error
+            except ApiException as error:
+                if error.status == _FORBIDDEN:
+                    return
+                if error.status != _NOT_FOUND:
+                    raise ClusterError(_explain(error, f"checking namespace {name}")) from error
+            try:
+                self._core.create_namespace(body=dict(manifest))
+            except ApiException as error:
+                if error.status == _ALREADY_EXISTS:
+                    return
+                raise ClusterError(_explain(error, f"creating namespace {name}")) from error
 
     def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
         body = dict(manifest)
         kind = body.get("kind")
         namespace = body["metadata"]["namespace"]
-        try:
-            if kind == "ConfigMap":
-                created = self._core.create_namespaced_config_map(namespace, body)
-            elif kind == "Job":
-                created = self._batch.create_namespaced_job(namespace, body)
-            else:  # pragma: no cover - a submission creates nothing else
-                raise ClusterError(f"cannot create a {kind!r}: no client is wired up for it")
-        except ApiException as error:
-            raise ClusterError(_explain(error, f"creating {kind} {_name(body)}")) from error
+        with _transport(f"creating {kind} {_name(body)}"):
+            try:
+                if kind == "ConfigMap":
+                    created = self._core.create_namespaced_config_map(namespace, body)
+                elif kind == "Job":
+                    created = self._batch.create_namespaced_job(namespace, body)
+                else:  # pragma: no cover - a submission creates nothing else
+                    raise ClusterError(f"cannot create a {kind!r}: no client is wired up for it")
+            except ApiException as error:
+                if error.status == _NOT_FOUND:
+                    raise ClusterError(
+                        f"namespace {namespace!r} does not exist, and these credentials "
+                        "could not confirm or create it. An administrator can create it "
+                        "once; after that, submitting needs only namespaced permissions."
+                    ) from error
+                raise ClusterError(_explain(error, f"creating {kind} {_name(body)}")) from error
         return self._to_dict(created)
 
     # -- reads ----------------------------------------------------------------
 
     def find_job(self, namespace: str, selector: str) -> dict[str, Any] | None:
         try:
-            jobs = self._batch.list_namespaced_job(namespace, label_selector=selector)
+            with _transport(f"looking for a Job in {namespace}"):
+                jobs = self._batch.list_namespaced_job(namespace, label_selector=selector)
         except ApiException as error:
             raise ClusterError(_explain(error, f"looking for a Job in {namespace}")) from error
         return self._newest(jobs.items)
 
     def find_pod(self, namespace: str, selector: str) -> dict[str, Any] | None:
         try:
-            pods = self._core.list_namespaced_pod(namespace, label_selector=selector)
+            with _transport(f"looking for a Pod in {namespace}"):
+                pods = self._core.list_namespaced_pod(namespace, label_selector=selector)
         except ApiException as error:
             raise ClusterError(_explain(error, f"looking for a Pod in {namespace}")) from error
         return self._newest(pods.items)
 
     def read_pod(self, namespace: str, name: str) -> dict[str, Any] | None:
         try:
-            pod = self._core.read_namespaced_pod(name, namespace)
+            with _transport(f"reading Pod {name}"):
+                pod = self._core.read_namespaced_pod(name, namespace)
         except ApiException as error:
             if error.status == _NOT_FOUND:
                 return None
@@ -112,20 +154,33 @@ class KubernetesCluster:
         them, without it the call blocks until the container has exited.
         """
         try:
-            response = self._core.read_namespaced_pod_log(
-                name=pod,
-                namespace=namespace,
-                container=container,
-                follow=True,
-                _preload_content=False,
-            )
+            with _transport(f"streaming logs from {pod}"):
+                response = self._core.read_namespaced_pod_log(
+                    name=pod,
+                    namespace=namespace,
+                    container=container,
+                    follow=True,
+                    _preload_content=False,
+                )
         except ApiException as error:
             raise ClusterError(_explain(error, f"streaming logs from {pod}")) from error
         try:
-            for line in response.stream():
-                yield line.decode("utf-8", errors="replace").rstrip("\n")
+            # The connection can drop mid-stream, long after the call above succeeded.
+            with _transport(f"streaming logs from {pod}"):
+                for line in response.stream():
+                    yield line.decode("utf-8", errors="replace").rstrip("\n")
         finally:
             response.release_conn()
+
+    def delete_config_maps(self, namespace: str, selector: str) -> None:
+        """Delete by selector, with background propagation so dependents follow."""
+        try:
+            with _transport(f"deleting ConfigMaps in {namespace}"):
+                self._core.delete_collection_namespaced_config_map(
+                    namespace, label_selector=selector, propagation_policy="Background"
+                )
+        except ApiException as error:
+            raise ClusterError(_explain(error, f"deleting ConfigMaps in {namespace}")) from error
 
     # -- helpers --------------------------------------------------------------
 
@@ -138,6 +193,17 @@ class KubernetesCluster:
             return None
         newest = max(items, key=lambda item: item.metadata.creation_timestamp)
         return self._to_dict(newest)
+
+
+@contextmanager
+def _transport(what: str) -> Iterator[None]:
+    """Translate "could not reach the API server" into :class:`ClusterError`."""
+    try:
+        yield
+    except TransportError as error:
+        raise ClusterError(
+            f"{what}: lost contact with the Kubernetes API server ({type(error).__name__}: {error})"
+        ) from error
 
 
 def _name(manifest: Mapping[str, Any]) -> str:

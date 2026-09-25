@@ -21,6 +21,7 @@ against ADR-05-05's rule that a ``fail`` is never re-rolled.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from test_orchestrator.k8s.identity import MANAGED_BY, MANAGED_BY_LABEL, ownership_labels
@@ -30,6 +31,7 @@ __all__ = [
     "DEFINITION_MOUNT_PATH",
     "OWNER_COMPONENT",
     "RUN_COMPONENT",
+    "bind_owner",
     "deadline_seconds",
     "definition_file_name",
     "namespace_manifest",
@@ -149,11 +151,17 @@ def _owner_reference(owner: dict[str, Any]) -> dict[str, Any]:
 
 
 def bind_owner(manifest: dict[str, Any], uid: str) -> dict[str, Any]:
-    """Fill in the owner uid the API server assigned. Returns *manifest*."""
-    for reference in manifest["metadata"].get("ownerReferences", []):
+    """A copy of *manifest* with the owner uid the API server assigned filled in.
+
+    A copy, because the manifest belongs to a frozen ``Submission``. ``frozen`` only
+    stops reassigning its fields; the nested dictionaries are as mutable as ever, and
+    binding in place would change what a dry run of the same submission prints.
+    """
+    bound = copy.deepcopy(manifest)
+    for reference in bound["metadata"].get("ownerReferences", []):
         if not reference["uid"]:
             reference["uid"] = uid
-    return manifest
+    return bound
 
 
 def _definition_manifest(

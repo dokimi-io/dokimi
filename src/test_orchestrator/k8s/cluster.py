@@ -1,7 +1,8 @@
 """The narrow slice of the Kubernetes API a submission actually uses.
 
-Everything the CLI does to a cluster goes through :class:`ClusterClient`: six operations,
-all of them addressing objects by label selector rather than by name (ADR-05-02). The
+Everything the CLI does to a cluster goes through :class:`ClusterClient`: seven
+operations, every namespaced one addressing objects by label selector rather than by name
+(ADR-05-02). The
 protocol exists so the submission and reattach paths can be exercised without a cluster —
 a fake that records calls proves ``--dry-run`` touches nothing far more convincingly than
 a comment saying it does not.
@@ -48,6 +49,12 @@ class ClusterClient(Protocol):
 
     def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
         """Yield log lines from a running or finished container until it ends."""
+
+    def delete_config_maps(self, namespace: str, selector: str) -> None:
+        """Delete the ConfigMaps matching *selector*, cascading to their dependents.
+
+        By selector, never by name, like every delete a run makes (ADR-05-02).
+        """
 
 
 def connect(kubeconfig: str | None = None, context: str | None = None) -> ClusterClient:

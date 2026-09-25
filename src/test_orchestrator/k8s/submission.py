@@ -26,8 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from test_orchestrator.k8s.cluster import ClusterClient, ClusterError
-from test_orchestrator.k8s.identity import default_namespace, new_run_id, run_selector
+from test_orchestrator.k8s.identity import (
+    default_namespace,
+    new_run_id,
+    run_selector,
+    validate_run_id,
+)
 from test_orchestrator.k8s.manifests import (
+    OWNER_COMPONENT,
     RUN_COMPONENT,
     bind_owner,
     namespace_manifest,
@@ -38,6 +44,7 @@ from test_orchestrator.model import TestDefinition
 
 __all__ = [
     "CONTAINER_NAME",
+    "RUN_OUTCOMES",
     "RunNotFound",
     "Submission",
     "find_job",
@@ -52,6 +59,18 @@ CONTAINER_NAME = "orchestrator"
 #: Long enough to cover an image pull on a cold node; short enough that a run wedged in
 #: `Pending` because nothing can schedule it does not hang a CI job indefinitely.
 POD_APPEARANCE_TIMEOUT_SECONDS = 300.0
+
+
+#: The exit codes that are a run's outcome — ADR-01-08's table, 0 to 5. The CLI's
+#: ``ExitCode`` enumerates the same values; ``tests/test_submission.py`` holds the two to
+#: each other. Anything else a container exits with is a signal or a crash, not a verdict.
+RUN_OUTCOMES = frozenset(range(6))
+
+#: What the common out-of-table codes usually mean, for the message that reports them.
+_SIGNAL_MEANINGS = {
+    137: "killed with SIGKILL, most often because it ran out of memory (OOMKilled)",
+    143: "terminated with SIGTERM, usually because the pod was deleted or its node drained",
+}
 
 
 class RunNotFound(LookupError):
@@ -87,7 +106,10 @@ def plan_submission(
     This is the whole of ``--dry-run``: what it prints is what ``submit`` would create,
     produced by the same call, so the two cannot drift.
     """
-    resolved_run_id = run_id or new_run_id()
+    # Validated here rather than only in `attach`: the id becomes a label value, part of
+    # every object name and a term in the selectors that find the run again, so a bad one
+    # breaks all three — and a dry run would print manifests that cannot be applied.
+    resolved_run_id = validate_run_id(run_id) if run_id is not None else new_run_id()
     resolved_namespace = namespace or default_namespace(definition.test_type)
     manifests = render_manifests(
         definition,
@@ -125,8 +147,32 @@ def submit(cluster: ClusterClient, submission: Submission) -> None:
             "can be bound to it for garbage collection"
         )
 
-    for manifest in rest:
-        cluster.create(bind_owner(dict(manifest), owner_uid))
+    try:
+        for manifest in rest:
+            cluster.create(bind_owner(manifest, owner_uid))
+    except ClusterError as error:
+        _abandon(cluster, submission, error)
+        raise
+
+
+def _abandon(cluster: ClusterClient, submission: Submission, error: ClusterError) -> None:
+    """Remove a submission that failed after its owner was created.
+
+    The owner cascades to anything bound to it, so deleting it is the whole cleanup. This
+    is not ADR-05-02's retain-on-failure, which keeps a failed *run's* evidence: a Job
+    that was never created left no evidence, only an owner that, under run exclusivity,
+    would block every later run until someone found it.
+    """
+    selector = run_selector(submission.run_id, OWNER_COMPONENT)
+    try:
+        cluster.delete_config_maps(submission.namespace, selector)
+    except ClusterError as cleanup_error:
+        # ADR-05-02: cleanup failures are reported with what remains and how to remove
+        # it, never swallowed. The original error is still the one that is raised.
+        error.add_note(
+            f"Removing the partial submission failed too ({cleanup_error}). Remove it with: "
+            f"kubectl delete configmap -n {submission.namespace} -l {selector}"
+        )
 
 
 def follow(
@@ -139,18 +185,41 @@ def follow(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """Stream a run's logs until it ends, and return the container's exit code.
+    """Stream a run's logs until it ends, and return the run's exit code.
 
     Locating the pod by label selector rather than by the name ``submit`` happened to
     create is what makes this usable from a process that never submitted anything.
+
+    The code returned is always one of :data:`RUN_OUTCOMES`. A container that exits with
+    anything else — a signal, a crash, a deadline — raises :class:`ClusterError` saying
+    which, because passing 137 through would hand CI a number that means nothing in
+    ADR-01-08's table and everything to a shell.
     """
     pod = _await_pod(cluster, namespace, run_id, timeout=timeout, sleep=sleep, clock=clock)
     pod_name = pod["metadata"]["name"]
 
-    for line in cluster.stream_logs(namespace, pod_name, CONTAINER_NAME):
-        write(line)
+    try:
+        for line in cluster.stream_logs(namespace, pod_name, CONTAINER_NAME):
+            write(line)
+    except ClusterError as error:
+        error.add_note(
+            f"The run is unaffected; `test-orchestrator attach {run_id}` resumes following it."
+        )
+        raise
 
-    return _await_exit_code(cluster, namespace, pod_name, sleep=sleep, clock=clock)
+    code, reason = _await_exit_code(cluster, namespace, run_id, pod_name, sleep=sleep, clock=clock)
+    if code in RUN_OUTCOMES:
+        return code
+    if _deadline_exceeded(cluster, namespace, run_id):
+        raise ClusterError(_deadline_message(run_id))
+    meaning = _SIGNAL_MEANINGS.get(code) or (
+        f"killed by signal {code - 128}" if code > 128 else "a code outside the outcome table"
+    )
+    detail = f", reason {reason}" if reason else ""
+    raise ClusterError(
+        f"run {run_id!r} exited with {code}{detail}: {meaning}. That is not a run outcome, "
+        "so the run ended without a verdict."
+    )
 
 
 def find_job(cluster: ClusterClient, namespace: str, run_id: str) -> dict[str, Any] | None:
@@ -198,13 +267,14 @@ def _await_pod(
 def _await_exit_code(
     cluster: ClusterClient,
     namespace: str,
+    run_id: str,
     pod_name: str,
     *,
     sleep: Callable[[float], None],
     clock: Callable[[], float],
     timeout: float = 60.0,
-) -> int:
-    """Read the container's exit code once the log stream has ended.
+) -> tuple[int, str]:
+    """Read the container's exit code and reason once the log stream has ended.
 
     The stream closing and the status reporting a terminated container are two different
     events, and they are not simultaneous.
@@ -213,20 +283,18 @@ def _await_exit_code(
     while True:
         pod = cluster.read_pod(namespace, pod_name)
         if pod is None:
+            # The deadline lives on the Job, and when it passes the Job controller deletes
+            # the pod. So a vanished pod is the usual sign of a deadline, and the Job's
+            # own conditions are where that is recorded.
+            if _deadline_exceeded(cluster, namespace, run_id):
+                raise ClusterError(_deadline_message(run_id))
             raise ClusterError(
                 f"pod {pod_name!r} disappeared before it reported an exit code, so the "
                 "run's outcome cannot be read from the cluster."
             )
-        code = _terminated_exit_code(pod)
-        if code is not None:
-            return code
-        if _phase(pod) == "Failed":
-            reason = pod.get("status", {}).get("reason", "")
-            if reason == "DeadlineExceeded":
-                raise ClusterError(
-                    f"run {pod_name!r} hit its activeDeadlineSeconds and was stopped "
-                    "before it could report an outcome."
-                )
+        terminated = _terminated(pod)
+        if terminated is not None:
+            return terminated
         if clock() >= deadline:
             raise ClusterError(
                 f"pod {pod_name!r} finished streaming but never reported an exit code."
@@ -234,17 +302,37 @@ def _await_exit_code(
         sleep(1.0)
 
 
+def _deadline_exceeded(cluster: ClusterClient, namespace: str, run_id: str) -> bool:
+    job = find_job(cluster, namespace, run_id)
+    conditions = (job or {}).get("status", {}).get("conditions") or []
+    return any(
+        condition.get("type") == "Failed"
+        and condition.get("status") == "True"
+        and condition.get("reason") == "DeadlineExceeded"
+        for condition in conditions
+    )
+
+
+def _deadline_message(run_id: str) -> str:
+    return (
+        f"run {run_id!r} hit its activeDeadlineSeconds and was stopped before it could "
+        "report an outcome. The deadline exists so an orphaned run stops on its own "
+        "(ADR-05-02); a run that needs longer than its test duration plus the margin is "
+        "stuck somewhere, and its pods and events are the place to look."
+    )
+
+
 def _phase(pod: dict[str, Any]) -> str:
     phase: str = pod.get("status", {}).get("phase", "Pending")
     return phase
 
 
-def _terminated_exit_code(pod: dict[str, Any]) -> int | None:
+def _terminated(pod: dict[str, Any]) -> tuple[int, str] | None:
+    """The orchestrator container's exit code and reason, once it has terminated."""
     for status in pod.get("status", {}).get("containerStatuses", []) or []:
         if status.get("name") != CONTAINER_NAME:
             continue
         terminated = status.get("state", {}).get("terminated")
         if terminated is not None and "exitCode" in terminated:
-            code: int = terminated["exitCode"]
-            return code
+            return int(terminated["exitCode"]), str(terminated.get("reason") or "")
     return None

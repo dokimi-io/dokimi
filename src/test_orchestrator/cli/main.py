@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from test_orchestrator import __version__
 from test_orchestrator.cli.commands import (
@@ -44,8 +46,22 @@ touches nothing.
 """
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, except that a usage error is a ``config_error``.
+
+    argparse exits 2 on a bad flag. In ADR-01-08's table 2 is ``error`` — part of the
+    matrix was not validly measured — so a typo on the command line would read to CI as a
+    run that errored. A malformed invocation is an invalid request detected before
+    anything was created, which is exactly what 3 means. Subparsers inherit the class.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(ExitCode.CONFIG_ERROR, f"{self.prog}: error: {message}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="test-orchestrator",
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -150,8 +166,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
     except ClusterError as error:
-        console.fail(str(error))
+        console.fail(_with_notes(error))
         return ExitCode.INTERNAL
+    except Exception as error:  # noqa: BLE001 - the whole point is to catch everything
+        # Anything not anticipated above is a bug here or in a dependency, never a
+        # verdict. Without this, Python exits 1 — `fail` in ADR-01-08's table — so CI
+        # would read a crash as a test that ran and did not pass.
+        traceback.print_exc(file=sys.stderr)
+        console.fail(
+            f"internal error ({type(error).__name__}: {error}). This is a bug; the "
+            "traceback above is what to report."
+        )
+        return ExitCode.INTERNAL
+
+
+def _with_notes(error: BaseException) -> str:
+    """The message, plus any notes attached on the way up (PEP 678)."""
+    return " ".join([str(error), *getattr(error, "__notes__", ())])
 
 
 def _dispatch(console: Console, args: argparse.Namespace) -> int:
