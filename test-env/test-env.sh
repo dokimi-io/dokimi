@@ -116,6 +116,7 @@ cmd_up() {
 
   case "$profile" in kind-kindnet | k3d-flannel) config="$here/$tool/cluster.yaml" ;; *) config="$here/$tool/cluster-no-cni.yaml" ;; esac
   [[ "$profile" == kind-flannel ]] && require_br_netfilter "$load_modules"
+  announce_kernel_changes "$profile"
   local modules_before settings_before
   modules_before="$(kernel_modules)"
   settings_before="$(kernel_settings)"
@@ -254,6 +255,23 @@ kernel_settings() {
       v="$(tr "\n\t" "  " < "$f" | sed "s/ *\$//")" && printf "%s=%s\n" "$f" "$v"
     done' 2>/dev/null \
     | grep -v -E '^(fs/(dentry-state|file-nr|inode-nr|inode-state|aio-nr|quota/(lookups|drops|reads|writes|cache_hits|allocated_dquots|free_dquots|syncs))|kernel/(hostname|domainname|ns_last_pid|random/uuid|random/entropy_avail|pty/nr))='
+}
+
+announce_kernel_changes() { # announce_kernel_changes PROFILE
+  # What CI measured each profile changing on a clean host, said before anything is
+  # created. The kubelet and the CNIs change these through privileged node containers,
+  # without sudo and without asking, so the only way to tell the user first is to say it
+  # here. test-env/README.md has the same list as a table; a test keeps the two in step.
+  say "note: bringing up $1 changes these host-wide kernel settings, until reboot:"
+  say "        kernel.panic_on_oops=1 and kernel.panic=10, by the kubelet: a kernel oops reboots the host after 10 seconds"
+  say "        vm.overcommit_memory=1, by the kubelet"
+  if [[ "$(tool_of "$1")" == kind ]]; then
+    say "        kernel.core_pattern=core and fs.nr_open=1073741816, by kind's nodes"
+  fi
+  if [[ "$(cni_of "$1")" == cilium ]]; then
+    say "        kernel.unprivileged_bpf_disabled=1 and kernel.timer_migration=0, by Cilium"
+  fi
+  say "      On macOS that is Docker's Linux VM, not macOS. Once $1 is up, what actually changed is listed."
 }
 
 report_kernel_changes() { # report_kernel_changes MODULES_BEFORE SETTINGS_BEFORE PROFILE

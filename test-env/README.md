@@ -131,8 +131,9 @@ changed after `down`. Measured on a clean GitHub Ubuntu runner:
 machine would otherwise survive reboots it instead. They are the kubelet's defaults on any
 Kubernetes node, and nothing in kind or k3d turns them off.
 
-`up` reads every setting under `kernel.*`, `vm.*` and `fs.*` before and after, and names each one
-that changed, with its old and new value:
+`up` says which of these it's about to change before it creates anything, so you can stop there.
+Afterwards it reads every setting under `kernel.*`, `vm.*` and `fs.*` a second time, and names each
+one that changed, with its old and new value:
 
 ```
 test-env: note: while kind-kindnet came up, these host-wide kernel settings changed:

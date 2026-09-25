@@ -257,3 +257,20 @@ def test_up_records_the_profile_before_it_creates_anything() -> None:
         assert command, f"cmd_up no longer runs {create}"
         assert recorded < command.start(), f"the profile is recorded after {create}"
     assert up.count('> "$state/profile"') == 1
+
+
+def test_up_announces_the_kernel_settings_the_readme_lists() -> None:
+    # The kubelet and the CNIs change host-wide sysctls without asking, so `up` says which
+    # before it creates anything. That list and the README's measured table are the same
+    # list, written twice; this is what stops one being updated without the other.
+    body = re.search(
+        r"^announce_kernel_changes\(\) \{.*?\n(.*?)\n\}", SCRIPT.read_text(), re.S | re.M
+    )
+    assert body, "test-env.sh no longer defines announce_kernel_changes"
+    announced = set(re.findall(r"\b([a-z_]+\.[a-z_.]+)=", body.group(1)))
+    readme = (TEST_ENV / "README.md").read_text()
+    tabled = set(re.findall(r"^\| `([a-z_]+\.[a-z_.]+)` \|", readme, re.M))
+
+    assert announced
+    assert announced == tabled
+    assert 'announce_kernel_changes "$profile"' in SCRIPT.read_text()

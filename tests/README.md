@@ -1,6 +1,6 @@
 # The test suite
 
-324 tests, none of which need a cluster, a network or a container runtime. Everything runs
+325 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -28,7 +28,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
-| [`test_test_env.py`](test_test_env.py) | 26 | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
 | [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
@@ -96,7 +96,9 @@ working while being wrong:
     NetworkPolicy enforcement;
   - the scripts avoid bash-4-only syntax, because macOS still ships bash 3.2;
   - `up` records the profile before it creates a cluster, so a failed `up` never leaves one
-    that `down` refuses to remove.
+    that `down` refuses to remove;
+  - the kernel settings `up` announces before creating a cluster are the ones in the README's
+    measured table.
 
   CI's test-environment workflow does the provisioning. This is what catches the one-line edit
   that breaks it before anyone does.
