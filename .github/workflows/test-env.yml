@@ -67,11 +67,26 @@ jobs:
           test-env/test-env.sh up ${{ matrix.profile }}
           test-env/test-env.sh down
 
-      # Only reached when a step above failed and left a cluster up.
-      - name: Tear down after a failure
+      # Only reached when a step above failed and left a cluster up. It collects what is
+      # needed to diagnose the failure before the cluster, and the evidence, is deleted.
+      - name: Diagnose and tear down after a failure
         if: failure()
         run: |
           if [ -f .test-env/profile ]; then
-            kubectl --kubeconfig .test-env/kubeconfig get pods -A -o wide || true
+            export KUBECONFIG=.test-env/kubeconfig
+            kubectl get nodes -o wide || true
+            kubectl get pods -A -o wide || true
+            # Logs of every pod that is not Running, including the previous attempt of a
+            # container that crashed.
+            kubectl get pods -A --no-headers | awk '$4 != "Running" && $4 != "Completed" {print $1, $2}' |
+              while read -r ns pod; do
+                echo "::group::logs of $ns/$pod"
+                kubectl -n "$ns" logs "$pod" --all-containers --tail=40 || true
+                kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=40 2>/dev/null || true
+                echo "::endgroup::"
+              done
+            # Kernel facilities CNIs depend on. Nodes share the host kernel.
+            echo "host bridge netfilter: $(ls /proc/sys/net/bridge 2>&1 | tr '\n' ' ')"
+            lsmod | grep -E '^(br_netfilter|overlay|vxlan)' || true
             test-env/test-env.sh down
           fi
