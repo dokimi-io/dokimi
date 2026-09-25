@@ -188,13 +188,10 @@ class TestDefinition:
     results_directory: str = DEFAULT_RESULTS_DIRECTORY
 
     def __post_init__(self) -> None:
-        for label, value in (
-            ("name", self.name),
-            ("source node", self.source_node),
-            ("target node", self.target_node),
-        ):
-            if not value or not value.strip():
-                raise ConfigError(f"{label} must not be empty")
+        _check_text("name", self.name, _NAME_PUNCTUATION)
+        _check_node("source node", self.source_node)
+        _check_node("target node", self.target_node)
+        _check_text("results directory", self.results_directory, _PATH_PUNCTUATION, leading="./~")
         if self.source_node == self.target_node:
             raise ConfigError(
                 f"source and target node are both {self.source_node!r}; a directed test "
@@ -205,6 +202,68 @@ class TestDefinition:
                 "a test definition needs at least one pass criterion, otherwise the run "
                 "has nothing to report a verdict against"
             )
+
+
+#: Kubernetes node names are DNS-1123 subdomains: lowercase alphanumerics and hyphens in
+#: dot-separated labels, at most 253 characters.
+_DNS_1123_SUBDOMAIN = re.compile(
+    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+)
+_DNS_1123_MAX = 253
+
+#: Characters a name may contain besides letters, digits and single spaces.
+_NAME_PUNCTUATION = frozenset("-_.:/()+,")
+#: Characters a path may contain besides letters, digits and single spaces.
+_PATH_PUNCTUATION = frozenset("-_./~+")
+
+
+def _check_node(label: str, value: str) -> None:
+    if not value:
+        raise ConfigError(f"{label} must not be empty")
+    if len(value) > _DNS_1123_MAX or not _DNS_1123_SUBDOMAIN.match(value):
+        raise ConfigError(
+            f"{label} {value!r} is not a valid Kubernetes node name: lowercase letters, "
+            "digits, '-' and '.', starting and ending with a letter or digit"
+        )
+
+
+def _check_text(label: str, value: str, punctuation: frozenset[str], *, leading: str = "") -> None:
+    """Allow a field only what every renderer can carry without escaping.
+
+    These values are written verbatim into a ``.robot`` suite and a YAML document, and
+    the suite is what executes. So they are checked here, once, rather than escaped per
+    renderer — escaping is where the renderers would drift apart, and a value that
+    needs escaping in one of them is not one a test name or a path needs to have.
+
+    An allow-list rather than a list of dangerous characters, because Robot's syntax has
+    more of those than is comfortable to enumerate: a newline starts a new statement, two
+    spaces or a ``|`` start a new cell, ``#`` starts a comment, ``\\`` is an escape, and
+    ``${``, ``@{``, ``&{`` and ``%{`` are variables Robot would resolve at run time.
+
+    *leading* is what may start the value besides a letter or digit. Only paths get any:
+    ``./results`` is ordinary, but a name starting ``...`` is a Robot continuation line.
+    """
+    if not value or not value.strip():
+        raise ConfigError(f"{label} must not be empty")
+    control = next((character for character in value if not character.isprintable()), None)
+    if control is not None:
+        raise ConfigError(
+            f"{label} {value!r} contains the control character {control!r}. A newline in "
+            "particular would start a new statement in the rendered suite"
+        )
+    if value != value.strip():
+        raise ConfigError(f"{label} {value!r} must not start or end with whitespace")
+    if "  " in value:
+        raise ConfigError(f"{label} {value!r} must not contain two spaces in a row")
+    if not value[0].isalnum() and value[0] not in leading:
+        raise ConfigError(f"{label} {value!r} must start with a letter or a digit")
+    for character in value:
+        if character.isalnum() or character == " " or character in punctuation:
+            continue
+        raise ConfigError(
+            f"{label} {value!r} contains {character!r}, which is not allowed. Use letters, "
+            "digits, single spaces and " + " ".join(sorted(punctuation))
+        )
 
 
 def _plain(value: Decimal) -> str:

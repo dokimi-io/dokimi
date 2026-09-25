@@ -129,39 +129,69 @@ def render_yaml(definition: TestDefinition) -> str:
     ADR-04-05 makes conversion a composition of an existing parse and an existing render,
     and because it is what makes the cross-format criterion property testable in both
     directions rather than only one.
+
+    Every value goes through the YAML emitter rather than into an f-string, so quoting is
+    the emitter's job: a name like ``a: b`` comes out quoted instead of as a document that
+    does not parse. Sections are emitted one at a time only to keep the blank line
+    between them, which is how the documented example is laid out.
     """
-    lines = [
-        f"apiVersion: {API_VERSION}",
-        f"kind: {KIND}",
-        "",
-        "metadata:",
-        f"  name: {definition.name}",
-        "",
-        "placement:",
-        "  mode: explicit",
-        f"  source: {definition.source_node}",
-        f"  target: {definition.target_node}",
-        "",
-        "test:",
-        f"  type: {definition.test_type.value}",
-        f"  protocol: {definition.protocol.value}",
-        f"  duration: {definition.duration}",
-        f"  targetBandwidth: {definition.target_bandwidth}",
-        "",
-        "monitoring:",
-        f"  mode: {definition.monitoring_mode.value}",
-        "",
-        "validation:",
+    sections: list[dict[str, Any]] = [
+        {"apiVersion": API_VERSION, "kind": KIND},
+        {"metadata": {"name": definition.name}},
+        {
+            "placement": {
+                "mode": "explicit",
+                "source": definition.source_node,
+                "target": definition.target_node,
+            }
+        },
+        {
+            "test": {
+                "type": definition.test_type.value,
+                "protocol": definition.protocol.value,
+                "duration": str(definition.duration),
+                "targetBandwidth": str(definition.target_bandwidth),
+            }
+        },
+        {"monitoring": {"mode": definition.monitoring_mode.value}},
+        {"validation": [_criterion_record(criterion) for criterion in definition.criteria]},
+        {"results": {"directory": definition.results_directory}},
     ]
-    for criterion in definition.criteria:
-        lines.append(f"  - metric: {criterion.metric.value}")
-        if criterion.statistic is not None:
-            lines.append(f"    statistic: {criterion.statistic.value}")
-        lines.append(f"    comparison: {criterion.comparison.value}")
-        lines.append(f"    threshold: {criterion.threshold}")
-        lines.append(f"    unit: {criterion.unit.value}")
-    lines.extend(["", "results:", f"  directory: {definition.results_directory}"])
-    return "\n".join(lines) + "\n"
+    return "\n".join(
+        yaml.dump(section, Dumper=_Dumper, sort_keys=False, default_flow_style=False)
+        for section in sections
+    )
+
+
+def _criterion_record(criterion: Criterion) -> dict[str, Any]:
+    record: dict[str, Any] = {"metric": criterion.metric.value}
+    if criterion.statistic is not None:
+        record["statistic"] = criterion.statistic.value
+    record["comparison"] = criterion.comparison.value
+    record["threshold"] = criterion.threshold
+    record["unit"] = criterion.unit.value
+    return record
+
+
+class _Dumper(yaml.SafeDumper):
+    """The safe dumper, plus :class:`~decimal.Decimal` written as the number it is.
+
+    A threshold is a Decimal so the number the user wrote survives unchanged. Emitting
+    it as a float would reintroduce the binary-representation noise the Decimal exists
+    to keep out; emitting it as a string would quote it.
+    """
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
+        # Indent sequence items under their key, as the documented example does.
+        super().increase_indent(flow, False)
+
+
+def _represent_decimal(dumper: yaml.SafeDumper, value: Decimal) -> yaml.ScalarNode:
+    tag = "int" if value == value.to_integral_value() and "E" not in str(value) else "float"
+    return dumper.represent_scalar(f"tag:yaml.org,2002:{tag}", str(value))
+
+
+_Dumper.add_representer(Decimal, _represent_decimal)
 
 
 def _criterion(entry: object, index: int) -> Criterion:

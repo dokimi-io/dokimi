@@ -271,3 +271,30 @@ def test_an_unrecognised_suffix_is_a_config_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="cannot tell which format"):
         parse_file(document)
+
+
+# ----------------------------------------------------- YAML hardening (review of #26)
+def test_a_name_yaml_would_misread_is_quoted_on_the_way_out() -> None:
+    # `name: a: b` is not valid YAML. The emitter quotes it; the f-string did not.
+    from dataclasses import replace
+
+    original = replace(_definition(), name="a: b")
+
+    assert parse_yaml(render_yaml(original)) == original
+
+
+@pytest.mark.parametrize("threshold", [".nan", ".inf", "-.inf"])
+def test_a_non_finite_yaml_threshold_is_a_config_error(threshold: str) -> None:
+    source = YAML_SOURCE.replace("threshold: 950", f"threshold: {threshold}")
+
+    with pytest.raises(ConfigError, match="must be a finite number"):
+        parse_yaml(source)
+
+
+def test_the_rendered_yaml_keeps_the_documented_layout() -> None:
+    # Emitting through yaml.dump must not have changed what a person reads.
+    rendered = render_yaml(_definition())
+
+    assert "\nmetadata:\n  name: worker-01-to-worker-02-udp\n" in rendered
+    assert "  - metric: throughput\n    comparison: atLeast\n    threshold: 950\n" in rendered
+    assert "\n\nvalidation:\n" in rendered

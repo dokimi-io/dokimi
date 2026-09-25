@@ -107,6 +107,12 @@ class Criterion:
     scope: None = None
 
     def __post_init__(self) -> None:
+        if not self.threshold.is_finite():
+            # NaN compares false against everything and infinity passes or fails every
+            # bound, so neither is a threshold. Decimal accepts both spellings silently.
+            raise ConfigError(
+                f"threshold for {self.metric.value!r} must be a finite number, got {self.threshold}"
+            )
         if self.unit.dimension is not self.metric.dimension:
             raise ConfigError(
                 f"unit {self.unit.value!r} does not measure "
