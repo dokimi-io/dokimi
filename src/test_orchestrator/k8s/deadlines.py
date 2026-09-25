@@ -22,7 +22,7 @@ import copy
 import math
 from dataclasses import dataclass, fields
 
-from test_orchestrator.k8s.cluster import Manifest
+from test_orchestrator.k8s.resources import Manifest
 
 __all__ = [
     "DEFAULT_SAFETY_MARGIN_SECONDS",

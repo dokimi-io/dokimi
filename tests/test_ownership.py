@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 import test_orchestrator.k8s.ownership as ownership_module
-from test_orchestrator.k8s.cluster import CONFIG_MAP, JOB, POD, SERVICE, ClusterError, Manifest
 from test_orchestrator.k8s.deadlines import DeadlineBudget, bound_job, bound_pod
 from test_orchestrator.k8s.ownership import (
     MANAGED_BY_LABEL,
@@ -27,8 +26,9 @@ from test_orchestrator.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
+from test_orchestrator.k8s.resources import CONFIG_MAP, JOB, POD, SERVICE, ClusterError, Manifest
 from test_orchestrator.run_identity import RunId
-from tests.fake_cluster import FakeCluster
+from tests.fake_resources import FakeResources
 
 RUN = RunId("20260924-143012-k3f9x2")
 OTHER_RUN = RunId("20260924-120000-a1b2c3")
@@ -58,12 +58,12 @@ def service(name: str, namespace: str = NAMESPACE) -> Manifest:
 
 
 @pytest.fixture
-def cluster() -> FakeCluster:
-    return FakeCluster()
+def cluster() -> FakeResources:
+    return FakeResources()
 
 
 @pytest.fixture
-def ownership(cluster: FakeCluster) -> RunOwnership:
+def ownership(cluster: FakeResources) -> RunOwnership:
     return RunOwnership(cluster, RUN, metadata={"orchestrator_image": "ghcr.io/x@sha256:ab"})
 
 
@@ -71,7 +71,7 @@ def ownership(cluster: FakeCluster) -> RunOwnership:
 
 
 def test_created_objects_carry_the_ownership_labels(
-    cluster: FakeCluster, ownership: RunOwnership
+    cluster: FakeResources, ownership: RunOwnership
 ) -> None:
     created = ownership.create(POD, pod("iperf2-server"), test_id="t-001")
 
@@ -82,7 +82,7 @@ def test_created_objects_carry_the_ownership_labels(
 
 
 def test_the_owner_is_created_before_anything_else_in_its_namespace(
-    cluster: FakeCluster, ownership: RunOwnership
+    cluster: FakeResources, ownership: RunOwnership
 ) -> None:
     ownership.create(POD, pod("iperf2-server"))
 
@@ -91,7 +91,7 @@ def test_the_owner_is_created_before_anything_else_in_its_namespace(
     assert first["metadata"]["name"] == owner_name(RUN)
 
 
-def test_owner_shape(cluster: FakeCluster, ownership: RunOwnership) -> None:
+def test_owner_shape(cluster: FakeResources, ownership: RunOwnership) -> None:
     owner = ownership.owner_in(NAMESPACE)
 
     assert owner["metadata"]["name"] == f"test-orchestrator-run-{RUN}"
@@ -103,7 +103,7 @@ def test_owner_shape(cluster: FakeCluster, ownership: RunOwnership) -> None:
 
 
 def test_every_created_object_has_a_valid_owner_reference(
-    cluster: FakeCluster, ownership: RunOwnership
+    cluster: FakeResources, ownership: RunOwnership
 ) -> None:
     cluster.namespaces.add("test-orchestrator-prometheus")
     ownership.create(POD, pod("iperf2-server"), test_id="t-001")
@@ -137,7 +137,7 @@ def test_every_created_object_has_a_valid_owner_reference(
         assert owner["metadata"]["labels"][RUN_ID_LABEL] == str(RUN)
 
 
-def test_one_owner_per_namespace(cluster: FakeCluster, ownership: RunOwnership) -> None:
+def test_one_owner_per_namespace(cluster: FakeResources, ownership: RunOwnership) -> None:
     cluster.namespaces.add("test-orchestrator-prometheus")
     ownership.create(POD, pod("a"))
     ownership.create(POD, pod("b"))
@@ -150,14 +150,14 @@ def test_one_owner_per_namespace(cluster: FakeCluster, ownership: RunOwnership) 
     ]
 
 
-def test_an_existing_owner_of_this_run_is_adopted(cluster: FakeCluster) -> None:
+def test_an_existing_owner_of_this_run_is_adopted(cluster: FakeResources) -> None:
     first = RunOwnership(cluster, RUN).owner_in(NAMESPACE)
     again = RunOwnership(cluster, RUN).owner_in(NAMESPACE)
 
     assert again["metadata"]["uid"] == first["metadata"]["uid"]
 
 
-def test_a_same_named_object_that_is_not_ours_is_not_adopted(cluster: FakeCluster) -> None:
+def test_a_same_named_object_that_is_not_ours_is_not_adopted(cluster: FakeResources) -> None:
     cluster.put(CONFIG_MAP, NAMESPACE, {"metadata": {"name": owner_name(RUN)}, "data": {}})
 
     with pytest.raises(OwnershipError, match="refusing to adopt"):
@@ -205,7 +205,7 @@ def test_stamp_does_not_mutate_its_input(ownership: RunOwnership) -> None:
 
 
 def test_unlabelled_objects_survive_a_cleanup_of_their_namespace(
-    cluster: FakeCluster, ownership: RunOwnership
+    cluster: FakeResources, ownership: RunOwnership
 ) -> None:
     ownership.create(POD, pod("iperf2-server"))
     # Someone else's objects in the very same namespace, including a name we might use.
@@ -225,7 +225,7 @@ def test_unlabelled_objects_survive_a_cleanup_of_their_namespace(
     assert cluster.exists(POD, NAMESPACE, "half-labelled")
 
 
-def test_cleanup_leaves_other_runs_alone(cluster: FakeCluster) -> None:
+def test_cleanup_leaves_other_runs_alone(cluster: FakeResources) -> None:
     RunOwnership(cluster, RUN).create(POD, pod("mine"))
     RunOwnership(cluster, OTHER_RUN).create(POD, pod("theirs"))
 
@@ -235,7 +235,7 @@ def test_cleanup_leaves_other_runs_alone(cluster: FakeCluster) -> None:
     assert cluster.exists(POD, NAMESPACE, "theirs")
 
 
-def test_cleanup_never_deletes_the_orchestrator_itself(cluster: FakeCluster) -> None:
+def test_cleanup_never_deletes_the_orchestrator_itself(cluster: FakeResources) -> None:
     ownership = RunOwnership(cluster, RUN)
     ownership.create(POD, pod("orchestrator"), component=ORCHESTRATOR_COMPONENT)
 
@@ -245,7 +245,7 @@ def test_cleanup_never_deletes_the_orchestrator_itself(cluster: FakeCluster) -> 
 
 
 def test_dependents_are_deleted_before_owners(
-    cluster: FakeCluster, ownership: RunOwnership
+    cluster: FakeResources, ownership: RunOwnership
 ) -> None:
     ownership.create(POD, pod("iperf2-server"))
 
@@ -255,7 +255,7 @@ def test_dependents_are_deleted_before_owners(
 
 
 def test_a_same_named_replacement_is_not_deleted(
-    cluster: FakeCluster, ownership: RunOwnership, monkeypatch: pytest.MonkeyPatch
+    cluster: FakeResources, ownership: RunOwnership, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ownership.create(POD, pod("iperf2-server"))
     selected = find_run_owned(cluster, RUN)
@@ -272,7 +272,7 @@ def test_a_same_named_replacement_is_not_deleted(
 
 
 def test_deletion_failures_are_reported_not_swallowed(
-    cluster: FakeCluster, ownership: RunOwnership, monkeypatch: pytest.MonkeyPatch
+    cluster: FakeResources, ownership: RunOwnership, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ownership.create(POD, pod("iperf2-server"))
 

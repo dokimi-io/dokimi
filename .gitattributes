@@ -1,0 +1,5 @@
+# Files bash reads must keep Unix line endings on every checkout, including Windows ones
+# with core.autocrlf=true. A CRLF breaks a script outright ($'\r': command not found), and
+# in versions.env it silently corrupts every pinned value the scripts source from it.
+*.sh  text eol=lf
+*.env text eol=lf

@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from test_orchestrator.k8s.cluster import CONFIG_MAP, LEASE, POD, Kind, Manifest
 from test_orchestrator.k8s.exclusivity import (
     LOCK_NAME,
     RunAlreadyActiveError,
@@ -26,8 +25,9 @@ from test_orchestrator.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
+from test_orchestrator.k8s.resources import CONFIG_MAP, LEASE, POD, Kind, Manifest
 from test_orchestrator.run_identity import RunId, new_run_id
-from tests.fake_cluster import FakeCluster
+from tests.fake_resources import FakeResources
 
 FIRST = RunId("20260924-143012-k3f9x2")
 SECOND = RunId("20260924-143013-p7m2q8")
@@ -36,15 +36,15 @@ LOCK_NAMESPACE = "test-orchestrator"
 
 
 @pytest.fixture
-def cluster() -> FakeCluster:
-    return FakeCluster()
+def cluster() -> FakeResources:
+    return FakeResources()
 
 
-def claim(cluster: FakeCluster, run_id: RunId, **kwargs: object) -> RunOwnership:
+def claim(cluster: FakeResources, run_id: RunId, **kwargs: object) -> RunOwnership:
     return claim_run(cluster, run_id, namespace=NAMESPACE, **kwargs)  # type: ignore[arg-type]
 
 
-def test_a_claimed_run_owns_its_namespace_and_releases_the_lock(cluster: FakeCluster) -> None:
+def test_a_claimed_run_owns_its_namespace_and_releases_the_lock(cluster: FakeResources) -> None:
     ownership = claim(cluster, FIRST)
 
     assert ownership.run_id == FIRST
@@ -52,7 +52,7 @@ def test_a_claimed_run_owns_its_namespace_and_releases_the_lock(cluster: FakeClu
     assert not cluster.exists(LEASE, LOCK_NAMESPACE, LOCK_NAME)
 
 
-def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeCluster) -> None:
+def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeResources) -> None:
     claim(cluster, FIRST)
 
     with pytest.raises(RunAlreadyActiveError) as refused:
@@ -66,7 +66,7 @@ def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeCluster) -> 
     assert not cluster.exists(CONFIG_MAP, NAMESPACE, owner_name(SECOND))
 
 
-def test_exclusivity_spans_every_namespace(cluster: FakeCluster) -> None:
+def test_exclusivity_spans_every_namespace(cluster: FakeResources) -> None:
     cluster.namespaces.add("test-orchestrator-irtt")
     claim_run(cluster, FIRST, namespace="test-orchestrator-irtt")
 
@@ -74,7 +74,7 @@ def test_exclusivity_spans_every_namespace(cluster: FakeCluster) -> None:
         claim(cluster, SECOND)
 
 
-def test_leftovers_of_a_crashed_run_refuse_the_next_one(cluster: FakeCluster) -> None:
+def test_leftovers_of_a_crashed_run_refuse_the_next_one(cluster: FakeResources) -> None:
     # A run that died after claiming, with no owner left — only a stray workload.
     cluster.put(
         POD,
@@ -87,7 +87,7 @@ def test_leftovers_of_a_crashed_run_refuse_the_next_one(cluster: FakeCluster) ->
 
 
 def test_the_run_can_start_again_once_the_previous_one_is_cleaned_up(
-    cluster: FakeCluster,
+    cluster: FakeResources,
 ) -> None:
     claim(cluster, FIRST)
     delete_run_owned(cluster, FIRST)
@@ -95,7 +95,7 @@ def test_the_run_can_start_again_once_the_previous_one_is_cleaned_up(
     claim(cluster, SECOND)
 
 
-def test_unrelated_objects_and_orchestrator_jobs_do_not_block(cluster: FakeCluster) -> None:
+def test_unrelated_objects_and_orchestrator_jobs_do_not_block(cluster: FakeResources) -> None:
     cluster.put(POD, NAMESPACE, {"metadata": {"name": "someone-elses"}})
     # The *other* submission's own orchestrator pod: labelled with its run_id so the CLI
     # can reattach, but not a resource that run created.
@@ -113,7 +113,7 @@ def test_unrelated_objects_and_orchestrator_jobs_do_not_block(cluster: FakeClust
     claim(cluster, FIRST)
 
 
-def _submit_simultaneously(cluster: FakeCluster, run_ids: list[RunId]) -> dict[str, object]:
+def _submit_simultaneously(cluster: FakeResources, run_ids: list[RunId]) -> dict[str, object]:
     barrier = threading.Barrier(len(run_ids))
     outcomes: dict[str, object] = {}
 
@@ -134,7 +134,7 @@ def _submit_simultaneously(cluster: FakeCluster, run_ids: list[RunId]) -> dict[s
 
 @pytest.mark.parametrize("attempt", range(25))
 def test_two_simultaneous_submissions_start_exactly_one_run(attempt: int) -> None:
-    outcomes = _submit_simultaneously(FakeCluster(), [new_run_id(), new_run_id()])
+    outcomes = _submit_simultaneously(FakeResources(), [new_run_id(), new_run_id()])
 
     started = [rid for rid, outcome in outcomes.items() if isinstance(outcome, RunOwnership)]
     refused = [o for o in outcomes.values() if isinstance(o, RunAlreadyActiveError)]
@@ -143,7 +143,7 @@ def test_two_simultaneous_submissions_start_exactly_one_run(attempt: int) -> Non
     assert refused[0].active_run_ids == started
 
 
-def test_the_lock_closes_the_window_between_check_and_claim(cluster: FakeCluster) -> None:
+def test_the_lock_closes_the_window_between_check_and_claim(cluster: FakeResources) -> None:
     """The race the lock exists for, forced deterministically.
 
     FIRST is paused after taking the lock and before creating its owner — exactly where a
@@ -172,7 +172,7 @@ def test_the_lock_closes_the_window_between_check_and_claim(cluster: FakeCluster
     assert isinstance(first_result[0], RunOwnership)
 
 
-def _stale_lock(cluster: FakeCluster, holder: RunId, *, age: timedelta, seconds: int) -> None:
+def _stale_lock(cluster: FakeResources, holder: RunId, *, age: timedelta, seconds: int) -> None:
     stamp = (datetime.now(UTC) - age).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     cluster.put(
         LEASE,
@@ -190,7 +190,7 @@ def _stale_lock(cluster: FakeCluster, holder: RunId, *, age: timedelta, seconds:
 
 
 def test_a_lock_left_by_a_crashed_start_is_taken_over_once_expired(
-    cluster: FakeCluster,
+    cluster: FakeResources,
 ) -> None:
     _stale_lock(cluster, FIRST, age=timedelta(minutes=5), seconds=60)
 
@@ -200,7 +200,7 @@ def test_a_lock_left_by_a_crashed_start_is_taken_over_once_expired(
 
 
 def test_a_live_lock_refuses_even_with_nothing_else_in_the_cluster(
-    cluster: FakeCluster,
+    cluster: FakeResources,
 ) -> None:
     _stale_lock(cluster, FIRST, age=timedelta(seconds=5), seconds=60)
 
@@ -208,7 +208,7 @@ def test_a_live_lock_refuses_even_with_nothing_else_in_the_cluster(
         claim(cluster, SECOND)
 
 
-def test_a_claim_that_loses_its_lock_midway_withdraws(cluster: FakeCluster) -> None:
+def test_a_claim_that_loses_its_lock_midway_withdraws(cluster: FakeResources) -> None:
     """If the lock expired and changed hands while we were stalled, back out."""
 
     def take_over(kind: Kind, namespace: str, body: Manifest) -> None:
@@ -227,7 +227,7 @@ def test_a_claim_that_loses_its_lock_midway_withdraws(cluster: FakeCluster) -> N
     assert cluster.exists(LEASE, LOCK_NAMESPACE, LOCK_NAME)
 
 
-def test_the_lock_is_released_when_the_claim_is_refused(cluster: FakeCluster) -> None:
+def test_the_lock_is_released_when_the_claim_is_refused(cluster: FakeResources) -> None:
     claim(cluster, FIRST)
     with pytest.raises(RunAlreadyActiveError):
         claim(cluster, SECOND)
@@ -236,13 +236,13 @@ def test_the_lock_is_released_when_the_claim_is_refused(cluster: FakeCluster) ->
 
 
 def test_a_missing_lock_namespace_is_a_clear_error() -> None:
-    cluster = FakeCluster(namespaces={NAMESPACE})
+    cluster = FakeResources(namespaces={NAMESPACE})
 
     with pytest.raises(RunExclusivityError, match="'test-orchestrator' does not exist"):
         claim(cluster, FIRST)
 
 
-def test_the_lock_namespace_is_configurable(cluster: FakeCluster) -> None:
+def test_the_lock_namespace_is_configurable(cluster: FakeResources) -> None:
     cluster.namespaces.add("tools")
     seen: list[str] = []
 

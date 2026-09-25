@@ -11,6 +11,9 @@ license = { file = "LICENSE" }
 # A literal ">=1.35" would be satisfied by every release ever published.
 dependencies = [
     "kubernetes>=35",
+    # 6.0.3 is the floor, the newest release, chosen the same way as the Python,
+    # kubernetes and Robot Framework floors below.
+    "pyyaml>=6.0.3",
 ]
 
 # Robot Framework is a runtime dependency of a *run* (ADR-01-08), not of the core
@@ -34,6 +37,7 @@ dev = [
     "mypy>=1.11",
     "pytest>=8.0",
     "ruff>=0.6",
+    "types-pyyaml>=6",
 ]
 
 [build-system]
@@ -61,9 +65,10 @@ python_version = "3.14"
 strict = true
 files = ["src", "tests"]
 
-# The official client ships neither type hints nor a py.typed marker, and no maintained
-# stub package tracks it. Its use is confined to the adapter in test_orchestrator.k8s.cluster,
-# behind a typed protocol, so the untyped surface stops there.
+# The official `kubernetes` distribution ships no py.typed marker and no stubs, and the
+# available third-party stubs lag its releases. Everything that touches it is confined to
+# the two adapters, `k8s/_kubernetes.py` and `k8s/resources.py`, each behind a typed
+# protocol, so the untyped surface stops there.
 [[tool.mypy.overrides]]
 module = ["kubernetes", "kubernetes.*"]
 ignore_missing_imports = true
@@ -71,3 +76,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The model has classes named TestDefinition and TestType, which pytest would
+# otherwise try to collect as test classes. Every test here is a function.
+python_classes = []

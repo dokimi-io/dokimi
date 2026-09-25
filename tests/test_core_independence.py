@@ -27,6 +27,7 @@ CORE_MODULES = [
     "test_orchestrator.k8s.exclusivity",
     "test_orchestrator.k8s.namespaces",
     "test_orchestrator.k8s.ownership",
+    "test_orchestrator.k8s.resources",
     "test_orchestrator.metrics",
     "test_orchestrator.model",
     "test_orchestrator.planning",

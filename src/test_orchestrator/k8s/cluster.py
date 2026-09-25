@@ -1,210 +1,74 @@
-"""The narrow slice of the Kubernetes API that run ownership needs.
+"""The narrow slice of the Kubernetes API a submission actually uses.
 
-Ownership, exclusivity and scoped deletion are written against :class:`ClusterClient`
-rather than against the official client directly. That keeps the safety rules testable
-without a cluster — the tests drive them against an in-memory fake with the same
-conflict semantics — and keeps the official client's untyped, per-kind method sprawl in
-one adapter, :class:`KubernetesCluster`.
+Everything a run does to a cluster goes through :class:`ClusterClient`: eight
+operations, every namespaced one addressing objects by label selector rather than by name
+(ADR-05-02). The
+protocol exists so the submission and reattach paths can be exercised without a cluster —
+a fake that records calls proves ``--dry-run`` touches nothing far more convincingly than
+a comment saying it does not.
 
-Objects cross this boundary as plain manifest dictionaries in the API's own camelCase
-shape, the same shape a YAML manifest has.
+``kubernetes`` is imported inside :func:`connect`, not at module scope. A dry run should
+not need a kubeconfig, a cluster or even a working client library, and the cheapest way
+to guarantee that is for the import never to happen.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from collections.abc import Iterator, Mapping
+from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "CONFIG_MAP",
-    "DAEMON_SET",
-    "DEPLOYMENT",
-    "JOB",
-    "LEASE",
-    "POD",
-    "SERVICE",
-    "SERVICE_ACCOUNT",
-    "STATEFUL_SET",
-    "AlreadyExistsError",
     "ClusterClient",
     "ClusterError",
-    "ConflictError",
-    "Kind",
-    "KubernetesCluster",
-    "Manifest",
-    "NotFoundError",
+    "connect",
 ]
-
-Manifest = dict[str, Any]
-
-
-@dataclass(frozen=True)
-class Kind:
-    """A namespaced resource kind, and where the official client keeps its methods."""
-
-    api_version: str
-    kind: str
-    #: The snake_case infix in the official client's method names, e.g. ``config_map``.
-    method_name: str
-    #: Which of the adapter's API groups serves it.
-    api: str
-
-    def __str__(self) -> str:
-        return self.kind
-
-
-CONFIG_MAP = Kind("v1", "ConfigMap", "config_map", "core")
-POD = Kind("v1", "Pod", "pod", "core")
-SERVICE = Kind("v1", "Service", "service", "core")
-SERVICE_ACCOUNT = Kind("v1", "ServiceAccount", "service_account", "core")
-JOB = Kind("batch/v1", "Job", "job", "batch")
-DEPLOYMENT = Kind("apps/v1", "Deployment", "deployment", "apps")
-DAEMON_SET = Kind("apps/v1", "DaemonSet", "daemon_set", "apps")
-STATEFUL_SET = Kind("apps/v1", "StatefulSet", "stateful_set", "apps")
-LEASE = Kind("coordination.k8s.io/v1", "Lease", "lease", "coordination")
 
 
 class ClusterError(RuntimeError):
-    """A Kubernetes API call failed in a way the caller is expected to handle."""
+    """The cluster refused a request, or could not be reached at all."""
 
 
-class AlreadyExistsError(ClusterError):
-    """``create`` found an object of that kind and name already there (HTTP 409)."""
-
-
-class ConflictError(ClusterError):
-    """An optimistic-concurrency precondition failed (HTTP 409 on replace or delete)."""
-
-
-class NotFoundError(ClusterError):
-    """The object does not exist (HTTP 404)."""
-
-
+@runtime_checkable
 class ClusterClient(Protocol):
-    """What ownership, exclusivity and cleanup need from a cluster, and nothing more."""
+    """What the CLI needs from a cluster. Nothing here is specific to a test type."""
 
-    def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        """Create *body*; raise :class:`AlreadyExistsError` if the name is taken."""
-        ...
+    def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
+        """Create the namespace if it is not already there."""
 
-    def get(self, kind: Kind, namespace: str, name: str) -> Manifest:
-        """Read one object; raise :class:`NotFoundError` if it is absent."""
-        ...
+    def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
+        """Create one object and return it as the API server stored it."""
 
-    def list(self, kind: Kind, label_selector: str, namespace: str | None = None) -> list[Manifest]:
-        """List objects matching *label_selector*, in *namespace* or, if ``None``, everywhere."""
-        ...
+    def find_job(self, namespace: str, selector: str) -> dict[str, Any] | None:
+        """The single Job matching *selector*, or ``None``."""
 
-    def replace(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        """Replace an object; *body* carries ``metadata.resourceVersion``.
+    def find_pod(self, namespace: str, selector: str) -> dict[str, Any] | None:
+        """The most recent Pod matching *selector*, or ``None``."""
 
-        Raises :class:`ConflictError` if the object changed since that version was read.
+    def read_pod(self, namespace: str, name: str) -> dict[str, Any] | None:
+        """One Pod by name, or ``None`` if it has gone."""
+
+    def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
+        """Yield log lines from a running or finished container until it ends."""
+
+    def delete_config_maps(self, namespace: str, selector: str) -> None:
+        """Delete the ConfigMaps matching *selector*, cascading to their dependents.
+
+        By selector, never by name, like every delete a run makes (ADR-05-02).
         """
-        ...
 
-    def delete(
-        self,
-        kind: Kind,
-        namespace: str,
-        name: str,
-        *,
-        uid: str,
-        resource_version: str | None = None,
-    ) -> None:
-        """Delete one object, only if it is still the object with *uid*.
-
-        The uid precondition is what stops a delete from hitting a same-named object
-        created after the one that was selected. *resource_version*, if given, also
-        requires it to be unmodified since it was read. Raises :class:`NotFoundError` if
-        it is already gone, :class:`ConflictError` if a precondition failed.
-        """
-        ...
+    def list_nodes(self) -> list[dict[str, Any]]:
+        """Every Node object. Read-only, and the only cluster-scoped call a run makes."""
 
 
-class KubernetesCluster:
-    """:class:`ClusterClient` over the official ``kubernetes`` client."""
+def connect(kubeconfig: str | None = None, context: str | None = None) -> ClusterClient:
+    """Load cluster credentials and return a client.
 
-    def __init__(self, api_client: Any | None = None) -> None:
-        from kubernetes import client
+    In-cluster service-account credentials are preferred when present, so the same code
+    path works for a CI runner inside the cluster and a laptop outside it.
+    """
+    try:
+        from test_orchestrator.k8s._kubernetes import KubernetesCluster
+    except ImportError as error:  # pragma: no cover - the dependency is not optional
+        raise ClusterError(f"the Kubernetes client library is unavailable: {error}") from error
 
-        self._api_client = api_client if api_client is not None else client.ApiClient()
-        self._apis: dict[str, Any] = {
-            "core": client.CoreV1Api(self._api_client),
-            "apps": client.AppsV1Api(self._api_client),
-            "batch": client.BatchV1Api(self._api_client),
-            "coordination": client.CoordinationV1Api(self._api_client),
-        }
-
-    @classmethod
-    def from_environment(cls) -> KubernetesCluster:
-        """In-cluster credentials inside the Job, the local kubeconfig anywhere else."""
-        from kubernetes import config
-
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
-        return cls()
-
-    def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        method = self._method(kind, f"create_namespaced_{kind.method_name}")
-        return self._call(method, namespace=namespace, body=body, on_conflict=AlreadyExistsError)
-
-    def get(self, kind: Kind, namespace: str, name: str) -> Manifest:
-        method = self._method(kind, f"read_namespaced_{kind.method_name}")
-        return self._call(method, name=name, namespace=namespace)
-
-    def list(self, kind: Kind, label_selector: str, namespace: str | None = None) -> list[Manifest]:
-        if namespace is None:
-            method = self._method(kind, f"list_{kind.method_name}_for_all_namespaces")
-            result = self._call(method, label_selector=label_selector)
-        else:
-            method = self._method(kind, f"list_namespaced_{kind.method_name}")
-            result = self._call(method, namespace=namespace, label_selector=label_selector)
-        items: list[Manifest] = result.get("items") or []
-        return items
-
-    def replace(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        method = self._method(kind, f"replace_namespaced_{kind.method_name}")
-        return self._call(method, name=body["metadata"]["name"], namespace=namespace, body=body)
-
-    def delete(
-        self,
-        kind: Kind,
-        namespace: str,
-        name: str,
-        *,
-        uid: str,
-        resource_version: str | None = None,
-    ) -> None:
-        from kubernetes import client
-
-        method = self._method(kind, f"delete_namespaced_{kind.method_name}")
-        options = client.V1DeleteOptions(
-            preconditions=client.V1Preconditions(uid=uid, resource_version=resource_version),
-            propagation_policy="Background",
-        )
-        self._call(method, name=name, namespace=namespace, body=options)
-
-    def _method(self, kind: Kind, name: str) -> Any:
-        return getattr(self._apis[kind.api], name)
-
-    def _call(
-        self,
-        method: Any,
-        *,
-        on_conflict: type[ClusterError] = ConflictError,
-        **kwargs: Any,
-    ) -> Manifest:
-        from kubernetes.client.exceptions import ApiException
-
-        try:
-            result = method(**kwargs)
-        except ApiException as error:
-            if error.status == 404:
-                raise NotFoundError(error.reason) from error
-            if error.status == 409:
-                raise on_conflict(error.reason) from error
-            raise ClusterError(f"HTTP {error.status}: {error.reason}") from error
-        serialized: Manifest = self._api_client.sanitize_for_serialization(result) or {}
-        return serialized
+    return KubernetesCluster.connect(kubeconfig=kubeconfig, context=context)

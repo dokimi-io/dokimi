@@ -31,6 +31,9 @@ jobs:
         run: uv run ruff format --check .
       - name: Type-check
         run: uv run mypy
+      # The test environment's scripts: shellcheck is preinstalled on GitHub's Ubuntu runners.
+      - name: Shell scripts
+        run: shellcheck -x test-env/*.sh
 
   test:
     name: Tests

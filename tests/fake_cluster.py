@@ -1,146 +1,179 @@
-"""An in-memory :class:`~test_orchestrator.k8s.cluster.ClusterClient` for tests.
+"""A cluster that only exists in memory, for the tests that must not need a real one.
 
-It reproduces the API-server behaviour the safety rules depend on, and nothing else:
-``create`` is atomic and fails on a taken name, ``replace`` and ``delete`` honour
-``resourceVersion`` and uid preconditions, label selectors are evaluated server-side, and
-all of it is serialised by one lock so concurrent callers race the way real ones do.
+The submission path's interesting properties — what gets created and in what order, that
+a dry run creates nothing, that following a run finds its pod by label rather than by
+name — are all statements about the calls made to a cluster. A fake that records those
+calls tests them directly; a real cluster would test them incidentally, and only where
+one is available.
 """
 
 from __future__ import annotations
 
-import copy
-import itertools
-import threading
-import uuid
-from collections.abc import Callable
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any
 
-from test_orchestrator.k8s.cluster import (
-    AlreadyExistsError,
-    ConflictError,
-    Kind,
-    Manifest,
-    NotFoundError,
-)
+from test_orchestrator.k8s.cluster import ClusterError
+from test_orchestrator.k8s.submission import CONTAINER_NAME
 
-Key = tuple[str, str, str]  # kind, namespace, name
-Hook = Callable[[Kind, str, Manifest], None]
+__all__ = ["ExplodingCluster", "FakeCluster", "node"]
+
+
+def node(
+    name: str,
+    *,
+    ready: str | None = "True",
+    cordoned: bool = False,
+    taints: Sequence[tuple[str, str, str]] = (),
+) -> dict[str, Any]:
+    """A Node object in the API's shape, with only the fields discovery reads.
+
+    ``ready`` is the Ready condition's status string — ``"True"``, ``"False"``,
+    ``"Unknown"`` — or ``None`` for a node that reports no Ready condition at all.
+    ``taints`` are ``(key, value, effect)``.
+    """
+    spec: dict[str, Any] = {}
+    if cordoned:
+        spec["unschedulable"] = True
+    if taints:
+        spec["taints"] = [
+            {"key": key, "value": value, "effect": effect} for key, value, effect in taints
+        ]
+    conditions = [] if ready is None else [{"type": "Ready", "status": ready}]
+    return {"metadata": {"name": name}, "spec": spec, "status": {"conditions": conditions}}
+
+
+#: The nodes the shipped example names, both able to take a test pod.
+EXAMPLE_NODES = (node("worker-01"), node("worker-02"))
 
 
 class FakeCluster:
-    def __init__(self, namespaces: set[str] | None = None) -> None:
-        self.namespaces = (
-            {"default", "test-orchestrator", "test-orchestrator-iperf2"}
-            if namespaces is None
-            else namespaces
-        )
-        self.objects: dict[Key, Manifest] = {}
-        self.created: list[tuple[Kind, Manifest]] = []
-        self._lock = threading.RLock()
-        self._versions = itertools.count(1)
-        #: Called before each create, outside the lock, so a test can interleave callers.
-        self.before_create: Hook | None = None
+    """Records every write and answers reads from a script."""
 
-    # -- ClusterClient -------------------------------------------------------------------
-
-    def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        if self.before_create is not None:
-            self.before_create(kind, namespace, body)
-        with self._lock:
-            if namespace not in self.namespaces:
-                raise NotFoundError(f"namespaces {namespace!r} not found")
-            stored = copy.deepcopy(body)
-            metadata = stored.setdefault("metadata", {})
-            metadata["namespace"] = namespace
-            key = (kind.kind, namespace, metadata["name"])
-            if key in self.objects:
-                raise AlreadyExistsError(f"{kind} {metadata['name']!r} already exists")
-            metadata["uid"] = str(uuid.uuid4())
-            metadata["resourceVersion"] = str(next(self._versions))
-            self.objects[key] = stored
-            self.created.append((kind, copy.deepcopy(stored)))
-            return copy.deepcopy(stored)
-
-    def get(self, kind: Kind, namespace: str, name: str) -> Manifest:
-        with self._lock:
-            try:
-                return copy.deepcopy(self.objects[(kind.kind, namespace, name)])
-            except KeyError:
-                raise NotFoundError(f"{kind} {name!r} not found") from None
-
-    def list(self, kind: Kind, label_selector: str, namespace: str | None = None) -> list[Manifest]:
-        with self._lock:
-            return [
-                copy.deepcopy(obj)
-                for (obj_kind, obj_namespace, _), obj in self.objects.items()
-                if obj_kind == kind.kind
-                and (namespace is None or obj_namespace == namespace)
-                and matches(label_selector, obj.get("metadata", {}).get("labels") or {})
-            ]
-
-    def replace(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
-        with self._lock:
-            key = (kind.kind, namespace, body["metadata"]["name"])
-            current = self.objects.get(key)
-            if current is None:
-                raise NotFoundError(f"{kind} {key[2]!r} not found")
-            expected = body["metadata"].get("resourceVersion")
-            if expected != current["metadata"]["resourceVersion"]:
-                raise ConflictError(f"{kind} {key[2]!r} was modified")
-            stored = copy.deepcopy(body)
-            stored["metadata"]["namespace"] = namespace
-            stored["metadata"]["uid"] = current["metadata"]["uid"]
-            stored["metadata"]["resourceVersion"] = str(next(self._versions))
-            self.objects[key] = stored
-            return copy.deepcopy(stored)
-
-    def delete(
+    def __init__(
         self,
-        kind: Kind,
-        namespace: str,
-        name: str,
         *,
-        uid: str,
-        resource_version: str | None = None,
+        log_lines: Sequence[str] = (),
+        exit_code: int = 0,
+        phases: Sequence[str] = ("Running",),
+        pod_name: str = "run-pod-1",
+        has_pod: bool = True,
+        has_job: bool = True,
+        terminated_after: int = 0,
+        owner_uid: str = "owner-uid-1",
+        termination_reason: str = "",
+        has_pod_after_stream: bool = True,
+        job_conditions: Sequence[dict[str, str]] = (),
+        fail_on_kind: str | None = None,
+        fail_deleting: bool = False,
+        nodes: Sequence[dict[str, Any]] = EXAMPLE_NODES,
     ) -> None:
-        with self._lock:
-            key = (kind.kind, namespace, name)
-            current = self.objects.get(key)
-            if current is None:
-                raise NotFoundError(f"{kind} {name!r} not found")
-            if current["metadata"]["uid"] != uid:
-                raise ConflictError(f"{kind} {name!r} uid precondition failed")
-            if resource_version is not None and (
-                current["metadata"]["resourceVersion"] != resource_version
-            ):
-                raise ConflictError(f"{kind} {name!r} resourceVersion precondition failed")
-            del self.objects[key]
+        self.log_lines = list(log_lines)
+        self.exit_code = exit_code
+        self.phases = list(phases)
+        self.pod_name = pod_name
+        self.has_pod = has_pod
+        self.has_job = has_job
+        self.terminated_after = terminated_after
+        self.owner_uid = owner_uid
+        self.termination_reason = termination_reason
+        self.has_pod_after_stream = has_pod_after_stream
+        self.job_conditions = list(job_conditions)
+        self.fail_on_kind = fail_on_kind
+        self.fail_deleting = fail_deleting
+        self.deleted: list[tuple[str, str]] = []
+        self.nodes = list(nodes)
+        self.node_reads = 0
 
-    # -- test helpers ----------------------------------------------------------------------
+        self.namespaces: list[str] = []
+        self.created: list[dict[str, Any]] = []
+        self.selectors: list[str] = []
+        self.streamed: list[tuple[str, str, str]] = []
+        self._pod_reads = 0
+        self._pod_lookups = 0
 
-    def put(self, kind: Kind, namespace: str, manifest: Manifest) -> Manifest:
-        """Create an object as some other actor would, bypassing hooks."""
-        hook, self.before_create = self.before_create, None
-        try:
-            return self.create(kind, namespace, manifest)
-        finally:
-            self.before_create = hook
+    # -- ClusterClient --------------------------------------------------------
 
-    def exists(self, kind: Kind, namespace: str, name: str) -> bool:
-        with self._lock:
-            return (kind.kind, namespace, name) in self.objects
+    def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
+        self.namespaces.append(manifest["metadata"]["name"])
+
+    def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
+        if manifest["kind"] == self.fail_on_kind:
+            raise ClusterError(f"creating {manifest['kind']}: 422 Unprocessable Entity")
+        stored = dict(manifest)
+        metadata = dict(stored["metadata"])
+        metadata["uid"] = self.owner_uid if not self.created else f"uid-{len(self.created)}"
+        stored["metadata"] = metadata
+        self.created.append(stored)
+        return stored
+
+    def find_job(self, namespace: str, selector: str) -> dict[str, Any] | None:
+        self.selectors.append(selector)
+        if not self.has_job:
+            return None
+        return {
+            "metadata": {"name": "run-job", "namespace": namespace, "labels": {}},
+            "status": {"conditions": list(self.job_conditions)},
+        }
+
+    def find_pod(self, namespace: str, selector: str) -> dict[str, Any] | None:
+        self.selectors.append(selector)
+        if not self.has_pod:
+            return None
+        phase = self.phases[min(self._pod_lookups, len(self.phases) - 1)]
+        self._pod_lookups += 1
+        return {
+            "metadata": {"name": self.pod_name, "namespace": namespace},
+            "status": {"phase": phase},
+        }
+
+    def read_pod(self, namespace: str, name: str) -> dict[str, Any] | None:
+        self._pod_reads += 1
+        if not self.has_pod_after_stream:
+            return None
+        state: dict[str, Any] = (
+            {"terminated": {"exitCode": self.exit_code, "reason": self.termination_reason}}
+            if self._pod_reads > self.terminated_after
+            else {"running": {}}
+        )
+        return {
+            "metadata": {"name": name, "namespace": namespace},
+            "status": {
+                "phase": "Succeeded",
+                "containerStatuses": [{"name": CONTAINER_NAME, "state": state}],
+            },
+        }
+
+    def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
+        self.streamed.append((namespace, pod, container))
+        yield from self.log_lines
+
+    def delete_config_maps(self, namespace: str, selector: str) -> None:
+        if self.fail_deleting:
+            raise ClusterError("deleting ConfigMaps: 403 Forbidden")
+        self.deleted.append((namespace, selector))
+
+    def list_nodes(self) -> list[dict[str, Any]]:
+        self.node_reads += 1
+        return list(self.nodes)
+
+    # -- assertions helpers ---------------------------------------------------
+
+    @property
+    def created_kinds(self) -> list[str]:
+        return [manifest["kind"] for manifest in self.created]
 
 
-def matches(selector: str, labels: dict[str, str]) -> bool:
-    """Evaluate the equality-based label selector subset: ``k=v``, ``k!=v`` and ``k``."""
-    for term in filter(None, (part.strip() for part in selector.split(","))):
-        if "!=" in term:
-            key, value = term.split("!=", 1)
-            if labels.get(key) == value:
-                return False
-        elif "=" in term:
-            key, value = term.split("=", 1)
-            if labels.get(key) != value:
-                return False
-        elif term not in labels:
-            return False
-    return True
+class ExplodingCluster:
+    """Fails on contact. Anything that must not touch a cluster gets one of these."""
+
+    def _explode(self, *args: object, **kwargs: object) -> Any:
+        raise AssertionError("this code path must not contact a cluster")
+
+    ensure_namespace = _explode
+    create = _explode
+    find_job = _explode
+    find_pod = _explode
+    read_pod = _explode
+    stream_logs = _explode
+    delete_config_maps = _explode
+    list_nodes = _explode

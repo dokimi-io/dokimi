@@ -34,16 +34,6 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from test_orchestrator.k8s.cluster import (
-    CONFIG_MAP,
-    LEASE,
-    AlreadyExistsError,
-    ClusterClient,
-    ClusterError,
-    ConflictError,
-    Manifest,
-    NotFoundError,
-)
 from test_orchestrator.k8s.ownership import (
     OwnedObject,
     RunOwnership,
@@ -51,6 +41,16 @@ from test_orchestrator.k8s.ownership import (
     owner_name,
     ownership_labels,
     run_selector,
+)
+from test_orchestrator.k8s.resources import (
+    CONFIG_MAP,
+    LEASE,
+    AlreadyExistsError,
+    ClusterError,
+    ConflictError,
+    Manifest,
+    NotFoundError,
+    ResourceClient,
 )
 from test_orchestrator.run_identity import RunId
 
@@ -100,7 +100,7 @@ class RunAlreadyActiveError(RunExclusivityError):
 
 
 def claim_run(
-    cluster: ClusterClient,
+    cluster: ResourceClient,
     run_id: RunId,
     *,
     namespace: str,
@@ -141,7 +141,7 @@ def claim_run(
 
 
 def _acquire_lock(
-    cluster: ClusterClient,
+    cluster: ResourceClient,
     run_id: RunId,
     lock_namespace: str,
     lock_seconds: int,
@@ -213,7 +213,7 @@ def _expired(lease: Manifest, moment: datetime) -> bool:
     return moment >= renewed_at + timedelta(seconds=int(duration))
 
 
-def _still_holds(cluster: ClusterClient, lease: Manifest, lock_namespace: str) -> bool:
+def _still_holds(cluster: ResourceClient, lease: Manifest, lock_namespace: str) -> bool:
     try:
         current = cluster.get(LEASE, lock_namespace, LOCK_NAME)
     except NotFoundError:
@@ -223,7 +223,7 @@ def _still_holds(cluster: ClusterClient, lease: Manifest, lock_namespace: str) -
     )
 
 
-def _current_holder(cluster: ClusterClient, lock_namespace: str) -> str | None:
+def _current_holder(cluster: ResourceClient, lock_namespace: str) -> str | None:
     try:
         current = cluster.get(LEASE, lock_namespace, LOCK_NAME)
     except NotFoundError:
@@ -232,7 +232,7 @@ def _current_holder(cluster: ClusterClient, lock_namespace: str) -> str | None:
     return str(holder) if holder else None
 
 
-def _withdraw(cluster: ClusterClient, ownership: RunOwnership, namespace: str) -> None:
+def _withdraw(cluster: ResourceClient, ownership: RunOwnership, namespace: str) -> None:
     owner = ownership.owner_in(namespace)
     try:
         cluster.delete(
@@ -242,7 +242,7 @@ def _withdraw(cluster: ClusterClient, ownership: RunOwnership, namespace: str) -
         _log.error("could not withdraw the owner of run %s: %s", ownership.run_id, error)
 
 
-def _release_lock(cluster: ClusterClient, lease: Manifest, lock_namespace: str) -> None:
+def _release_lock(cluster: ResourceClient, lease: Manifest, lock_namespace: str) -> None:
     try:
         # A takeover replaces the Lease in place, keeping its uid, so the uid alone would
         # not stop us from releasing a lock that is now someone else's.

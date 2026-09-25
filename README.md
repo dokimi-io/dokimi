@@ -10,6 +10,7 @@ artifact, and removes everything it created.
 
 - [Execution model](#execution-model)
 - [The phases of a run](#the-phases-of-a-run)
+- [Using the CLI](#using-the-cli)
 - [Authoring a test](#authoring-a-test)
 - [Validation criteria](#validation-criteria)
 - [Metric contract](#metric-contract)
@@ -21,6 +22,10 @@ artifact, and removes everything it created.
 - [Milestones](#milestones)
 - [Not yet decided](#not-yet-decided)
 - [Related projects](#related-projects)
+
+The guides in [`docs/`](docs/) cover the practical side: [installation](docs/installation.md),
+[usage](docs/usage.md), [development setup](docs/setup.md) and [building](docs/building.md).
+The [test suite's README](tests/README.md) explains what is tested and how to run a subset.
 
 ## Execution model
 
@@ -142,6 +147,55 @@ structural reason rather than an implementation one. Those two phases have their
 surface. If a failed run produced no `log.html` at all, it failed in phase 4 and no suite was ever
 executed.
 
+## Using the CLI
+
+```console
+$ test-orchestrator validate test.yaml          # parse and check, no cluster involved
+$ test-orchestrator submit test.yaml --dry-run  # render the matrix and the manifests
+$ test-orchestrator submit test.yaml            # create the run and stream its logs
+$ test-orchestrator attach <run-id>             # resume streaming a run already going
+```
+
+`submit` validates the definition locally first, so an invalid one never reaches the
+cluster. What it then creates is three objects: a ConfigMap that owns the run, a ConfigMap
+carrying the definition, and the Job that is the run. The definition travels with the run
+rather than being re-read from your disk, which is what lets `attach` work from a machine
+that has neither the file nor any record of the submission.
+
+`--dry-run` writes the manifests to stdout and everything else to stderr, so the rendering
+can be saved or diffed on its own. By default it contacts nothing.
+
+Ctrl-C stops the log stream, not the run: the Job is a server-side resource and keeps
+going. The command prints the `attach` line that picks it back up.
+
+Every command and flag, with real output, is in the [usage guide](docs/usage.md).
+
+### Exit codes
+
+Automation-facing from the first release, so they are an interface rather than an
+implementation detail.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | run completed, overall pass |
+| `1` | run completed, at least one non-optional pair failed |
+| `2` | at least one non-optional pair errored, or a post-run anomaly |
+| `3` | invalid request, detected before anything was created |
+| `4` | run-level preflight failure |
+| `5` | internal or unexpected orchestrator error |
+
+The highest applicable code wins. A run with both failures and errors exits `2`: an error
+means part of the matrix was not validly measured, and an incomplete picture matters more
+than any single finding within it.
+
+Codes 0 to 2 are the run's own verdict, computed in the cluster and propagated unchanged —
+the CLI does not re-derive it. Nothing outside the table reaches CI from a run: a container
+killed for running out of memory (`137`), a run stopped by its deadline, or a crash in the
+CLI itself all exit `5`, with a message saying which. `130` (Ctrl-C) is deliberately outside
+the table, because interrupting the stream is not a verdict. The
+[usage guide](docs/usage.md#exit-codes) says which side of the cluster boundary produces
+each code.
+
 ## Authoring a test
 
 Robot and YAML are **peer authoring formats**. Neither is consumed directly: both `parse()` into one
@@ -198,20 +252,24 @@ library.
 
 ```robot
 *** Settings ***
-Documentation       Directed 1 Gbit/s UDP test between two named nodes.
+Documentation       worker-01-to-worker-02-udp
 Resource            resources/TestOrchestrator.resource
 
 *** Variables ***
-${SOURCE_NODE}           worker-01
-${TARGET_NODE}           worker-02
-${TARGET_BANDWIDTH}      1G
-${TEST_DURATION}         30s
+${SOURCE_NODE}         worker-01
+${TARGET_NODE}         worker-02
+${TEST_TYPE}           iperf2
+${PROTOCOL}            udp
+${TEST_DURATION}       30s
+${TARGET_BANDWIDTH}    1G
+${MONITORING_MODE}     managed
+${RESULTS_DIRECTORY}   ./results
 
 *** Test Cases ***
-Directed UDP Test
+worker-01-to-worker-02-udp
     Run Network Test
-    ...    type=iperf2
-    ...    protocol=udp
+    ...    type=${TEST_TYPE}
+    ...    protocol=${PROTOCOL}
     ...    source=${SOURCE_NODE}
     ...    target=${TARGET_NODE}
     ...    bandwidth=${TARGET_BANDWIDTH}
@@ -307,7 +365,7 @@ Every framework metric carries:
 
 | Label | Meaning |
 | --- | --- |
-| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is a sortable `<timestamp>-<short-random>`, not a UUID — it stays readable in a log line and orders naturally in the result artifact. Concretely `YYYYMMDD-HHMMSS-xxxxxx`, UTC, with six characters of `[0-9a-z]`, e.g. `20260924-143012-k3f9x2` |
+| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is `YYYYMMDD-HHMMSS-xxxxxx` — a UTC timestamp, then six characters of `[0-9a-z]` (ADR-02-08) — not a UUID: it stays readable in a log line, orders naturally in the result artifact, and is spelled the same way in every label, object name and row |
 | `test_id` | Unique per test within a run; one source/target/parameter combination. Stable across repetitions |
 | `repetition` | A separate label rather than folded into `test_id`, so aggregating a pair's repetitions is a plain `avg by (test_id)` |
 | `test_type` | `iperf2`, `iperf3`, `irtt`, … |
@@ -595,6 +653,7 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 | Packaging | **`uv` 0.12.18+**, with a single `uv.lock` at the repository root as the one source of resolved versions |
 | Kubernetes client | the official `kubernetes` library, **35+** (its major tracks the Kubernetes minor it targets, so this is Kubernetes **1.35+**) |
 | Robot Framework | **7.5+**, an optional extra rather than a core dependency — see below |
+| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism ([ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md)) |
 
 The orchestration logic is a library with **no Robot Framework imports in its core**. The Robot
 resource library, the CLI, a CI entry point and a future Operator are all thin adapters over the

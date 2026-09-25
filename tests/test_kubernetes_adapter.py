@@ -13,17 +13,17 @@ from typing import Any
 import pytest
 from kubernetes.client.exceptions import ApiException
 
-from test_orchestrator.k8s.cluster import (
+from test_orchestrator.k8s.ownership import RUN_OWNED_KINDS
+from test_orchestrator.k8s.resources import (
     CONFIG_MAP,
     LEASE,
     AlreadyExistsError,
     ClusterError,
     ConflictError,
     Kind,
-    KubernetesCluster,
+    KubernetesResources,
     NotFoundError,
 )
-from test_orchestrator.k8s.ownership import RUN_OWNED_KINDS
 
 _VERBS = (
     "create_namespaced_{}",
@@ -36,14 +36,14 @@ _VERBS = (
 
 
 @pytest.fixture
-def adapter() -> KubernetesCluster:
+def adapter() -> KubernetesResources:
     from kubernetes import client
 
-    return KubernetesCluster(client.ApiClient(client.Configuration()))
+    return KubernetesResources(client.ApiClient(client.Configuration()))
 
 
 @pytest.mark.parametrize("kind", [*RUN_OWNED_KINDS, LEASE], ids=str)
-def test_every_method_the_adapter_builds_exists(adapter: KubernetesCluster, kind: Kind) -> None:
+def test_every_method_the_adapter_builds_exists(adapter: KubernetesResources, kind: Kind) -> None:
     for verb in _VERBS:
         assert callable(adapter._method(kind, verb.format(kind.method_name)))
 
@@ -64,7 +64,7 @@ def _raising(status: int) -> Any:
     ],
 )
 def test_http_errors_map_to_cluster_errors(
-    adapter: KubernetesCluster,
+    adapter: KubernetesResources,
     monkeypatch: pytest.MonkeyPatch,
     status: int,
     on_create: type[ClusterError],
@@ -79,7 +79,7 @@ def test_http_errors_map_to_cluster_errors(
 
 
 def test_results_come_back_as_camel_case_manifests(
-    adapter: KubernetesCluster, monkeypatch: pytest.MonkeyPatch
+    adapter: KubernetesResources, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from kubernetes import client
 

@@ -30,7 +30,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from test_orchestrator.k8s.cluster import (
+from test_orchestrator.k8s.resources import (
     CONFIG_MAP,
     DAEMON_SET,
     DEPLOYMENT,
@@ -40,12 +40,12 @@ from test_orchestrator.k8s.cluster import (
     SERVICE_ACCOUNT,
     STATEFUL_SET,
     AlreadyExistsError,
-    ClusterClient,
     ClusterError,
     ConflictError,
     Kind,
     Manifest,
     NotFoundError,
+    ResourceClient,
 )
 from test_orchestrator.run_identity import RunId
 
@@ -201,7 +201,7 @@ class RunOwnership:
 
     def __init__(
         self,
-        cluster: ClusterClient,
+        cluster: ResourceClient,
         run_id: RunId,
         *,
         metadata: Mapping[str, str] | None = None,
@@ -330,7 +330,7 @@ class OwnedObject:
 
 
 def find_run_owned(
-    cluster: ClusterClient,
+    cluster: ResourceClient,
     run_id: RunId | None = None,
     *,
     namespace: str | None = None,
@@ -379,7 +379,7 @@ class DeletionReport:
 
 
 def delete_run_owned(
-    cluster: ClusterClient,
+    cluster: ResourceClient,
     run_id: RunId,
     *,
     namespace: str | None = None,
