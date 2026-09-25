@@ -1,6 +1,6 @@
 # The test suite
 
-253 tests, none of which need a cluster, a network or a container runtime. Everything runs
+257 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -19,7 +19,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_model.py`](test_model.py) | 51 | The canonical model: durations, bandwidths, criteria, and what it refuses — including every value a renderer could not carry |
 | [`test_formats.py`](test_formats.py) | 23 | The YAML and Robot plugins, and that they are genuinely peers |
 | [`test_robot_strictness.py`](test_robot_strictness.py) | 31 | The Robot parser reads every criterion Robot would call, or rejects the suite |
-| [`test_examples.py`](test_examples.py) | 4 | The shipped examples parse, and the two formats agree |
+| [`test_examples.py`](test_examples.py) | 8 | The shipped examples parse and agree; every test definition in the docs parses, and the README shows the examples verbatim |
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
@@ -32,7 +32,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 
 ## How the cluster-facing tests work without a cluster
 
-Everything the CLI does to a cluster goes through a six-method protocol,
+Everything the CLI does to a cluster goes through a seven-method protocol,
 `ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
 
 - **`FakeCluster`** records every write and answers reads from a script — a list of pod

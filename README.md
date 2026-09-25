@@ -163,20 +163,12 @@ rather than being re-read from your disk, which is what lets `attach` work from 
 that has neither the file nor any record of the submission.
 
 `--dry-run` writes the manifests to stdout and everything else to stderr, so the rendering
-can be saved or diffed on its own. It contacts nothing.
-
-| Flag | |
-| --- | --- |
-| `--dry-run` | render and stop |
-| `--no-follow` | submit and return, rather than streaming |
-| `--run-id` | use a specific run id instead of generating one |
-| `--namespace`, `-n` | override the test type's namespace |
-| `--orchestrator-image` | override the image the Job runs |
-| `--service-account` | run the Job as a specific service account |
-| `--kubeconfig`, `--context` | pick cluster credentials |
+can be saved or diffed on its own. By default it contacts nothing.
 
 Ctrl-C stops the log stream, not the run: the Job is a server-side resource and keeps
 going. The command prints the `attach` line that picks it back up.
+
+Every command and flag, with real output, is in the [usage guide](docs/usage.md).
 
 ### Exit codes
 
@@ -197,8 +189,12 @@ means part of the matrix was not validly measured, and an incomplete picture mat
 than any single finding within it.
 
 Codes 0 to 2 are the run's own verdict, computed in the cluster and propagated unchanged —
-the CLI does not re-derive it. `130` (Ctrl-C) is deliberately outside the table, because
-interrupting the stream is not a verdict.
+the CLI does not re-derive it. Nothing outside the table reaches CI from a run: a container
+killed for running out of memory (`137`), a run stopped by its deadline, or a crash in the
+CLI itself all exit `5`, with a message saying which. `130` (Ctrl-C) is deliberately outside
+the table, because interrupting the stream is not a verdict. The
+[usage guide](docs/usage.md#exit-codes) says which side of the cluster boundary produces
+each code.
 
 ## Authoring a test
 
@@ -256,20 +252,24 @@ library.
 
 ```robot
 *** Settings ***
-Documentation       Directed 1 Gbit/s UDP test between two named nodes.
+Documentation       worker-01-to-worker-02-udp
 Resource            resources/TestOrchestrator.resource
 
 *** Variables ***
-${SOURCE_NODE}           worker-01
-${TARGET_NODE}           worker-02
-${TARGET_BANDWIDTH}      1G
-${TEST_DURATION}         30s
+${SOURCE_NODE}         worker-01
+${TARGET_NODE}         worker-02
+${TEST_TYPE}           iperf2
+${PROTOCOL}            udp
+${TEST_DURATION}       30s
+${TARGET_BANDWIDTH}    1G
+${MONITORING_MODE}     managed
+${RESULTS_DIRECTORY}   ./results
 
 *** Test Cases ***
-Directed UDP Test
+worker-01-to-worker-02-udp
     Run Network Test
-    ...    type=iperf2
-    ...    protocol=udp
+    ...    type=${TEST_TYPE}
+    ...    protocol=${PROTOCOL}
     ...    source=${SOURCE_NODE}
     ...    target=${TARGET_NODE}
     ...    bandwidth=${TARGET_BANDWIDTH}

@@ -137,6 +137,7 @@ Image      ghcr.io/test-orchestrator/orchestrator@sha256:...
 Deadline   930s
 
 dry run: nothing was created.
+The owner uid is empty above because the API server assigns it; submission fills it in before creating anything that references it.
 ```
 
 The manifests go to **stdout** and everything a person reads goes to **stderr**, so the
