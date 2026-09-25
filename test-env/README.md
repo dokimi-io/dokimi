@@ -90,11 +90,30 @@ $ sudo modprobe br_netfilter
 or pass `--load-modules`, and `up` loads it for you. It says what it's about to do before it
 runs `sudo`, so you see the prompt and why it appears.
 
-**The components it starts are not always as careful.** k3s, a CNI such as Cilium or Calico, or
-the kernel's own automatic loading can pull modules in while a cluster comes up — tunnel drivers
-like `vxlan`, `geneve` and `ipip`, for instance. `up` compares the host kernel's modules before
-and after, and names any that appeared, whoever loaded them. On macOS, "the host kernel" is the
-Linux VM your Docker runs in, not macOS itself.
+**Every profile makes the kernel load modules anyway**, and not because this script asks it to.
+When kube-proxy and a CNI install their packet-filtering rules, the kernel loads the matching
+netfilter extensions by itself. CNIs add their tunnel drivers on top, and k3s loads
+`br_netfilter` on its own initiative. Measured on a clean GitHub Ubuntu runner:
+
+| Profile | Modules that appeared while it came up |
+| --- | --- |
+| `kind-kindnet` | 11 netfilter extensions — `xt_nat`, `xt_mark`, `ipt_REJECT`, `nft_ct` and others |
+| `kind-calico`, `k3d-calico` | netfilter extensions, plus `ipip`, `tunnel4` and `ip_set` hashes |
+| `kind-cilium`, `k3d-cilium` | netfilter extensions, plus `geneve`, and socket and TPROXY support |
+| `kind-flannel` | netfilter extensions — and `br_netfilter`, if you passed `--load-modules` |
+| `k3d-flannel` | netfilter extensions, **and `br_netfilter`, loaded by k3s itself** |
+
+You don't have to take this table's word for your machine. `up` compares the host kernel's
+modules before and after, and names every one that appeared, whoever loaded it:
+
+```
+test-env: note: while kind-kindnet came up, these kernel modules were loaded into the host kernel: ipt_REJECT ...
+test-env:       This script did not load them; the cluster's components or the kernel did. They stay loaded until reboot.
+```
+
+On a machine that has run Kubernetes before, most of these are already loaded, and `up` has
+nothing to report. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
+itself.
 
 ## What `check` verifies
 
