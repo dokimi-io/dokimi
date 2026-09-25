@@ -1,18 +1,22 @@
 *** Settings ***
-Documentation       Directed 1 Gbit/s UDP test between two named nodes.
-Resource            ../robot/resources/TestOrchestrator.resource
+Documentation       worker-01-to-worker-02-udp
+Resource            resources/TestOrchestrator.resource
 
 *** Variables ***
-${SOURCE_NODE}           worker-01
-${TARGET_NODE}           worker-02
-${TARGET_BANDWIDTH}      1G
-${TEST_DURATION}         30s
+${SOURCE_NODE}         worker-01
+${TARGET_NODE}         worker-02
+${TEST_TYPE}           iperf2
+${PROTOCOL}            udp
+${TEST_DURATION}       30s
+${TARGET_BANDWIDTH}    1G
+${MONITORING_MODE}     managed
+${RESULTS_DIRECTORY}   ./results
 
 *** Test Cases ***
-Directed UDP Test
+worker-01-to-worker-02-udp
     Run Network Test
-    ...    type=iperf2
-    ...    protocol=udp
+    ...    type=${TEST_TYPE}
+    ...    protocol=${PROTOCOL}
     ...    source=${SOURCE_NODE}
     ...    target=${TARGET_NODE}
     ...    bandwidth=${TARGET_BANDWIDTH}

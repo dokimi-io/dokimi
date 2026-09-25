@@ -2,8 +2,16 @@
 
 Robot and YAML are peer authoring formats. Neither is consumed directly: both `parse()`
 into one canonical, in-memory test definition model, and the orchestration library
-consumes only that model (ADR-04-05).
+consumes only that model (ADR-04-05, scoped for Milestone-01 by ADR-04-06).
 
-The two files here express the **same test** in both formats. They are the examples from
-the repository README, kept here so they can be exercised once the format plugins land
-with M1-03 (adrs#38). Nothing parses them yet.
+The two files here are the **same test** in both formats — not two hand-written documents
+that happen to agree. Both are rendered from one model, and `tests/test_examples.py`
+parses them on every run and asserts they still describe the same thing. A change to
+either format that broke the other would fail there rather than in a reader's editor.
+
+```console
+$ uv run python -c "
+from pathlib import Path
+from test_orchestrator.formats import parse_file
+print(parse_file(Path('examples/worker-01-to-worker-02-udp.yaml')))"
+```
