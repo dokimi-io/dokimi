@@ -26,7 +26,7 @@ $ test-orchestrator attach <run-id>             # resume streaming a run already
 Milestone-01 is not finished. A submitted run parses its definition and stops:
 
 ```
-run 20260924T200229Z-ca532a
+run 20260924-200229-ca532a
 phase 2 (ingestion): definition parsed
 ...
 phases 3 to 11 are not implemented in this build: planning (#41), preflight (#42),
@@ -101,8 +101,8 @@ even when it passes: it shows the *parsed* values, so `1G` coming back as `1G` a
 
 ```console
 $ test-orchestrator submit test.yaml
-submitted run 20260924T200229Z-ca532a to namespace test-orchestrator-iperf2
-run 20260924T200229Z-ca532a
+submitted run 20260924-200229-ca532a to namespace test-orchestrator-iperf2
+run 20260924-200229-ca532a
 ...
 ```
 
@@ -131,7 +131,7 @@ Planned matrix (1 test)
     duration   30s
     bandwidth  1G
 
-Run id     20260924T200229Z-ca532a
+Run id     20260924-200229-ca532a
 Namespace  test-orchestrator-iperf2
 Image      ghcr.io/test-orchestrator/orchestrator@sha256:...
 Deadline   930s
@@ -155,8 +155,8 @@ Submits and returns immediately, printing how to pick the run back up:
 
 ```console
 $ test-orchestrator submit test.yaml --no-follow
-submitted run 20260924T200229Z-ca532a to namespace test-orchestrator-iperf2
-not following. Reattach with: test-orchestrator attach 20260924T200229Z-ca532a
+submitted run 20260924-200229-ca532a to namespace test-orchestrator-iperf2
+not following. Reattach with: test-orchestrator attach 20260924-200229-ca532a
 ```
 
 The exit code is `0` for a successful submission — it says nothing about the run, which
@@ -168,8 +168,8 @@ Ctrl-C stops the log stream, not the run:
 
 ```console
 ^C
-stopped following run 20260924T200229Z-ca532a. The run is unaffected and continues in the
-cluster; resume with: test-orchestrator attach 20260924T200229Z-ca532a
+stopped following run 20260924-200229-ca532a. The run is unaffected and continues in the
+cluster; resume with: test-orchestrator attach 20260924-200229-ca532a
 ```
 
 This is not special handling so much as the absence of it. The Job is a server-side
@@ -179,7 +179,7 @@ outright has the same effect.
 ## attach
 
 ```console
-$ test-orchestrator attach 20260924T200229Z-ca532a
+$ test-orchestrator attach 20260924-200229-ca532a
 ```
 
 Resumes streaming a run and exits with its exit code. It needs the run id and cluster
@@ -284,8 +284,11 @@ preferences: the exit code is the verdict, so a controller that retried on non-z
 re-run the whole matrix on a plain failure. The deadline is what stops an orphaned run on
 its own — labels make cleanup possible, deadlines make it unnecessary.
 
-Run ids are `<timestamp>-<short-random>`, so they sort by start time in a log, a label and
-a CSV alike (ADR-02-04).
+Run ids are `YYYYMMDD-HHMMSS-xxxxxx` — the UTC start time to the second, then six characters
+of `[0-9a-z]` — for example `20260924-143012-k3f9x2` (ADR-02-08). Fixed width, so they sort
+by start time in a log, a label and a CSV alike. Lowercase, digits and hyphens only, so a
+run is spelled the same way in its labels, its object names, Prometheus and the result
+artifact. `attach` refuses anything else, including a run id in capitals.
 
 ## Choosing the orchestrator image
 
@@ -313,15 +316,15 @@ takes the rest with it — the cluster's own garbage collector cascades through 
 `ownerReferences`:
 
 ```console
-$ kubectl delete configmap run-20260924t200229z-ca532a-owner -n test-orchestrator-iperf2
+$ kubectl delete configmap run-20260924-200229-ca532a-owner -n test-orchestrator-iperf2
 ```
 
 Or by label, across everything a run created:
 
 ```console
 $ kubectl delete job,configmap -n test-orchestrator-iperf2 \
-    -l test-orchestrator/run-id=20260924T200229Z-ca532a
+    -l test-orchestrator/run-id=20260924-200229-ca532a
 ```
 
-Note the case: object names are lowercase because Kubernetes names must be, while the
-label keeps the run id's canonical spelling.
+The run id reads the same in the object name and the label, so either command can be
+built from the id `submit` printed.

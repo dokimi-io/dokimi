@@ -365,7 +365,7 @@ Every framework metric carries:
 
 | Label | Meaning |
 | --- | --- |
-| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is a sortable `<timestamp>-<short-random>`, not a UUID — it stays readable in a log line and orders naturally in the result artifact |
+| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is `YYYYMMDD-HHMMSS-xxxxxx` — a UTC timestamp, then six characters of `[0-9a-z]` (ADR-02-08) — not a UUID: it stays readable in a log line, orders naturally in the result artifact, and is spelled the same way in every label, object name and row |
 | `test_id` | Unique per test within a run; one source/target/parameter combination. Stable across repetitions |
 | `repetition` | A separate label rather than folded into `test_id`, so aggregating a pair's repetitions is a plain `avg by (test_id)` |
 | `test_type` | `iperf2`, `iperf3`, `irtt`, … |

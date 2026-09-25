@@ -1,6 +1,6 @@
 # The test suite
 
-247 tests, none of which need a cluster, a network or a container runtime. Everything runs
+253 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -20,7 +20,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_formats.py`](test_formats.py) | 23 | The YAML and Robot plugins, and that they are genuinely peers |
 | [`test_robot_strictness.py`](test_robot_strictness.py) | 31 | The Robot parser reads every criterion Robot would call, or rejects the suite |
 | [`test_examples.py`](test_examples.py) | 4 | The shipped examples parse, and the two formats agree |
-| [`test_identity.py`](test_identity.py) | 13 | Run ids and ownership labels |
+| [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 7 | How the real Kubernetes adapter translates the client library's failures |
