@@ -1,6 +1,6 @@
 # The test suite
 
-142 tests, none of which need a cluster, a network or a container runtime. Everything runs
+211 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -16,8 +16,9 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 
 | File | Tests | Subject |
 | --- | --- | --- |
-| [`test_model.py`](test_model.py) | 18 | The canonical model: durations, bandwidths, criteria, and what it refuses |
-| [`test_formats.py`](test_formats.py) | 18 | The YAML and Robot plugins, and that they are genuinely peers |
+| [`test_model.py`](test_model.py) | 51 | The canonical model: durations, bandwidths, criteria, and what it refuses — including every value a renderer could not carry |
+| [`test_formats.py`](test_formats.py) | 23 | The YAML and Robot plugins, and that they are genuinely peers |
+| [`test_robot_strictness.py`](test_robot_strictness.py) | 31 | The Robot parser reads every criterion Robot would call, or rejects the suite |
 | [`test_examples.py`](test_examples.py) | 4 | The shipped examples parse, and the two formats agree |
 | [`test_identity.py`](test_identity.py) | 13 | Run ids and ownership labels |
 | [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
@@ -48,7 +49,7 @@ without waiting for either.
 
 ## Tests that are about decisions, not behaviour
 
-Three files assert things that would otherwise decay quietly, because the code keeps
+Four files assert things that would otherwise decay quietly, because the code keeps
 working while being wrong:
 
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
@@ -57,6 +58,12 @@ working while being wrong:
   also checks that the regex the release workflow rewrites still matches the generated
   digest file — reformatting that file would otherwise break a release without breaking
   anything a test run would notice.
+- [`test_robot_strictness.py`](test_robot_strictness.py) guards against a false PASS. The
+  suite that executes is re-rendered from the parsed model, so a criterion the parser
+  skips is one that is never checked — and the run passes. Every way that was possible
+  when #26 was reviewed (a lowercased keyword, a typo, a criterion under `IF` or `ELSE`,
+  a `[Teardown]`, a shadowing `*** Keywords ***`) is a case here, in both directions: what
+  Robot would call must be read, and what the renderer would not emit must be refused.
 - [`test_manifests.py`](test_manifests.py) asserts `backoffLimit: 0` and
   `restartPolicy: Never`. A Job with the defaults runs perfectly well and silently re-runs
   the entire matrix when a run exits non-zero for a plain failure.

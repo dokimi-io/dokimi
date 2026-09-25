@@ -65,6 +65,34 @@ They are peers, not a primary and a fallback — no criterion is expressible in 
 the other (ADR-04-05). See the [repository README](../README.md#authoring-a-test) for the
 syntax of each.
 
+Both are strict, and for the same reason. What executes is never the file you wrote: it
+is a suite rendered from the parsed model. So anything the parser does not understand
+would silently not run, and a criterion that silently does not run is a test that passes
+without checking it. Rather than risk that, anything unrecognised is refused:
+
+- in YAML, any field the schema does not define;
+- in a `.robot` suite, anything the renderer would not itself emit — any keyword other
+  than `Run Network Test` and the criterion keywords, control structures such as `IF`
+  and `FOR`, `[Setup]`, `[Teardown]`, `Suite Teardown`, other imports, a
+  `*** Keywords ***` section, a second test case, or a variable it does not know.
+
+Keyword names are matched the way Robot matches them, so `packet loss should be` and
+`Packet_Loss_Should_Be` are both read as `Packet Loss Should Be`. Every refusal names the
+line and the reason:
+
+```
+test-orchestrator: line 26: unrecognised keyword 'Packet Loss Shuld Be'. A test case may
+call only 'Run Network Test' and the criterion keywords, because anything else would not
+be carried into the suite that runs.
+```
+
+A keyword that does end in `Should Be` but names no metric — `Packet Lost Should Be` —
+also gets the list of criterion keywords that do exist.
+
+The name, node names and results directory are checked too, since they are written into
+that rendered suite: node names must be valid Kubernetes node names, and the others may
+use letters, digits, single spaces and a little punctuation.
+
 A malformed definition is a `config_error` and exits `3`. The summary is worth reading
 even when it passes: it shows the *parsed* values, so `1G` coming back as `1G` and not
 `1073741824` confirms the decimal-prefix rule was applied as intended.
