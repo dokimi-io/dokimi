@@ -127,6 +127,18 @@ whichever this cluster has.
   plugin, which kind's node image does not ship. Without it every pod fails with "failed to
   delegate add: failed to find plugin" and CoreDNS never starts, although every node reports
   Ready. `up kind-flannel` adds that one binary from the pinned reference plugins.
+- **flannel on kind needs the `br_netfilter` kernel module**, which not every Linux host loads.
+  GitHub's Ubuntu runners don't, for one. OrbStack does, and so does k3s, which loads it itself.
+  Without it, every flannel pod crash-loops with "Failed to check br_netfilter".
+  `up kind-flannel` checks before creating anything and tells you what to run, but it does not
+  load a kernel module on your machine for you:
+
+  ```console
+  $ sudo modprobe br_netfilter
+  $ echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf   # to keep it across reboots
+  ```
+
+  CI loads it for this profile. The other six profiles don't need it.
 - **Cilium on k3d needs to be told where the API server is.** cilium-cli takes the address from
   the kubeconfig. k3d's kubeconfig points at `0.0.0.0` and a host-mapped port, which means
   nothing inside the cluster, so the agents retry forever and stay Pending. `up k3d-cilium`

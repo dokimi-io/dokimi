@@ -52,6 +52,13 @@ jobs:
           test-env/install-tools.sh .test-env/bin
           echo "$PWD/.test-env/bin" >> "$GITHUB_PATH"
 
+      # flannel needs the br_netfilter module, which GitHub's Ubuntu runners do not load.
+      # test-env.sh only checks for it, since on a workstation loading a kernel module is
+      # the owner's call; a runner is disposable, so it is loaded here.
+      - name: Load br_netfilter for flannel
+        if: matrix.profile == 'kind-flannel'
+        run: sudo modprobe br_netfilter
+
       - name: Provision
         run: test-env/test-env.sh up ${{ matrix.profile }}
 

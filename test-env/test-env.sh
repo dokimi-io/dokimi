@@ -107,6 +107,7 @@ cmd_up() {
   mkdir -p "$state"
 
   case "$profile" in kind-kindnet | k3d-flannel) config="$here/$tool/cluster.yaml" ;; *) config="$here/$tool/cluster-no-cni.yaml" ;; esac
+  [[ "$profile" == kind-flannel ]] && require_br_netfilter
 
   say "creating $profile: 1 control plane + $WORKERS workers, Kubernetes from versions.env"
   case "$tool" in
@@ -184,6 +185,18 @@ install_cni() {
       kubectl -n kube-flannel rollout status daemonset/kube-flannel-ds --timeout=300s >/dev/null
       ;;
   esac
+}
+
+require_br_netfilter() {
+  # flannel refuses to start without the br_netfilter kernel module ("Failed to check
+  # br_netfilter"), crash-looping on every node. Not every host loads it: GitHub's Ubuntu
+  # runners do not, OrbStack's kernel does. A container shares the host kernel, and the
+  # module's settings appear in every network namespace once it is loaded, so a
+  # throwaway container can tell before any cluster exists. This only checks: loading a
+  # kernel module is a change to your machine, and it is yours to make.
+  if ! docker run --rm "$CHECK_IMAGE" test -e /proc/sys/net/bridge/bridge-nf-call-iptables >/dev/null 2>&1; then
+    die "kind-flannel needs the br_netfilter kernel module, which this host has not loaded. Load it with: sudo modprobe br_netfilter (to keep it across reboots: echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf). Every other profile works without it."
+  fi
 }
 
 add_bridge_plugin() {
