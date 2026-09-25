@@ -15,6 +15,50 @@ Robot Framework is **not** required to install or run the CLI. It is a runtime d
 of a run's execution phase, which happens inside the cluster, in an image that has it
 (ADR-01-02, ADR-01-08).
 
+## Supported platforms
+
+| Platform | Status |
+| --- | --- |
+| **macOS**, Apple silicon | supported, tested |
+| **Linux**, x86_64 | supported, tested |
+| macOS, Intel · Linux, arm64 | supported, **not yet tested** — the tooling handles both architectures, but nobody has run it there |
+| **Windows**, through WSL2 | supported, **not yet tested** — WSL2 is Linux, so it takes the Linux path; see below |
+| Windows, natively | **not supported** — the test environment is bash scripts, and nothing is tested there |
+
+### Where each part was tested
+
+Last verified on 2026-09-25.
+
+| | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-latest`) |
+| --- | --- | --- |
+| Library and CLI: lint, types, test suite | the full suite, with and without Robot Framework | on every pull request, with and without Robot Framework |
+| Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 |
+| Against a real cluster | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37 | — (the acceptance run, M1-17) |
+| [Test environment](../test-env/README.md) | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time | the same, whenever `test-env/` changes and weekly |
+
+Both use Python 3.14.0 through `uv` 0.12.18. On macOS the container runtime was OrbStack 2.2.3
+(Docker 29.4.0); on Linux, the Docker engine GitHub's runners ship.
+
+**Not tested with:** Docker Desktop, colima or Podman on either platform. Docker Desktop and
+colima provide the same Docker API and are expected to work; Podman is not supported by k3d and
+only experimentally by kind.
+
+### Windows, through WSL2
+
+WSL2 runs a real Linux kernel, so this is the Linux path rather than a separate port. The steps
+below are the standard ones, and not yet tested for this project:
+
+1. Install a Linux distribution in WSL2 — Ubuntu is the usual choice.
+2. Make Docker available inside it: either Docker Desktop with its WSL2 integration enabled for
+   that distribution, or the Docker engine installed in the distribution itself.
+3. **Clone the repository inside the Linux filesystem** (`~/…`), not under `/mnt/c/…`. Under
+   `/mnt/c` the files take Windows semantics: executable bits are lost and filesystem access is
+   much slower.
+4. From there, follow this guide and [Setup](setup.md) as on Linux.
+
+The repository's `.gitattributes` keeps shell scripts and `versions.env` at Unix line endings
+even on a checkout with `core.autocrlf=true`, which would otherwise break them.
+
 ## Installing
 
 The project is not published to PyPI. Install it from source, which is also what

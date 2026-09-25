@@ -67,27 +67,34 @@ what a consumer of the library may resolve.
 
 ## A cluster to submit runs against
 
-Any Kubernetes 1.35+ cluster works. For a local one, [kind](https://kind.sigs.k8s.io) is
-the least ceremony. A test needs two nodes that can take a pod, and kind's control-plane
-node is tainted against exactly that, so create two workers:
+On Windows, do all of this inside WSL2 — see
+[supported platforms](installation.md#windows-through-wsl2).
+
+Any Kubernetes 1.35+ cluster works. For a local one, use the repository's own test environment
+in [`test-env/`](../test-env/README.md). It provisions one control plane and three workers,
+checks the cluster provides what a run needs, and tears it down again — identically on your
+machine and in CI:
 
 ```console
-$ kind create cluster --name test-orchestrator --config - <<'YAML'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-  - role: worker
-  - role: worker
-YAML
+$ test-env/install-tools.sh .test-env/bin          # pinned kind, k3d, kubectl, cilium
+$ export PATH="$PWD/.test-env/bin:$PATH"
+$ test-env/test-env.sh up kind-kindnet
+$ test-env/test-env.sh check
+$ export KUBECONFIG=.test-env/kubeconfig
 ```
+
+It never touches your default kubeconfig or switches your current context; the cluster has
+its own kubeconfig in `.test-env/`. `kind-kindnet` is the fastest profile. Six others pair kind
+or k3d with Calico, Cilium or flannel, for when CNI-specific behaviour matters. The
+[environment's README](../test-env/README.md) lists them all, with what each one verifiably
+provides.
 
 The cluster needs the orchestrator image, and a local build is not in any registry it can
 reach — so build it and load it in directly:
 
 ```console
 $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
-$ kind load docker-image orchestrator:dev --name test-orchestrator
+$ test-env/test-env.sh load orchestrator:dev
 $ export TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
 ```
 
@@ -97,10 +104,15 @@ Grant the run's Job what it needs to plan, once:
 $ kubectl apply -f deploy/rbac.yaml
 ```
 
-kind names the workers `test-orchestrator-worker` and `test-orchestrator-worker2`, not
-the `worker-01` and `worker-02` the example uses, so point a copy of the example at them:
+The example names `worker-01` and `worker-02`, which this cluster does not have.
+`test-env.sh nodes` prints the names it does have, so point a copy of the example at two of
+them:
 
 ```console
+$ test-env/test-env.sh nodes
+test-orchestrator-worker
+test-orchestrator-worker2
+test-orchestrator-worker3
 $ sed -e 's/worker-01/test-orchestrator-worker/' -e 's/worker-02/test-orchestrator-worker2/' \
     examples/worker-01-to-worker-02-udp.yaml > kind-pair.yaml
 ```
@@ -108,7 +120,7 @@ $ sed -e 's/worker-01/test-orchestrator-worker/' -e 's/worker-02/test-orchestrat
 Check the plan without creating anything, then submit:
 
 ```console
-$ uv run test-orchestrator submit kind-pair.yaml --dry-run --context kind-test-orchestrator > /dev/null
+$ uv run test-orchestrator submit kind-pair.yaml --dry-run --kubeconfig .test-env/kubeconfig > /dev/null
 $ uv run test-orchestrator submit kind-pair.yaml --service-account test-orchestrator
 ```
 
@@ -120,15 +132,18 @@ Worth trying once, to see the errors a first run can hit: point the definition a
 `test-orchestrator-control-plane` (tainted), `kubectl cordon` a worker, or leave off
 `--service-account`. Each fails with a message that names its fix.
 
-A caution worth stating early: emulated nodes on one machine share that machine's network
-stack, so inter-node traffic is bounded by host CPU and memory bandwidth rather than by a
-NIC or a real CNI datapath. Such an environment validates **orchestration correctness**,
-not **measurement realism**, and any thresholds you set against it are specific to it.
+**What this cluster can and cannot tell you.** Its nodes share one machine's network stack, so
+traffic between them is bounded by host CPU and memory bandwidth rather than by a NIC or a real
+CNI datapath. It validates **orchestration correctness**, not **measurement realism**:
+throughput, loss and jitter measured here say nothing about real hardware, and a threshold
+that means something on real hardware means nothing here. That boundary is a recorded decision,
+[ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
+not a caveat.
 
-Tearing down:
+Tearing down — and proving nothing was left behind:
 
 ```console
-$ kind delete cluster --name test-orchestrator
+$ test-env/test-env.sh down
 ```
 
 ## Repository layout
@@ -150,6 +165,7 @@ src/test_orchestrator/
 robot/              Robot resources and a thin adapter over the core library
 images/             Dockerfiles
 deploy/             what an administrator applies once per cluster (RBAC)
+test-env/           the multi-node test environment: kind and k3d profiles, check, CI
 exporters/          per-test-type exporters
 tests/              the test suite
 examples/           example .robot and .yaml definitions

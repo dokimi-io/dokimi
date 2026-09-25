@@ -1,0 +1,11 @@
+# kind, with its own CNI (kindnet): one control plane and three workers.
+# The node image comes from versions.env (KIND_NODE_IMAGE), passed with --image.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  podSubnet: 10.244.0.0/16
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

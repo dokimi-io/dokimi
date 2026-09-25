@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local test environment state: kubeconfig, active profile, installed tools (test-env/)
+.test-env/

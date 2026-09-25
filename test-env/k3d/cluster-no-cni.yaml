@@ -1,0 +1,22 @@
+# k3d without flannel, for the Calico and Cilium profiles. As cluster.yaml, plus: no
+# flannel backend, and k3s's embedded network-policy controller off, so the installed CNI
+# is the only thing enforcing NetworkPolicy.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+servers: 1
+agents: 3
+options:
+  k3s:
+    extraArgs:
+      - arg: --node-taint=node-role.kubernetes.io/control-plane:NoSchedule
+        nodeFilters: [server:*]
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+      - arg: --disable=servicelb
+        nodeFilters: [server:*]
+      - arg: --disable=metrics-server
+        nodeFilters: [server:*]
+      - arg: --flannel-backend=none
+        nodeFilters: [server:*]
+      - arg: --disable-network-policy
+        nodeFilters: [server:*]

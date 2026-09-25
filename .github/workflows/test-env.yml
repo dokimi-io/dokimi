@@ -1,0 +1,77 @@
+# The multi-node test environment (M1-18): provision every profile, check it, tear it down.
+#
+# Every profile is its own job, so a CNI that breaks shows up as one red cell rather than a
+# red run. The two tools' default profiles also provision a second time after tearing down,
+# which is how "teardown returns the host to a clean state" is verified rather than assumed.
+#
+# Not on every pull request: seven clusters cost minutes that a change outside test-env/
+# gains nothing from. It runs when the environment changes, weekly to catch drift in what
+# the pinned versions pull, and on demand. The acceptance run (M1-17) extends it.
+
+name: Test environment
+
+on:
+  pull_request:
+    paths: ["test-env/**", ".github/workflows/test-env.yml"]
+  push:
+    branches: [main]
+    paths: ["test-env/**", ".github/workflows/test-env.yml"]
+  schedule:
+    - cron: "17 4 * * 1" # Mondays, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  environment:
+    name: ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - kind-kindnet
+          - kind-calico
+          - kind-cilium
+          - kind-flannel
+          - k3d-flannel
+          - k3d-calico
+          - k3d-cilium
+        include:
+          - profile: kind-kindnet
+            consecutive: true
+          - profile: k3d-flannel
+            consecutive: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned tools
+        run: |
+          test-env/install-tools.sh .test-env/bin
+          echo "$PWD/.test-env/bin" >> "$GITHUB_PATH"
+
+      - name: Provision
+        run: test-env/test-env.sh up ${{ matrix.profile }}
+
+      - name: Check
+        run: test-env/test-env.sh check
+
+      - name: Tear down, and verify nothing remains
+        run: test-env/test-env.sh down
+
+      - name: Provision again from the torn-down state
+        if: matrix.consecutive
+        run: |
+          test-env/test-env.sh up ${{ matrix.profile }}
+          test-env/test-env.sh down
+
+      # Only reached when a step above failed and left a cluster up.
+      - name: Tear down after a failure
+        if: failure()
+        run: |
+          if [ -f .test-env/profile ]; then
+            kubectl --kubeconfig .test-env/kubeconfig get pods -A -o wide || true
+            test-env/test-env.sh down
+          fi

@@ -1,6 +1,6 @@
 # The test suite
 
-294 tests, none of which need a cluster, a network or a container runtime. Everything runs
+318 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -28,6 +28,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
+| [`test_test_env.py`](test_test_env.py) | 24 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
@@ -63,7 +64,7 @@ without waiting for either.
 
 ## Tests that are about decisions, not behaviour
 
-Five files assert things that would otherwise decay quietly, because the code keeps
+Six files assert things that would otherwise decay quietly, because the code keeps
 working while being wrong:
 
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
@@ -86,6 +87,16 @@ working while being wrong:
   pass, and a grant that is read-only. An administrator applies that file by hand and the
   code never reads it, so nothing else would notice the two drifting apart until a real
   cluster refused a call.
+- [`test_test_env.py`](test_test_env.py) holds the [test environment](../test-env/README.md) to its
+  own promises without provisioning anything:
+  - every profile is one control plane and three workers;
+  - every version lives in `versions.env`, with images pinned by digest and manifests by checksum;
+  - the script, the CI workflow and the README list the same profiles, with the same measured
+    NetworkPolicy enforcement;
+  - the scripts avoid bash-4-only syntax, because macOS still ships bash 3.2.
+
+  CI's test-environment workflow does the provisioning. This is what catches the one-line edit
+  that breaks it before anyone does.
 - [`test_core_independence.py`](test_core_independence.py) imports every core module in a
   subprocess and fails if anything named `robot` appears in `sys.modules`. The subprocess
   is the point: the result must not be contaminated by whatever the rest of the session
