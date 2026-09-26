@@ -44,7 +44,7 @@ _SUFFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 _SUFFIX_LENGTH = 6
 _TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
 
-RUN_ID_PATTERN = re.compile(r"^(?P<timestamp>\d{8}-\d{6})-(?P<suffix>[0-9a-z]{6})$")
+RUN_ID_PATTERN = re.compile(r"(?P<timestamp>\d{8}-\d{6})-(?P<suffix>[0-9a-z]{6})")
 
 
 class InvalidRunIdError(ConfigError, ValueError):
@@ -62,7 +62,7 @@ class RunId:
     value: str
 
     def __post_init__(self) -> None:
-        match = RUN_ID_PATTERN.match(self.value)
+        match = RUN_ID_PATTERN.fullmatch(self.value)
         if match is None:
             raise InvalidRunIdError(
                 f"{self.value!r} is not a run_id: expected YYYYMMDD-HHMMSS-xxxxxx "

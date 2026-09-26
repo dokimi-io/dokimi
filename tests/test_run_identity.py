@@ -76,6 +76,12 @@ def test_malformed_values_are_rejected(value: str) -> None:
         parse_run_id(value)
 
 
+@pytest.mark.parametrize("suffix", ["\n", " ", "\t"])
+def test_run_id_refuses_trailing_whitespace(suffix: str) -> None:
+    with pytest.raises(InvalidRunIdError):
+        RunId(f"20260924-143012-k3f9x2{suffix}")
+
+
 def test_parse_accepts_its_own_output() -> None:
     run_id = new_run_id()
 
