@@ -187,8 +187,8 @@ def _job_manifest(
             {
                 "name": "orchestrator",
                 "image": image,
-                # The namespace and deadline let phase 4 find its owner and date its
-                # claim's expiry (ADR-05-13) without reading its own Job back.
+                # The namespace and deadline let phase 4 find its owner and its Job,
+                # and date its claim's expiry from the Job's start (ADR-05-13).
                 "args": [
                     "execute",
                     "--definition",

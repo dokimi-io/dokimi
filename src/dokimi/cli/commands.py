@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -18,7 +18,7 @@ from dokimi.cli.exit_codes import ExitCode
 from dokimi.formats import parse_file
 from dokimi.images import ImageResolutionError, resolve_image
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
-from dokimi.k8s.exclusivity import claim_run, mark_finished
+from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds
 from dokimi.k8s.namespaces import namespace_for
@@ -175,11 +175,13 @@ def execute(
         console.say(line)
     console.say()
 
-    # Phase 4 begins with the claim (ADR-05-10). The Job's deadline is when the claim
-    # expires: by then the cluster has killed this Job, so an expired claim is safe to
-    # ignore (ADR-05-13).
+    # Phase 4 begins with the claim (ADR-05-10). The Job's deadline, its start time plus
+    # activeDeadlineSeconds, is when the claim expires: by then the cluster has killed
+    # this Job, so an expired claim is safe to ignore (ADR-05-13).
     resources = cluster.resources()
-    expires_at = now() + timedelta(seconds=deadline_seconds)
+    expires_at = claim_expiry(
+        resources, resolved_run_id, namespace=resolved_namespace, deadline_seconds=deadline_seconds
+    )
     claim_run(
         resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
     )

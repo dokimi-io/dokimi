@@ -57,8 +57,8 @@ $ kubectl apply -f deploy/rbac.yaml
 
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
-`list` on ConfigMaps cluster-wide, leases in `dokimi`, and `get` and `update` on
-ConfigMaps in `dokimi-iperf2`. Then submit with that service account:
+`list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
+`dokimi-iperf2` `get` and `update` on ConfigMaps and `get` on Jobs. Then submit with that service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -101,7 +101,8 @@ Only a run that has claimed the cluster counts (ADR-05-13). A run stops counting
 - **when it ends**, however it ends: it marks itself finished before cleanup, so a failed
   run whose objects are kept as evidence does not hold the cluster;
 - **when its claim expires**, if it crashed: the claim expires with the Job's own deadline,
-  by which time the cluster has stopped the Job and everything it ran.
+  its start time plus its `activeDeadlineSeconds`, by which time the cluster has stopped the
+  Job and everything it ran. A claim with no readable expiry never counts.
 
 A submission that was refused, or whose Job never started, never claimed anything and
 blocks nobody. Neither do workloads or a kept Prometheus left behind by earlier runs.

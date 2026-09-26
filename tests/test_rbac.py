@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
-from dokimi.k8s.exclusivity import DEFAULT_LOCK_NAMESPACE
+from dokimi.k8s.exclusivity import DEFAULT_LOCK_NAMESPACE, LOCK_NAME
 from dokimi.k8s.identity import (
     MANAGED_BY,
     MANAGED_BY_LABEL,
@@ -97,23 +97,27 @@ def test_the_lock_grant_is_confined_to_leases_in_the_lock_namespace(
     role = objects[("Role", "dokimi-run-lock", DEFAULT_LOCK_NAMESPACE)]
 
     assert role["rules"] == [
+        {"apiGroups": ["coordination.k8s.io"], "resources": ["leases"], "verbs": ["create"]},
         {
             "apiGroups": ["coordination.k8s.io"],
             "resources": ["leases"],
-            "verbs": ["create", "get", "update", "delete"],
-        }
+            "resourceNames": [LOCK_NAME],
+            "verbs": ["get", "update", "delete"],
+        },
     ]
 
 
-def test_the_run_namespace_grant_only_updates_config_maps(
+def test_the_run_namespace_grant_only_updates_config_maps_and_reads_jobs(
     objects: dict[Key, dict[str, Any]],
 ) -> None:
-    # Claiming and marking finished write annotations onto the run's own owner; neither
-    # creates nor deletes anything (ADR-05-13).
+    # Claiming and marking finished write annotations onto the run's own owner, and the
+    # claim's expiry is read from the Job's start time; nothing is created or deleted
+    # (ADR-05-13).
     role = objects[("Role", "dokimi", RUN_NAMESPACE)]
 
     assert role["rules"] == [
-        {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "update"]}
+        {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "update"]},
+        {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
     ]
 
 

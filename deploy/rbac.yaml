@@ -13,8 +13,9 @@
 #
 #   - phase 3 reads nodes to resolve the definition's two nodes (cluster-scoped);
 #   - phase 4 begins with the run-exclusivity claim (ADR-05-10): it lists run owners in
-#     every namespace, takes a Lease in the lock namespace, and writes its claim onto
-#     its own owner; phase 11 marks that owner finished.
+#     every namespace, takes a Lease in the lock namespace, reads its own Job's start
+#     time to date the claim's expiry, and writes its claim onto its own owner; phase 11
+#     marks that owner finished.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -83,9 +84,14 @@ metadata:
     app.kubernetes.io/managed-by: dokimi
 rules:
   # Phase 4: take, confirm, take over and release the run-start lock (ADR-05-10).
+  # RBAC cannot restrict create by name, so only create is unnamed.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["create", "get", "update", "delete"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["dokimi-run-lock"]
+    verbs: ["get", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -116,6 +122,10 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "update"]
+  # Phase 4 dates the claim's expiry from the Job's own start time (ADR-05-13).
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -225,12 +225,13 @@ class Claim:
         """Claimed, not finished, and not yet expired.
 
         An owner that was never claimed — a refused submission, a Job that never
-        started — never counts. A claim without a readable expiry does count: an owner
-        that says it is claimed but not until when cannot be assumed to have stopped.
+        started — never counts. Neither does a claim without a readable expiry: ADR-05-13
+        counts a run as active only while its ``claim-expires-at`` is in the future, so
+        that a run can never block the cluster until someone deletes it by hand.
         """
         if self.claimed_at is None or self.finished_at is not None:
             return False
-        return self.expires_at is None or now < self.expires_at
+        return self.expires_at is not None and now < self.expires_at
 
 
 def claim_of(owner: Manifest) -> Claim:
@@ -296,6 +297,26 @@ class RunOwnership:
                 # Created between our read and our create, e.g. a retry after a lost
                 # response. The same adoption rule applies.
                 owner = self._adoptable(namespace)
+        self._owners[namespace] = owner
+        return owner
+
+    def existing_owner_in(self, namespace: str) -> Manifest:
+        """The owner ``submit`` created in *namespace*. Never creates one.
+
+        Raises :class:`OwnershipError` if it is absent: a Job whose owner is gone has
+        nothing to claim on, and nothing its objects could be owned by.
+        """
+        owner = self._owners.get(namespace)
+        if owner is not None:
+            return owner
+        try:
+            owner = self._adoptable(namespace)
+        except NotFoundError:
+            raise OwnershipError(
+                f"ConfigMap {namespace}/{owner_name(self.run_id)} does not exist. "
+                f"submit creates it before the Job starts, so run {self.run_id} was not "
+                "submitted to this namespace, or its owner was deleted"
+            ) from None
         self._owners[namespace] = owner
         return owner
 

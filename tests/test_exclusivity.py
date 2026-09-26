@@ -20,10 +20,12 @@ from dokimi.k8s.exclusivity import (
     REFUSAL_REASON,
     RunAlreadyActiveError,
     RunExclusivityError,
+    claim_expiry,
     claim_run,
     find_active_runs,
     mark_finished,
 )
+from dokimi.k8s.manifests import resource_name
 from dokimi.k8s.ownership import (
     CLAIM_EXPIRES_AT_ANNOTATION,
     CLAIMED_AT_ANNOTATION,
@@ -37,7 +39,7 @@ from dokimi.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
-from dokimi.k8s.resources import CONFIG_MAP, DEPLOYMENT, LEASE, POD, Kind, Manifest
+from dokimi.k8s.resources import CONFIG_MAP, DEPLOYMENT, JOB, LEASE, POD, Kind, Manifest
 from dokimi.k8s.submission import plan_submission, submit
 from dokimi.run_identity import RunId, new_run_id
 from tests.fake_cluster import FakeCluster
@@ -60,8 +62,12 @@ def cluster() -> FakeResources:
 
 
 def claim(cluster: FakeResources, run_id: RunId, **kwargs: object) -> RunOwnership:
+    """Claim as the Job does: ``submit`` has already created the run's owner."""
     kwargs.setdefault("namespace", NAMESPACE)
     kwargs.setdefault("expires_at", later())
+    namespace = str(kwargs["namespace"])
+    if not cluster.exists(CONFIG_MAP, namespace, owner_name(run_id)):
+        put_owner(cluster, run_id, namespace=namespace)
     return claim_run(cluster, run_id, **kwargs)  # type: ignore[arg-type]
 
 
@@ -106,6 +112,15 @@ def test_the_owner_submit_created_is_claimed_not_replaced(cluster: FakeResources
     assert claim_of(owner(cluster, FIRST)).claimed_at is not None
 
 
+def test_a_missing_owner_is_a_clear_error_and_is_not_created(cluster: FakeResources) -> None:
+    # submit always creates the owner, and the Job's role could not create one.
+    with pytest.raises(OwnershipError, match="does not exist"):
+        claim_run(cluster, FIRST, namespace=NAMESPACE, expires_at=later())
+
+    assert not cluster.exists(CONFIG_MAP, NAMESPACE, owner_name(FIRST))
+    assert not cluster.exists(LEASE, LOCK_NAMESPACE, LOCK_NAME)
+
+
 def test_an_owner_that_is_not_this_runs_is_not_adopted(cluster: FakeResources) -> None:
     cluster.put(CONFIG_MAP, NAMESPACE, {"metadata": {"name": owner_name(FIRST)}})
 
@@ -127,7 +142,7 @@ def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeResources) -
     assert f"ConfigMap {NAMESPACE}/{owner_name(FIRST)}" in message
     assert "claim expires at" in message
     assert f"kubectl delete configmap -n {NAMESPACE} {owner_name(FIRST)}" in message
-    assert not cluster.exists(CONFIG_MAP, NAMESPACE, owner_name(SECOND))
+    assert claim_of(owner(cluster, SECOND)).claimed_at is None
 
 
 def test_exclusivity_spans_every_namespace(cluster: FakeResources) -> None:
@@ -188,12 +203,19 @@ def test_a_crashed_run_still_blocks_until_its_claim_expires(cluster: FakeResourc
         claim(cluster, SECOND)
 
 
-def test_a_claim_without_an_expiry_counts(cluster: FakeResources) -> None:
-    # It says it is claimed but not until when, so it cannot be assumed to have stopped.
-    put_owner(cluster, FIRST, **{CLAIMED_AT_ANNOTATION: format_timestamp(datetime.now(UTC))})
+@pytest.mark.parametrize("expiry", [None, "", "next tuesday"])
+def test_a_claim_without_a_readable_expiry_does_not_block(
+    cluster: FakeResources, expiry: str | None
+) -> None:
+    # ADR-05-13: active only while claim-expires-at is in the future. Only a hand edit
+    # produces this, since the claim writes both annotations in one update, and it must
+    # not block the cluster until someone deletes the owner.
+    annotations = {CLAIMED_AT_ANNOTATION: format_timestamp(datetime.now(UTC))}
+    if expiry is not None:
+        annotations[CLAIM_EXPIRES_AT_ANNOTATION] = expiry
+    put_owner(cluster, FIRST, **annotations)
 
-    with pytest.raises(RunAlreadyActiveError):
-        claim(cluster, SECOND)
+    claim(cluster, SECOND)
 
 
 def test_workloads_and_a_kept_prometheus_are_never_evidence(cluster: FakeResources) -> None:
@@ -413,8 +435,12 @@ def test_the_lock_is_released_when_the_claim_is_refused(cluster: FakeResources) 
 def test_a_missing_lock_namespace_is_a_clear_error() -> None:
     cluster = FakeResources(namespaces={NAMESPACE})
 
-    with pytest.raises(RunExclusivityError, match="'dokimi' does not exist"):
+    with pytest.raises(RunExclusivityError, match="'dokimi' does not exist") as broken:
         claim(cluster, FIRST)
+
+    # Broken, not busy: only a refusal carries the run_already_active reason (ADR-01-11).
+    assert not isinstance(broken.value, RunAlreadyActiveError)
+    assert broken.value.reason is None
 
 
 def test_the_lock_namespace_is_configurable(cluster: FakeResources) -> None:
@@ -438,3 +464,52 @@ def test_owners_are_selected_by_their_component(cluster: FakeResources) -> None:
     labels = owner(cluster, FIRST)["metadata"]["labels"]
 
     assert labels["app.kubernetes.io/component"] == OWNER_COMPONENT
+
+
+# -- the claim's expiry (ADR-05-13) -------------------------------------------------------
+
+
+def put_job(cluster: FakeResources, run_id: RunId, *, start_time: str | None) -> None:
+    status = {} if start_time is None else {"startTime": start_time}
+    cluster.put(
+        JOB,
+        NAMESPACE,
+        {
+            "metadata": {"name": resource_name(str(run_id)), "labels": ownership_labels(run_id)},
+            "status": status,
+        },
+    )
+
+
+def test_the_claim_expires_at_the_jobs_start_plus_its_deadline(cluster: FakeResources) -> None:
+    # Not at "now" plus the deadline: phases 2 and 3 ran in between, and a stale claim
+    # must not outlive the Job the cluster has already killed.
+    put_job(cluster, FIRST, start_time="2026-09-24T14:30:15Z")
+
+    expires = claim_expiry(cluster, FIRST, namespace=NAMESPACE, deadline_seconds=3600)
+
+    assert expires == datetime(2026, 9, 24, 15, 30, 15, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("start_time", [None, "", "soon", "2026-09-24T14:30:15"])
+def test_a_job_without_a_readable_start_time_cannot_be_claimed_for(
+    cluster: FakeResources, start_time: str | None
+) -> None:
+    put_job(cluster, FIRST, start_time=start_time)
+
+    with pytest.raises(RunExclusivityError, match="no readable start time"):
+        claim_expiry(cluster, FIRST, namespace=NAMESPACE, deadline_seconds=3600)
+
+
+def test_a_job_that_is_not_this_runs_is_not_trusted(cluster: FakeResources) -> None:
+    cluster.put(
+        JOB,
+        NAMESPACE,
+        {
+            "metadata": {"name": resource_name(str(FIRST))},
+            "status": {"startTime": "2026-09-24T14:30:15Z"},
+        },
+    )
+
+    with pytest.raises(OwnershipError, match="not labelled as owned"):
+        claim_expiry(cluster, FIRST, namespace=NAMESPACE, deadline_seconds=3600)

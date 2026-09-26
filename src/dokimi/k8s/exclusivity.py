@@ -40,6 +40,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from dokimi.k8s.manifests import resource_name
 from dokimi.k8s.ownership import (
     CLAIM_EXPIRES_AT_ANNOTATION,
     CLAIMED_AT_ANNOTATION,
@@ -59,6 +60,7 @@ from dokimi.k8s.ownership import (
 )
 from dokimi.k8s.resources import (
     CONFIG_MAP,
+    JOB,
     LEASE,
     AlreadyExistsError,
     ClusterError,
@@ -78,6 +80,7 @@ __all__ = [
     "ActiveRun",
     "RunAlreadyActiveError",
     "RunExclusivityError",
+    "claim_expiry",
     "claim_run",
     "find_active_runs",
     "mark_finished",
@@ -106,9 +109,13 @@ _OWNER_SELECTOR = (
 
 
 class RunExclusivityError(RuntimeError):
-    """The exclusivity check itself could not be carried out."""
+    """The exclusivity check itself could not be carried out.
 
-    reason = REFUSAL_REASON
+    It carries no reason: only a refusal is "busy" ([ADR-01-11]). A missing lock
+    namespace, a missing owner or retries running out mean the cluster is broken.
+    """
+
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +144,8 @@ class ActiveRun:
 
 class RunAlreadyActiveError(RunExclusivityError):
     """Another run is active, or is starting, in this cluster. Exits 4 ([ADR-01-11])."""
+
+    reason = REFUSAL_REASON
 
     def __init__(
         self,
@@ -209,6 +218,45 @@ def find_active_runs(
     return sorted(found, key=lambda run: run.run_id)
 
 
+def claim_expiry(
+    cluster: ResourceClient,
+    run_id: RunId,
+    *,
+    namespace: str,
+    deadline_seconds: int,
+) -> datetime:
+    """When *run_id*'s claim expires: its Job's start time plus its deadline ([ADR-05-13]).
+
+    The start time is read from the Job's status, so it is the API server's clock that
+    dates the claim, and the claim expires exactly when the cluster kills the Job.
+    *deadline_seconds* is the Job's ``activeDeadlineSeconds``, which ``submit`` passes to
+    the Job alongside it.
+
+    Raises:
+        OwnershipError: the Job is not labelled as this run's.
+        RunExclusivityError: the Job reports no readable start time.
+        ClusterError: the Job cannot be read.
+    """
+    name = resource_name(str(run_id))
+    job = cluster.get(JOB, namespace, name)
+    if not is_run_owned(job, run_id):
+        raise OwnershipError(
+            f"Job {namespace}/{name} is not labelled as owned by run {run_id}; "
+            "refusing to date a claim from it"
+        )
+    started = (job.get("status") or {}).get("startTime")
+    try:
+        started_at = datetime.fromisoformat(started) if started else None
+    except ValueError:
+        started_at = None
+    if started_at is None or started_at.tzinfo is None:
+        raise RunExclusivityError(
+            f"Job {namespace}/{name} reports no readable start time ({started!r}), so its "
+            "claim cannot be given the expiry ADR-05-13 requires"
+        )
+    return started_at.astimezone(UTC) + timedelta(seconds=deadline_seconds)
+
+
 def claim_run(
     cluster: ResourceClient,
     run_id: RunId,
@@ -222,15 +270,17 @@ def claim_run(
 ) -> RunOwnership:
     """Claim the cluster for *run_id*, or refuse. The first check of phase 4.
 
-    *namespace* is where the run's owner lives — the namespace the Job runs in. The owner
-    is normally already there, created by ``submit``; it is created only if absent.
-    *expires_at* is the orchestrator Job's own deadline ([ADR-05-13]).
+    *namespace* is where the run's owner lives — the namespace the Job runs in. ``submit``
+    created the owner there; the claim never creates one, and the Job's role could not.
+    *expires_at* is the orchestrator Job's own deadline ([ADR-05-13]), from
+    :func:`claim_expiry`.
 
     Returns the :class:`RunOwnership` through which every later object must be created.
 
     Raises:
         RunAlreadyActiveError: another run is active or is starting.
-        RunExclusivityError: the lock could not be taken or confirmed.
+        RunExclusivityError: the lock could not be taken or confirmed, or the run's owner
+            does not exist.
     """
     lease = _acquire_lock(cluster, run_id, lock_namespace, lock_seconds, now)
     try:
@@ -239,7 +289,7 @@ def claim_run(
             raise RunAlreadyActiveError(run_id, active)
 
         ownership = RunOwnership(cluster, run_id, metadata=metadata)
-        owner = ownership.owner_in(namespace)
+        owner = ownership.existing_owner_in(namespace)
         claimed = _annotate(
             cluster,
             owner,
