@@ -47,16 +47,18 @@ submission, streaming, reattachment, exit-code propagation — works now.
 
 ## Before the first run
 
-The run's Job reads the cluster's nodes to plan, and nodes are cluster-scoped, so the
-namespace's default service account cannot. Grant it once per cluster:
+The run's Job reads the cluster's nodes to plan and checks, across every namespace, that
+no other run is active. Both are cluster-wide, so the namespace's default service account
+cannot. Grant it once per cluster:
 
 ```console
 $ kubectl apply -f deploy/rbac.yaml
 ```
 
-That creates the `dokimi-iperf2` namespace, a `dokimi` service
-account in it, and a read-only ClusterRole — `get` and `list` on nodes, nothing else.
-Then submit with that service account:
+That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
+run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
+`list` on ConfigMaps cluster-wide, leases in `dokimi`, and `get` and `update` on
+ConfigMaps in `dokimi-iperf2`. Then submit with that service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -74,9 +76,35 @@ dokimi.
 The grant widens as later phases land, one commented rule per phase.
 
 The service account exists only in `dokimi-iperf2`, the namespace
-`deploy/rbac.yaml` creates. A run submitted with `--namespace` somewhere else will not find
-it there. For another namespace, copy the file, change the namespace in the `Namespace`,
-the `ServiceAccount` and the binding's subject, and apply that copy.
+`deploy/rbac.yaml` creates. A run never creates a namespace, so one submitted with
+`--namespace` somewhere else needs that namespace to exist already, and will not find the
+service account there. For another namespace, copy the file, change the namespace in the
+run `Namespace`, the `ServiceAccount`, the namespaced `Role` and every binding's subject,
+and apply that copy. Leave the `dokimi` lock namespace as it is: there is one lock per
+cluster.
+
+## One run at a time
+
+A cluster runs one run at a time, whatever its namespace or test type: two runs would
+contend for the same network they measure (ADR-05-02). The Job claims the cluster as the
+first step of phase 4. A second run started meanwhile is refused and exits `4`:
+
+```
+dokimi: refusing to start run 20260924-201500-p7m2q8 (run_already_active): run 20260924-200229-ca532a already active in this cluster.
+  - ConfigMap dokimi-iperf2/run-20260924-200229-ca532a-owner claimed at 2026-09-24T20:02:41Z, claim expires at 2026-09-24T20:25:11Z
+Wait for it to finish, or for its claim to expire. If it is stale, clear it by deleting its owner, which removes what it created with it:
+  kubectl delete configmap -n dokimi-iperf2 run-20260924-200229-ca532a-owner
+```
+
+Only a run that has claimed the cluster counts (ADR-05-13). A run stops counting:
+
+- **when it ends**, however it ends: it marks itself finished before cleanup, so a failed
+  run whose objects are kept as evidence does not hold the cluster;
+- **when its claim expires**, if it crashed: the claim expires with the Job's own deadline,
+  by which time the cluster has stopped the Job and everything it ran.
+
+A submission that was refused, or whose Job never started, never claimed anything and
+blocks nobody. Neither do workloads or a kept Prometheus left behind by earlier runs.
 
 ## validate
 
@@ -280,7 +308,7 @@ implementation detail (ADR-01-08).
 | `1` | run completed, at least one non-optional pair failed |
 | `2` | at least one non-optional pair errored, or a post-run anomaly |
 | `3` | invalid request — a bad definition, run id or flag — detected before anything was created |
-| `4` | run-level preflight failure |
+| `4` | run-level preflight failure, including another run being active (`run_already_active`) |
 | `5` | internal or unexpected orchestrator error |
 | `130` | you pressed Ctrl-C |
 
@@ -365,11 +393,11 @@ Three objects, in this order:
 They live in a namespace derived from the test type — `dokimi-iperf2` — shared
 by every run of that type rather than created per run, which would need cluster-level
 permission on every invocation and make cleanup wait on namespace deletion (ADR-05-02).
-The namespace is checked first and created only if it is not already there, so once it
-exists, submitting needs only namespaced permissions.
+A run never creates the namespace (ADR-05-13): `deploy/rbac.yaml` does, once, so
+submitting needs only namespaced permissions.
 
-If a later step of the submission fails — the Job is refused, say — the owner object is
-deleted again, and takes with it anything already bound to it. That is different from a
+If a later step of the submission fails — the Job is refused, say — what it created is
+deleted again, each object by name and uid after its labels are re-checked. That is different from a
 failed *run*, whose objects are kept as evidence: a submission that never got as far as
 a Job has no evidence to keep.
 
@@ -381,7 +409,9 @@ The definition travels with the run in a ConfigMap rather than being re-read fro
 disk. That is what makes a Job self-contained and lets `attach` need nothing local.
 
 The Job carries `backoffLimit: 0`, `restartPolicy: Never` and an `activeDeadlineSeconds`
-derived from the test duration plus a margin. The first two are requirements, not
+built from named terms: the test duration, startup, the warm-up pass, the direct read and
+scrape confirmation, then preflight, diagnostics and cleanup, plus a margin. The dry run
+prints it as `Deadline`. The first two are requirements, not
 preferences: the exit code is the verdict, so a controller that retried on non-zero would
 re-run the whole matrix on a plain failure. The deadline is what stops an orphaned run on
 its own — labels make cleanup possible, deadlines make it unnecessary.

@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from dokimi.k8s.resources import (
     AlreadyExistsError,
+    ClusterError,
     ConflictError,
     Kind,
     Manifest,
@@ -37,6 +38,12 @@ class FakeResources:
         self._versions = itertools.count(1)
         #: Called before each create, outside the lock, so a test can interleave callers.
         self.before_create: Hook | None = None
+        #: Called before each replace, outside the lock, likewise.
+        self.before_replace: Hook | None = None
+        #: Every successful delete, as ``(kind, namespace, name)``.
+        self.deleted: list[tuple[str, str, str]] = []
+        #: Refuse every delete, as a missing RBAC grant would.
+        self.fail_deleting = False
 
     # -- ResourceClient -------------------------------------------------------------------
 
@@ -76,6 +83,8 @@ class FakeResources:
             ]
 
     def replace(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
+        if self.before_replace is not None:
+            self.before_replace(kind, namespace, body)
         with self._lock:
             key = (kind.kind, namespace, body["metadata"]["name"])
             current = self.objects.get(key)
@@ -100,6 +109,8 @@ class FakeResources:
         uid: str,
         resource_version: str | None = None,
     ) -> None:
+        if self.fail_deleting:
+            raise ClusterError(f"deleting {kind} {name}: 403 Forbidden")
         with self._lock:
             key = (kind.kind, namespace, name)
             current = self.objects.get(key)
@@ -112,6 +123,7 @@ class FakeResources:
             ):
                 raise ConflictError(f"{kind} {name!r} resourceVersion precondition failed")
             del self.objects[key]
+            self.deleted.append(key)
 
     # -- test helpers ----------------------------------------------------------------------
 

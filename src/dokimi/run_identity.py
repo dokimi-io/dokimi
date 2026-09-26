@@ -30,6 +30,8 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from dokimi.model.errors import ConfigError
+
 __all__ = [
     "RUN_ID_PATTERN",
     "InvalidRunIdError",
@@ -45,8 +47,12 @@ _TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
 RUN_ID_PATTERN = re.compile(r"^(?P<timestamp>\d{8}-\d{6})-(?P<suffix>[0-9a-z]{6})$")
 
 
-class InvalidRunIdError(ValueError):
-    """A string that is not a ``run_id`` in the format this module defines."""
+class InvalidRunIdError(ConfigError, ValueError):
+    """A string that is not a ``run_id`` in the format this module defines.
+
+    A ``config_error`` (exit 3, ADR-01-11): a run id only ever comes from outside as part
+    of the request, so a malformed one is an invalid request wherever it is detected.
+    """
 
 
 @dataclass(frozen=True, order=True)

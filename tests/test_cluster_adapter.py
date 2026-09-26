@@ -3,8 +3,8 @@
 Everything else tests the submission path against ``FakeCluster``, which cannot tell us
 how ``KubernetesCluster`` translates the library's failures. That translation is where
 two of the review findings on #27 lived: a transport error escaping as a traceback (exit
-1, read by CI as ``fail``), and ``ensure_namespace`` demanding cluster-wide ``create``
-from a user who only needed the namespace to exist.
+1, read by CI as ``fail``), and a namespace check demanding cluster-wide ``create`` from a
+user who only needed the namespace to exist. A run no longer creates namespaces at all.
 """
 
 from __future__ import annotations
@@ -79,48 +79,13 @@ def _api_error(status: int) -> ApiException:
     return ApiException(status=status, reason={403: "Forbidden", 404: "Not Found"}.get(status, "x"))
 
 
-# -- ensure_namespace -----------------------------------------------------------
+# -- namespaces -----------------------------------------------------------------
 
 
-def test_an_existing_namespace_is_not_created_again() -> None:
-    # Creating a namespace is cluster-wide. Asking for it on every submit would demand
-    # that right from users who need only the namespaced ones.
-    core = CoreApi()
-
-    adapter(core).ensure_namespace(NAMESPACE)
-
-    assert core.calls == ["read_namespace"]
-
-
-def test_a_missing_namespace_is_created() -> None:
-    core = CoreApi(read_namespace=_api_error(404))
-
-    adapter(core).ensure_namespace(NAMESPACE)
-
-    assert core.calls == ["read_namespace", "create_namespace"]
-
-
-def test_a_namespace_scoped_identity_that_cannot_read_it_is_not_refused() -> None:
-    # Such an identity may use a namespace it cannot read. The creates that follow are
-    # what establish whether the namespace really exists.
-    core = CoreApi(read_namespace=_api_error(403))
-
-    adapter(core).ensure_namespace(NAMESPACE)
-
-    assert core.calls == ["read_namespace"]
-
-
-def test_losing_a_race_to_create_the_namespace_is_fine() -> None:
-    core = CoreApi(read_namespace=_api_error(404), create_namespace=_api_error(409))
-
-    adapter(core).ensure_namespace(NAMESPACE)
-
-
-def test_any_other_refusal_is_a_cluster_error() -> None:
-    core = CoreApi(read_namespace=_api_error(500))
-
-    with pytest.raises(ClusterError, match="checking namespace ns"):
-        adapter(core).ensure_namespace(NAMESPACE)
+def test_the_adapter_never_creates_a_namespace() -> None:
+    # ADR-05-13: a run never creates one. Creating a namespace is cluster-wide, and the
+    # point of per-test-type namespaces is that submitting needs only namespaced rights.
+    assert not hasattr(KubernetesCluster, "ensure_namespace")
 
 
 # -- transport errors -----------------------------------------------------------

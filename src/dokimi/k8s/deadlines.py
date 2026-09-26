@@ -9,7 +9,16 @@ include every wait the workload has to survive after the test itself finishes:
 [ADR-03-01] keeps pods alive for the orchestrator's direct read of the exporter and for
 the scrape-confirmation window. A deadline that only knew the test duration would kill
 the pods during a wait it was never told about, so :class:`DeadlineBudget` makes each of
-those waits a required, named term rather than something folded into a margin.
+those waits a required, named term rather than something folded into a margin — including
+the discarded warm-up pass that [ADR-04-04] runs by default, before the measurement.
+
+There are two budgets, of one kind ([ADR-05-13]):
+
+* :class:`DeadlineBudget` bounds a **workload**, one test pod or Job;
+* :class:`JobBudget` bounds the **orchestrator Job**: every workload budget it runs, plus
+  preflight, diagnostics and cleanup. It is always larger than any workload budget it
+  contains, and it is also when the run's exclusivity claim expires — by then the cluster
+  has killed the Job and every workload of the run has hit its own, shorter deadline.
 
 For Jobs the same bound comes with ``backoffLimit: 0`` and ``restartPolicy: Never``
 ([ADR-01-08] via the Milestone-01 plan): a failed one-shot is a finding, and a Job
@@ -20,21 +29,40 @@ from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
 
 from dokimi.k8s.resources import Manifest
+from dokimi.model import TestDefinition
 
 __all__ = [
     "DEFAULT_SAFETY_MARGIN_SECONDS",
     "DeadlineBudget",
     "DeadlineError",
+    "JobBudget",
     "bound_job",
     "bound_pod",
+    "job_budget_for",
+    "workload_budget_for",
 ]
 
 #: Slack on top of the named terms, for API latency and clock differences. Not a place
 #: to hide a wait: anything with a known duration belongs in its own term.
 DEFAULT_SAFETY_MARGIN_SECONDS = 30.0
+
+# Milestone-01 defaults for the terms a definition does not state. Each is generous, not
+# tight: these bounds exist to stop an orphaned run, not to enforce a schedule.
+#: Scheduling, image pull on a cold node and the readiness gate.
+DEFAULT_STARTUP_SECONDS = 300.0
+#: The discarded warm-up pass ([ADR-04-04]). Its exact default is ADR-04-04 follow-up
+#: work and the model does not carry it yet, so the budget reserves this much.
+DEFAULT_WARMUP_SECONDS = 10.0
+DEFAULT_DIRECT_READ_SECONDS = 30.0
+#: A few scrape intervals at the common 15 to 30 s ([ADR-03-01]).
+DEFAULT_SCRAPE_CONFIRMATION_SECONDS = 120.0
+DEFAULT_PREFLIGHT_SECONDS = 300.0
+DEFAULT_DIAGNOSTICS_SECONDS = 120.0
+DEFAULT_CLEANUP_SECONDS = 120.0
 
 
 class DeadlineError(ValueError):
@@ -49,6 +77,8 @@ class DeadlineBudget:
     test_duration: float
     #: Scheduling, image pull and the readiness gate before the test starts.
     startup: float
+    #: The discarded warm-up pass before the measurement; ``0`` when disabled ([ADR-04-04]).
+    warmup: float
     #: The orchestrator's direct read of the exporter's ``/metrics`` ([ADR-03-01]).
     direct_read: float
     #: The window in which the expected series must reach Prometheus ([ADR-03-01]).
@@ -68,6 +98,7 @@ class DeadlineBudget:
         return (
             self.test_duration
             + self.startup
+            + self.warmup
             + self.direct_read
             + self.scrape_confirmation
             + self.safety_margin
@@ -77,6 +108,69 @@ class DeadlineBudget:
     def active_deadline_seconds(self) -> int:
         """The value for ``activeDeadlineSeconds``: whole seconds, rounded up."""
         return math.ceil(self.total)
+
+
+@dataclass(frozen=True)
+class JobBudget:
+    """Everything the orchestrator Job must stay alive for, in seconds ([ADR-05-13])."""
+
+    #: One workload budget per pair, in the order the concurrency plan runs them.
+    workloads: Sequence[DeadlineBudget]
+    preflight: float
+    diagnostics: float
+    cleanup: float
+    safety_margin: float = DEFAULT_SAFETY_MARGIN_SECONDS
+
+    def __post_init__(self) -> None:
+        if not self.workloads:
+            raise DeadlineError("a Job budget needs at least one workload")
+        for name in ("preflight", "diagnostics", "cleanup", "safety_margin"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise DeadlineError(f"Job budget term {name} must be >= 0, got {value!r}")
+
+    @property
+    def total(self) -> float:
+        # Sequential execution in Milestone-01: pairs run one after another. Bounded
+        # concurrency (ADR-04-04) will sum per wave instead; see OQ-137.
+        return (
+            sum(workload.total for workload in self.workloads)
+            + self.preflight
+            + self.diagnostics
+            + self.cleanup
+            + self.safety_margin
+        )
+
+    @property
+    def active_deadline_seconds(self) -> int:
+        """The value for the Job's ``activeDeadlineSeconds``: whole seconds, rounded up."""
+        return math.ceil(self.total)
+
+
+def workload_budget_for(definition: TestDefinition) -> DeadlineBudget:
+    """The workload budget for *definition*'s pair, from its duration and the defaults."""
+    return DeadlineBudget(
+        test_duration=float(definition.duration.seconds),
+        startup=DEFAULT_STARTUP_SECONDS,
+        warmup=DEFAULT_WARMUP_SECONDS,
+        direct_read=DEFAULT_DIRECT_READ_SECONDS,
+        scrape_confirmation=DEFAULT_SCRAPE_CONFIRMATION_SECONDS,
+    )
+
+
+def job_budget_for(definition: TestDefinition) -> JobBudget:
+    """The orchestrator Job's budget for *definition*.
+
+    Computed at submission, before the Job plans anything. Milestone-01 has exactly one
+    pair, so the plan follows from the definition; general matrices need an upper bound
+    on the plan instead (OQ-137).
+    """
+    return JobBudget(
+        workloads=(workload_budget_for(definition),),
+        preflight=DEFAULT_PREFLIGHT_SECONDS,
+        diagnostics=DEFAULT_DIAGNOSTICS_SECONDS,
+        cleanup=DEFAULT_CLEANUP_SECONDS,
+    )
 
 
 def bound_pod(manifest: Manifest, budget: DeadlineBudget) -> Manifest:

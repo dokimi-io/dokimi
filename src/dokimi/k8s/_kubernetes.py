@@ -22,16 +22,15 @@ from kubernetes.config.config_exception import ConfigException
 from urllib3.exceptions import HTTPError as TransportError
 
 from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.resources import KubernetesResources
 
 __all__ = ["KubernetesCluster"]
 
-_ALREADY_EXISTS = 409
-_FORBIDDEN = 403
 _NOT_FOUND = 404
 
 
 class KubernetesCluster:
-    """Eight operations against a real cluster.
+    """The CLI's operations against a real cluster.
 
     Every method translates both ways the client library can fail into
     :class:`ClusterError`: an ``ApiException`` when the API server answered and refused,
@@ -67,35 +66,6 @@ class KubernetesCluster:
 
     # -- writes ---------------------------------------------------------------
 
-    def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
-        """Make sure the namespace exists, creating it only if it does not.
-
-        Reading first matters for RBAC. Creating a namespace is a cluster-wide permission,
-        and the point of per-test-type namespaces (ADR-05-02) is that a user or a CI
-        service account needs only namespaced rights once an administrator has created
-        it. Always calling ``create`` would demand the cluster-wide right on every submit.
-
-        A refused read is not an error either: a namespace-scoped identity may be unable
-        to read the Namespace object while being able to use it. The creates that follow
-        are what establish whether it really exists.
-        """
-        name = _name(manifest)
-        with _transport(f"checking namespace {name}"):
-            try:
-                self._core.read_namespace(name)
-                return
-            except ApiException as error:
-                if error.status == _FORBIDDEN:
-                    return
-                if error.status != _NOT_FOUND:
-                    raise ClusterError(_explain(error, f"checking namespace {name}")) from error
-            try:
-                self._core.create_namespace(body=dict(manifest))
-            except ApiException as error:
-                if error.status == _ALREADY_EXISTS:
-                    return
-                raise ClusterError(_explain(error, f"creating namespace {name}")) from error
-
     def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
         body = dict(manifest)
         kind = body.get("kind")
@@ -111,9 +81,10 @@ class KubernetesCluster:
             except ApiException as error:
                 if error.status == _NOT_FOUND:
                     raise ClusterError(
-                        f"namespace {namespace!r} does not exist, and these credentials "
-                        "could not confirm or create it. An administrator can create it "
-                        "once; after that, submitting needs only namespaced permissions."
+                        f"namespace {namespace!r} does not exist. A run never creates a "
+                        "namespace (ADR-05-13): an administrator creates it once, with "
+                        "deploy/rbac.yaml for the default one, and after that submitting "
+                        "needs only namespaced permissions."
                     ) from error
                 raise ClusterError(_explain(error, f"creating {kind} {_name(body)}")) from error
         return self._to_dict(created)
@@ -172,15 +143,9 @@ class KubernetesCluster:
         finally:
             response.release_conn()
 
-    def delete_config_maps(self, namespace: str, selector: str) -> None:
-        """Delete by selector, with background propagation so dependents follow."""
-        try:
-            with _transport(f"deleting ConfigMaps in {namespace}"):
-                self._core.delete_collection_namespaced_config_map(
-                    namespace, label_selector=selector, propagation_policy="Background"
-                )
-        except ApiException as error:
-            raise ClusterError(_explain(error, f"deleting ConfigMaps in {namespace}")) from error
+    def resources(self) -> KubernetesResources:
+        """The per-kind client over the same connection and credentials."""
+        return KubernetesResources(self._api)
 
     def list_nodes(self) -> list[dict[str, Any]]:
         """Every node in the cluster.

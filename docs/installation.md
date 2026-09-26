@@ -8,7 +8,7 @@ Job, and you never install that — the CLI submits it.
 | | |
 | --- | --- |
 | Python | **3.14 or newer** |
-| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps in the run's namespace — and, once, an administrator to apply `deploy/rbac.yaml`, which also creates that namespace |
+| Kubernetes | **1.35 or newer**, with credentials that can create Jobs and ConfigMaps in the run's namespace — and, once, an administrator to apply `deploy/rbac.yaml`, which creates that namespace and the `dokimi` lock namespace |
 | A container registry | only if your cluster cannot reach `ghcr.io` |
 
 Robot Framework is **not** required to install or run the CLI. It is a runtime dependency
@@ -111,14 +111,26 @@ The CLI picks cluster credentials in this order:
 The second entry is why the same command works unchanged in a CI job that runs inside the
 cluster it is testing. The first is how to override it there.
 
-Submitting needs to create Jobs and ConfigMaps in the run's namespace. It checks that the
-namespace exists before anything else and creates it only if it does not, so once an
-administrator has created it — or a first run has — later submissions need only those
-namespaced permissions, not the cluster-wide right to create namespaces.
+Submitting needs to create Jobs and ConfigMaps in the run's namespace, and nothing more:
+**a run never creates a namespace** (ADR-05-13). An administrator creates the namespaces
+once, and after that submitting needs only namespaced permissions, not the cluster-wide
+right to create namespaces. Submitting to a namespace that does not exist fails with a
+message saying so.
 
-The Job a run submits authenticates as a service account of its own, not as you. It
-needs to read the cluster's nodes to plan, which is a cluster-wide permission, so an
-administrator grants it once per cluster:
+The Job a run submits authenticates as a service account of its own, not as you. Its
+grant is cluster-wide in two places, which is why an administrator applies it once per
+cluster:
+
+- it reads the cluster's **nodes** to plan (phase 3);
+- it **lists ConfigMaps in every namespace** to check that no other run is active, and
+  takes a `Lease` in the `dokimi` namespace while it claims the cluster (phase 4,
+  ADR-05-10). Kubernetes cannot restrict a `list` by label, so this grant can read every
+  ConfigMap in the cluster, including its data. It is the price of cluster-wide
+  exclusivity: one run at a time per cluster.
+
+`deploy/rbac.yaml` creates both namespaces (`dokimi-iperf2` for the runs, `dokimi` for the
+run-start lock), the service account, and exactly those grants, each commented with the
+phase that needs it:
 
 ```console
 $ kubectl apply -f deploy/rbac.yaml

@@ -147,7 +147,13 @@ class KubernetesResources:
         try:
             config.load_incluster_config()
         except config.ConfigException:
-            config.load_kube_config()
+            try:
+                config.load_kube_config()
+            except (config.ConfigException, FileNotFoundError) as error:
+                raise ClusterError(
+                    f"no usable cluster credentials: {error}. Set KUBECONFIG, or run "
+                    "inside the cluster."
+                ) from error
         return cls()
 
     def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
@@ -201,9 +207,16 @@ class KubernetesResources:
         **kwargs: Any,
     ) -> Manifest:
         from kubernetes.client.exceptions import ApiException
+        from urllib3.exceptions import HTTPError as TransportError
 
         try:
             result = method(**kwargs)
+        except TransportError as error:
+            # Not an ApiException, and easy to miss: untranslated, it escapes as a
+            # traceback that Python exits 1 with, `fail` in ADR-01-08's table.
+            raise ClusterError(
+                f"lost contact with the Kubernetes API server ({type(error).__name__}: {error})"
+            ) from error
         except ApiException as error:
             if error.status == 404:
                 raise NotFoundError(error.reason) from error

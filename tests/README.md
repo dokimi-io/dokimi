@@ -24,25 +24,24 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_run_identity.py`](test_run_identity.py) | 15 | The `RunId` type ownership and exclusivity are written against |
 | [`test_ownership.py`](test_ownership.py) | 18 | Run-owned object creation, owner references, and label-scoped deletion |
-| [`test_exclusivity.py`](test_exclusivity.py) | 38 | The run-start lease: one run at a time, including two racing submissions |
-| [`test_deadlines.py`](test_deadlines.py) | 11 | Deadline budgets, and the Pod and Job bounds they enforce |
+| [`test_exclusivity.py`](test_exclusivity.py) | 57 | One run at a time: the run-start lease, the claim lifecycle, and two racing submissions through `submit` |
+| [`test_deadlines.py`](test_deadlines.py) | 14 | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
-| [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
+| [`test_manifests.py`](test_manifests.py) | 18 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
-| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 9 | How the real Kubernetes adapter translates the client library's failures |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 43 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 25 | The test environment's configs, scripts, README and CI workflow agree with each other |
-| [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
+| [`test_rbac.py`](test_rbac.py) | 9 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 20 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
 
 ## How the cluster-facing tests work without a cluster
 
-Everything a run does to a cluster goes through an eight-method protocol,
-`ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
+Everything the CLI does to a cluster goes through a small protocol, `ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
 
 - **`FakeCluster`** records every write and answers reads from a script — a list of pod
   phases, a log, an exit code, the cluster's nodes. Assertions are then made about the calls: that the owner
@@ -70,6 +69,9 @@ preconditions. [`fake_resources.py`](fake_resources.py)'s **`FakeResources`** is
 in-memory API server with the semantics those rules depend on — an atomic `create` that
 fails on a taken name, preconditions that are honoured, label selectors evaluated
 server-side, all behind one lock so concurrent callers race the way real ones do.
+`FakeCluster` stores everything it creates in a `FakeResources` too, and hands it out from
+`resources()`, so a test can submit through M1-04's path and claim through M1-05's
+against one cluster.
 [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) checks the real adapter,
 `KubernetesResources`, against the client library's actual method names.
 
@@ -98,8 +100,8 @@ working while being wrong:
   `restartPolicy: Never`. A Job with the defaults runs perfectly well and silently re-runs
   the entire matrix when a run exits non-zero for a plain failure.
 - [`test_rbac.py`](test_rbac.py) parses `deploy/rbac.yaml` and checks it against the code:
-  the namespace runs actually use, the service account the error message tells people to
-  pass, and a grant that is read-only. An administrator applies that file by hand and the
+  the namespaces runs actually use, the service account the error message tells people to
+  pass, and the exact grant, rule by rule, so that each widening is a deliberate change. An administrator applies that file by hand and the
   code never reads it, so nothing else would notice the two drifting apart until a real
   cluster refused a call.
 - [`test_test_env.py`](test_test_env.py) holds the [test environment](../test-env/README.md) to its

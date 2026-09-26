@@ -16,7 +16,6 @@ import pytest
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.identity import RUN_ID_LABEL, run_selector
-from dokimi.k8s.manifests import OWNER_COMPONENT
 from dokimi.k8s.submission import (
     CONTAINER_NAME,
     RUN_OUTCOMES,
@@ -103,7 +102,7 @@ def test_submit_creates_the_owner_first_and_binds_the_rest_to_it(
 
     submit(cluster, _plan(definition))
 
-    assert cluster.namespaces == ["dokimi-iperf2"]
+    # A run never creates a namespace (ADR-05-13): only the owner, the definition, the Job.
     assert cluster.created_kinds == ["ConfigMap", "ConfigMap", "Job"]
     for manifest in cluster.created[1:]:
         assert manifest["metadata"]["ownerReferences"][0]["uid"] == cluster.owner_uid
@@ -217,14 +216,15 @@ def test_submitting_does_not_change_the_submission(definition: TestDefinition) -
 
 
 def test_a_failed_submission_removes_its_owner(definition: TestDefinition) -> None:
-    # The owner was created, the Job was refused. Left behind, the owner is debris that
-    # run exclusivity would count as an active run, blocking every later one.
+    # The owner was created, the Job was refused. The owner is unclaimed, so it would not
+    # block later runs (ADR-05-13), but it is debris, removed by name and uid.
     cluster = FakeCluster(fail_on_kind="Job")
 
     with pytest.raises(ClusterError, match="422"):
         submit(cluster, _plan(definition))
 
-    assert cluster.deleted == [("dokimi-iperf2", run_selector(RUN_ID, OWNER_COMPONENT))]
+    assert ("ConfigMap", "dokimi-iperf2", f"run-{RUN_ID}-owner") in cluster.deleted
+    assert not cluster.store.objects
 
 
 def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
@@ -238,8 +238,8 @@ def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
         submit(cluster, _plan(definition))
 
     notes = " ".join(error.value.__notes__)
-    assert "kubectl delete configmap" in notes
-    assert run_selector(RUN_ID, OWNER_COMPONENT) in notes
+    assert "kubectl delete configmap,job" in notes
+    assert run_selector(RUN_ID) in notes
 
 
 def test_every_run_outcome_matches_the_cli_table() -> None:

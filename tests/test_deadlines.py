@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from dokimi.k8s.deadlines import DeadlineBudget, DeadlineError, bound_job, bound_pod
+from dokimi.k8s.deadlines import (
+    DeadlineBudget,
+    DeadlineError,
+    JobBudget,
+    bound_job,
+    bound_pod,
+)
 from dokimi.k8s.resources import Manifest
 
 
@@ -12,6 +18,7 @@ def budget(**overrides: float) -> DeadlineBudget:
     terms = {
         "test_duration": 10.0,
         "startup": 60.0,
+        "warmup": 20.0,
         "direct_read": 5.0,
         "scrape_confirmation": 30.0,
     }
@@ -21,7 +28,33 @@ def budget(**overrides: float) -> DeadlineBudget:
 def test_deadline_covers_the_test_and_every_wait_after_it() -> None:
     # 10 s of test is not enough: the pods must survive the direct read and the scrape
     # confirmation window too, or the deadline kills them during a wait (ADR-03-01).
-    assert budget(safety_margin=0).active_deadline_seconds == 10 + 60 + 5 + 30
+    assert budget(safety_margin=0).active_deadline_seconds == 10 + 60 + 20 + 5 + 30
+
+
+def test_deadline_covers_the_warm_up_pass() -> None:
+    # ADR-04-04 runs a discarded warm-up pass by default. A deadline that ignored it
+    # could expire during warm-up, before the measurement even starts (ADR-05-13).
+    assert (
+        budget(warmup=20).active_deadline_seconds - budget(warmup=0).active_deadline_seconds == 20
+    )
+
+
+def test_the_job_budget_covers_every_workload_and_the_phases_around_them() -> None:
+    job = JobBudget(
+        workloads=(budget(safety_margin=0), budget(safety_margin=0)),
+        preflight=300,
+        diagnostics=120,
+        cleanup=120,
+        safety_margin=0,
+    )
+
+    assert job.active_deadline_seconds == 2 * (10 + 60 + 20 + 5 + 30) + 300 + 120 + 120
+    assert job.total > budget().total
+
+
+def test_a_job_budget_needs_a_workload() -> None:
+    with pytest.raises(DeadlineError):
+        JobBudget(workloads=(), preflight=0, diagnostics=0, cleanup=0)
 
 
 def test_deadline_grows_with_the_test_duration() -> None:
@@ -33,7 +66,7 @@ def test_deadline_grows_with_the_test_duration() -> None:
 
 
 def test_deadline_rounds_up_to_whole_seconds() -> None:
-    assert budget(test_duration=10.2, safety_margin=0).active_deadline_seconds == 106
+    assert budget(test_duration=10.2, safety_margin=0).active_deadline_seconds == 126
 
 
 @pytest.mark.parametrize(

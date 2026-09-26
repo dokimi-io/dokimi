@@ -19,8 +19,13 @@
 
 The orchestrator's own Job is labelled with its ``run_id`` too, so the CLI can find it to
 reattach ([ADR-01-06]), but it carries ``app.kubernetes.io/component: orchestrator`` and
-is excluded from both deletion and the exclusivity scan — it is the thing running the
-run, not a resource the run created, and a cleanup that deleted it would kill itself.
+is excluded from deletion — it is the thing running the run, not a resource the run
+created, and a cleanup that deleted it would kill itself.
+
+The owner also carries the run's **claim** ([ADR-05-13]): three annotations that say
+whether the run is active. :func:`claim_of` reads them and :meth:`Claim.is_active` is
+the one predicate the exclusivity scan applies. No other object is evidence of an active
+run — not a workload, not retained evidence, not a kept managed Prometheus.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from dokimi.k8s.identity import COMPONENT_LABEL, MANAGED_BY_LABEL, RUN_ID_LABEL
+from dokimi.k8s.identity import MANAGED_BY as MANAGED_BY_VALUE
 from dokimi.k8s.resources import (
     CONFIG_MAP,
     DAEMON_SET,
@@ -50,7 +57,10 @@ from dokimi.k8s.resources import (
 from dokimi.run_identity import RunId
 
 __all__ = [
+    "CLAIMED_AT_ANNOTATION",
+    "CLAIM_EXPIRES_AT_ANNOTATION",
     "COMPONENT_LABEL",
+    "FINISHED_AT_ANNOTATION",
     "MANAGED_BY_LABEL",
     "MANAGED_BY_VALUE",
     "ORCHESTRATOR_COMPONENT",
@@ -58,11 +68,14 @@ __all__ = [
     "RUN_ID_LABEL",
     "RUN_OWNED_KINDS",
     "TEST_ID_LABEL",
+    "Claim",
     "DeletionReport",
     "OwnedObject",
     "OwnershipError",
     "RunOwnership",
+    "claim_of",
     "delete_run_owned",
+    "format_timestamp",
     "find_run_owned",
     "is_run_owned",
     "owner_manifest",
@@ -71,20 +84,23 @@ __all__ = [
     "run_selector",
 ]
 
-MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
-MANAGED_BY_VALUE = "dokimi"
-RUN_ID_LABEL = "dokimi.io/run-id"
 TEST_ID_LABEL = "dokimi.io/test-id"
-COMPONENT_LABEL = "app.kubernetes.io/component"
+
+#: The claim, written on the owner under the run-start lock ([ADR-05-10], [ADR-05-13]).
+CLAIMED_AT_ANNOTATION = "dokimi.io/claimed-at"
+#: When the claim stops counting: the orchestrator Job's own deadline.
+CLAIM_EXPIRES_AT_ANNOTATION = "dokimi.io/claim-expires-at"
+#: Written at the start of phase 11. A finished run no longer holds the cluster.
+FINISHED_AT_ANNOTATION = "dokimi.io/finished-at"
 
 #: The placeholder owner ConfigMap.
 OWNER_COMPONENT = "run-owner"
 #: The orchestrator Job and its pod. Never deleted or counted by this module.
 ORCHESTRATOR_COMPONENT = "orchestrator"
 
-#: The kinds a run may create, and therefore the kinds cleanup and the exclusivity scan
-#: look at. A later issue that creates a new kind adds it here, or its objects become
-#: invisible to both.
+#: The kinds a run may create, and therefore the kinds label-scoped cleanup looks at. A
+#: later issue that creates a new kind adds it here, or its objects become invisible to
+#: cleanup. The exclusivity scan does not use this list: it reads owners only.
 RUN_OWNED_KINDS: tuple[Kind, ...] = (
     CONFIG_MAP,
     POD,
@@ -145,9 +161,13 @@ def is_run_owned(manifest: Manifest, run_id: RunId | None = None) -> bool:
     return run_id is None or owner == str(run_id)
 
 
-def owner_name(run_id: RunId) -> str:
-    """The placeholder owner's name. Identical in every namespace the run touches."""
-    return f"dokimi-run-{run_id}"
+def owner_name(run_id: RunId | str) -> str:
+    """The placeholder owner's name, ``run-<run_id>-owner`` ([ADR-05-13]).
+
+    Identical in every namespace the run touches, and free of the product name, so the
+    Job and the definition ConfigMap that ``submit`` creates reference it unchanged.
+    """
+    return f"run-{run_id}-owner"
 
 
 def owner_manifest(
@@ -161,15 +181,16 @@ def owner_manifest(
 
     Its shape:
 
-    * **name** ``dokimi-run-<run_id>`` — findable by name for a human, though
-      this library only ever finds it by label;
+    * **name** ``run-<run_id>-owner`` — findable by name for a human, though this
+      library only ever finds it by label;
     * **labels** the ownership labels plus ``app.kubernetes.io/component: run-owner``, so
       the owner is itself run-owned and label-scoped cleanup removes it like anything else;
     * **data** ``run_id`` and ``created_at``, plus the run metadata passed in — for
       example :meth:`~dokimi.images.OrchestratorImage.run_metadata` — so a
       retained run can be identified from the cluster alone, without its result artifact.
 
-    It carries no ownerReference of its own: it is the root.
+    It carries no ownerReference of its own: it is the root. It carries no claim either;
+    :func:`~dokimi.k8s.exclusivity.claim_run` writes that, inside the Job.
     """
     extra = dict(metadata or {})
     reserved = {"run_id", "created_at"} & extra.keys()
@@ -192,6 +213,51 @@ def owner_manifest(
     }
 
 
+@dataclass(frozen=True)
+class Claim:
+    """What an owner's annotations say about its run ([ADR-05-13])."""
+
+    claimed_at: datetime | None
+    expires_at: datetime | None
+    finished_at: datetime | None
+
+    def is_active(self, now: datetime) -> bool:
+        """Claimed, not finished, and not yet expired.
+
+        An owner that was never claimed — a refused submission, a Job that never
+        started — never counts. A claim without a readable expiry does count: an owner
+        that says it is claimed but not until when cannot be assumed to have stopped.
+        """
+        if self.claimed_at is None or self.finished_at is not None:
+            return False
+        return self.expires_at is None or now < self.expires_at
+
+
+def claim_of(owner: Manifest) -> Claim:
+    """The claim recorded on *owner*. Unparseable timestamps read as absent."""
+    annotations: Mapping[str, str] = owner.get("metadata", {}).get("annotations") or {}
+    return Claim(
+        claimed_at=_timestamp(annotations.get(CLAIMED_AT_ANNOTATION)),
+        expires_at=_timestamp(annotations.get(CLAIM_EXPIRES_AT_ANNOTATION)),
+        finished_at=_timestamp(annotations.get(FINISHED_AT_ANNOTATION)),
+    )
+
+
+def format_timestamp(moment: datetime) -> str:
+    """How the claim annotations spell a moment: ISO 8601, UTC, second precision."""
+    return moment.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 class RunOwnership:
     """Creates a run's objects, always labelled and always owned.
 
@@ -212,23 +278,39 @@ class RunOwnership:
         self._owners: dict[str, Manifest] = {}
 
     def owner_in(self, namespace: str) -> Manifest:
-        """The owner in *namespace*, created now if the run has none there yet."""
+        """The owner in *namespace*, created now if the run has none there yet.
+
+        Read first: in the Job, ``submit`` has already created the owner in the run's
+        namespace, and the Job's role may read it but not create it.
+        """
         owner = self._owners.get(namespace)
         if owner is not None:
             return owner
-        body = owner_manifest(self.run_id, namespace, metadata=self._metadata)
         try:
-            owner = self.cluster.create(CONFIG_MAP, namespace, body)
-        except AlreadyExistsError:
-            # A resumed run, or a retry after a lost response. Adopt it only if it
-            # really is this run's; anything else under this name is not ours to use.
-            owner = self.cluster.get(CONFIG_MAP, namespace, owner_name(self.run_id))
-            if not is_run_owned(owner, self.run_id):
-                raise OwnershipError(
-                    f"ConfigMap {namespace}/{owner_name(self.run_id)} exists but is not "
-                    f"labelled as owned by run {self.run_id}; refusing to adopt it"
-                ) from None
+            owner = self._adoptable(namespace)
+        except NotFoundError:
+            body = owner_manifest(self.run_id, namespace, metadata=self._metadata)
+            try:
+                owner = self.cluster.create(CONFIG_MAP, namespace, body)
+            except AlreadyExistsError:
+                # Created between our read and our create, e.g. a retry after a lost
+                # response. The same adoption rule applies.
+                owner = self._adoptable(namespace)
         self._owners[namespace] = owner
+        return owner
+
+    def remember(self, owner: Manifest) -> None:
+        """Keep *owner*, as updated elsewhere (the claim), for later reference."""
+        self._owners[owner["metadata"]["namespace"]] = owner
+
+    def _adoptable(self, namespace: str) -> Manifest:
+        """The existing owner in *namespace*, only if it really is this run's."""
+        owner = self.cluster.get(CONFIG_MAP, namespace, owner_name(self.run_id))
+        if not is_run_owned(owner, self.run_id):
+            raise OwnershipError(
+                f"ConfigMap {namespace}/{owner_name(self.run_id)} exists but is not "
+                f"labelled as owned by run {self.run_id}; refusing to adopt it"
+            )
         return owner
 
     def owner_reference(self, namespace: str) -> dict[str, str]:

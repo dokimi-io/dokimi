@@ -7,12 +7,15 @@ slow namespace deletion. The default name is derived from the test type; configu
 may override it.
 
 The namespace is shared across runs, so it is never run-owned: this module only names
-it. Creating it is an installation step, not something a run does.
+it. Creating it is an installation step, not something a run does ([ADR-05-13]):
+``deploy/rbac.yaml`` creates the default one, and an override must already exist.
 """
 
 from __future__ import annotations
 
 import re
+
+from dokimi.model.errors import ConfigError
 
 __all__ = [
     "NAMESPACE_PREFIX",
@@ -27,8 +30,8 @@ _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 _MAX_LENGTH = 63
 
 
-class InvalidNamespaceError(ValueError):
-    """A namespace name Kubernetes would reject."""
+class InvalidNamespaceError(ConfigError, ValueError):
+    """A namespace name Kubernetes would reject. A ``config_error`` (exit 3, ADR-01-11)."""
 
 
 def namespace_for(test_type: str, override: str | None = None) -> str:

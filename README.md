@@ -477,10 +477,13 @@ Further rules:
   cost of cluster-level namespace creation permission and slow per-run namespace deletion.
 - **Run exclusivity:** starting a run is preconditioned on no other run being active anywhere in
   the cluster, regardless of test type or namespace — two concurrent runs would contend for the same
-  nodes' network capacity. The framework checks for existing run-owned resources across all
-  test-type namespaces before creating any, and refuses to start if it finds any.
-  Two submissions racing to start are serialised by a `Lease` named `dokimi-run-lock` in
-  the `dokimi` namespace, which must exist; exactly one of them starts.
+  nodes' network capacity. The Job claims the cluster as the first step of phase 4, by writing
+  a claim onto its run's owner, and refuses to start (exit `4`, `run_already_active`) if another
+  owner in any namespace holds a claim that is neither finished nor expired. A run marks itself
+  finished before cleanup, and a crashed run's claim expires with its Job's deadline, so neither
+  retained evidence nor a crash blocks later runs indefinitely. Two submissions racing to start
+  are serialised by a `Lease` named `dokimi-run-lock` in the `dokimi` namespace, which
+  `deploy/rbac.yaml` creates; exactly one of them starts.
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
   inspection; flags force either. It runs **after** the post-run diagnostic snapshot, which needs
   the run's pods and placement to still exist, and is bounded by its own timeout so a stuck snapshot

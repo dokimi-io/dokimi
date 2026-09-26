@@ -98,7 +98,7 @@ $ test-env/test-env.sh load orchestrator:dev
 $ export DOKIMI_IMAGE=orchestrator:dev
 ```
 
-Grant the run's Job what it needs to plan, once:
+Create the namespaces and grant the run's Job what it needs, once:
 
 ```console
 $ kubectl apply -f deploy/rbac.yaml

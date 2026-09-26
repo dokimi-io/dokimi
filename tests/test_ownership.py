@@ -33,7 +33,9 @@ from tests.fake_resources import FakeResources
 RUN = RunId("20260924-143012-k3f9x2")
 OTHER_RUN = RunId("20260924-120000-a1b2c3")
 NAMESPACE = "dokimi-iperf2"
-BUDGET = DeadlineBudget(test_duration=10, startup=60, direct_read=5, scrape_confirmation=30)
+BUDGET = DeadlineBudget(
+    test_duration=10, startup=60, warmup=0, direct_read=5, scrape_confirmation=30
+)
 
 
 def pod(name: str, namespace: str = NAMESPACE, **metadata: Any) -> Manifest:
@@ -94,7 +96,7 @@ def test_the_owner_is_created_before_anything_else_in_its_namespace(
 def test_owner_shape(cluster: FakeResources, ownership: RunOwnership) -> None:
     owner = ownership.owner_in(NAMESPACE)
 
-    assert owner["metadata"]["name"] == f"dokimi-run-{RUN}"
+    assert owner["metadata"]["name"] == f"run-{RUN}-owner"
     assert owner["metadata"]["labels"] == ownership_labels(RUN, component=OWNER_COMPONENT)
     assert owner["data"]["run_id"] == str(RUN)
     assert datetime.fromisoformat(owner["data"]["created_at"]).tzinfo == UTC

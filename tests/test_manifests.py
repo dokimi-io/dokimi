@@ -12,15 +12,16 @@ from typing import Any
 
 import pytest
 
+from dokimi.k8s.deadlines import job_budget_for, workload_budget_for
 from dokimi.k8s.identity import MANAGED_BY_LABEL, RUN_ID_LABEL
 from dokimi.k8s.manifests import (
     DEFINITION_MOUNT_PATH,
     bind_owner,
-    deadline_seconds,
-    namespace_manifest,
+    job_deadline_seconds,
     render_manifests,
     resource_name,
 )
+from dokimi.k8s.ownership import CLAIMED_AT_ANNOTATION, claim_of
 from dokimi.model import (
     Bandwidth,
     Comparison,
@@ -97,6 +98,30 @@ def test_everything_but_the_owner_points_at_the_owner(manifests: list[dict[str, 
         reference = manifest["metadata"]["ownerReferences"][0]
         assert reference["name"] == owner["metadata"]["name"]
         assert reference["kind"] == "ConfigMap"
+        # ADR-05-13: unset, so deleting the owner never needs rights on its finalizers.
+        assert "blockOwnerDeletion" not in reference
+
+
+def test_the_owner_is_named_after_the_run_and_carries_its_identity(
+    manifests: list[dict[str, Any]],
+) -> None:
+    # ADR-05-13: one owner, `run-<id>-owner`, with the run's id and creation time.
+    owner = manifests[0]
+
+    assert owner["metadata"]["name"] == f"run-{RUN_ID}-owner"
+    assert owner["data"]["run_id"] == RUN_ID
+    assert "created_at" in owner["data"]
+
+
+def test_a_submission_is_never_evidence_of_an_active_run(
+    manifests: list[dict[str, Any]],
+) -> None:
+    # The claim is written by the Job in phase 4, never at submission, so two submissions
+    # made at once cannot refuse each other (ADR-05-10).
+    owner = manifests[0]
+
+    assert CLAIMED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
+    assert claim_of(owner).claimed_at is None
 
 
 def test_the_owner_uid_is_bound_after_creation(manifests: list[dict[str, Any]]) -> None:
@@ -128,8 +153,17 @@ def test_the_job_carries_a_self_limiting_deadline(
     # ADR-05-02: labels make cleanup possible, deadlines make it unnecessary.
     job = _job(manifests)
 
-    assert job["spec"]["activeDeadlineSeconds"] == deadline_seconds(definition)
+    assert job["spec"]["activeDeadlineSeconds"] == job_deadline_seconds(definition)
     assert job["spec"]["activeDeadlineSeconds"] > int(definition.duration.seconds)
+
+
+def test_the_job_outlives_any_workload_it_runs(definition: TestDefinition) -> None:
+    # ADR-05-13: the Job deadline is also when the claim expires, which is only safe
+    # because by then every workload has hit its own, shorter deadline.
+    workload = workload_budget_for(definition)
+
+    assert job_budget_for(definition).total > workload.total
+    assert workload.warmup > 0
 
 
 def test_every_object_carries_the_ownership_labels(manifests: list[dict[str, Any]]) -> None:
@@ -155,7 +189,9 @@ def test_object_names_are_valid_and_derived_from_the_run_id(
         assert RUN_ID in name
 
 
-def test_the_definition_travels_with_the_run(manifests: list[dict[str, Any]]) -> None:
+def test_the_definition_travels_with_the_run(
+    manifests: list[dict[str, Any]], definition: TestDefinition
+) -> None:
     # The Job reads the document from a ConfigMap, not from the submitter's disk, which
     # is what lets a reattaching process on another machine need nothing local.
     definition_map = manifests[1]
@@ -167,6 +203,10 @@ def test_the_definition_travels_with_the_run(manifests: list[dict[str, Any]]) ->
         f"{DEFINITION_MOUNT_PATH}/definition.yaml",
         "--run-id",
         RUN_ID,
+        "--namespace",
+        "dokimi-iperf2",
+        "--deadline-seconds",
+        str(job_deadline_seconds(definition)),
     ]
 
 
@@ -204,15 +244,6 @@ def test_robot_has_somewhere_to_write(manifests: list[dict[str, Any]]) -> None:
 
 def test_the_image_is_submitted_exactly_as_resolved(manifests: list[dict[str, Any]]) -> None:
     assert _container(manifests)["image"] == IMAGE
-
-
-def test_the_namespace_is_not_run_owned() -> None:
-    # It is shared by every run of the test type, so a run-scoped cleanup selecting on
-    # run-id must never match it.
-    manifest = namespace_manifest("dokimi-iperf2")
-
-    assert manifest["metadata"]["labels"] == {MANAGED_BY_LABEL: "dokimi"}
-    assert RUN_ID_LABEL not in manifest["metadata"]["labels"]
 
 
 def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition) -> None:

@@ -1,8 +1,7 @@
 """The narrow slice of the Kubernetes API a submission actually uses.
 
-Everything a run does to a cluster goes through :class:`ClusterClient`: eight
-operations, every namespaced one addressing objects by label selector rather than by name
-(ADR-05-02). The
+Everything the CLI does to a cluster goes through :class:`ClusterClient`, and all of
+it needs only namespaced rights except listing nodes. The
 protocol exists so the submission and reattach paths can be exercised without a cluster —
 a fake that records calls proves ``--dry-run`` touches nothing far more convincingly than
 a comment saying it does not.
@@ -15,7 +14,10 @@ to guarantee that is for the import never to happen.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from dokimi.k8s.resources import ResourceClient
 
 __all__ = [
     "ClusterClient",
@@ -32,9 +34,6 @@ class ClusterError(RuntimeError):
 class ClusterClient(Protocol):
     """What the CLI needs from a cluster. Nothing here is specific to a test type."""
 
-    def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
-        """Create the namespace if it is not already there."""
-
     def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
         """Create one object and return it as the API server stored it."""
 
@@ -50,10 +49,13 @@ class ClusterClient(Protocol):
     def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
         """Yield log lines from a running or finished container until it ends."""
 
-    def delete_config_maps(self, namespace: str, selector: str) -> None:
-        """Delete the ConfigMaps matching *selector*, cascading to their dependents.
+    def resources(self) -> ResourceClient:
+        """The per-kind client, over the same connection, for ownership and cleanup.
 
-        By selector, never by name, like every delete a run makes (ADR-05-02).
+        Two protocols, deliberately: this one is the CLI's task-level view (submit, find,
+        stream) and never imports the client library until :func:`connect`;
+        :class:`~dokimi.k8s.resources.ResourceClient` is the generic per-kind view that
+        ownership, exclusivity and label-scoped deletion are written against.
         """
 
     def list_nodes(self) -> list[dict[str, Any]]:
