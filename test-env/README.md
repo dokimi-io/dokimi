@@ -78,6 +78,7 @@ Everything, listed, so nothing is a surprise:
 | `.test-env/`: the cluster's kubeconfig and the active profile | `down` |
 | Your default kubeconfig and current context | never touched |
 | **Kernel modules** | see below — they stay loaded until reboot |
+| **Host-wide kernel settings** a cluster component changes | see below — they stay until reboot |
 
 **This script never changes your kernel unless you ask it to.** One profile needs a module that
 not every host loads: `kind-flannel` needs `br_netfilter`. If it's missing, `up` stops before
@@ -111,8 +112,46 @@ test-env: note: while kind-kindnet came up, these kernel modules were loaded int
 test-env:       This script did not load them; the cluster's components or the kernel did. They stay loaded until reboot.
 ```
 
-On a machine that has run Kubernetes before, most of these are already loaded, and `up` has
-nothing to report. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
+**Every profile also changes host-wide kernel settings**, again not because this script asks it to.
+The kubelet sets some sysctls when it starts, and so do kind's nodes and Cilium. These settings
+aren't namespaced, so a node container that sets one changes it for the whole host, and it stays
+changed after `down`. Measured on a clean GitHub Ubuntu runner:
+
+| Setting | Ubuntu's value → after `up` | Changed by | What it means |
+| --- | --- | --- | --- |
+| `kernel.panic_on_oops` | `0` → `1` | every profile (the kubelet) | A kernel oops becomes a kernel panic... |
+| `kernel.panic` | `-1` → `10` | every profile (the kubelet) | ...and a panic reboots the host after 10 seconds |
+| `vm.overcommit_memory` | `0` → `1` | every profile (the kubelet) | The kernel grants every memory allocation instead of refusing obvious overcommits |
+| `kernel.core_pattern` | a pipe to `systemd-coredump` → `core` | kind profiles | Crashing programs on the host write a `core` file into their working directory instead of going to `coredumpctl` |
+| `fs.nr_open` | `1048576` → `1073741816` | kind profiles | A higher ceiling on open files per process |
+| `kernel.unprivileged_bpf_disabled` | `2` → `1` | Cilium profiles | Unprivileged BPF stays disabled, and now can't be re-enabled until reboot |
+| `kernel.timer_migration` | `1` → `0` | Cilium profiles | Timers stay on the CPU that set them |
+
+**On a Linux machine you work on, the first two matter most:** until you reboot, an oops that the
+machine would otherwise survive reboots it instead. They are the kubelet's defaults on any
+Kubernetes node, and nothing in kind or k3d turns them off.
+
+`up` says which of these it's about to change before it creates anything, so you can stop there.
+Afterwards it reads every setting under `kernel.*`, `vm.*` and `fs.*` a second time, and names each
+one that changed, with its old and new value:
+
+```
+test-env: note: while kind-kindnet came up, these host-wide kernel settings changed:
+test-env:         kernel.panic: -1 -> 10
+test-env:         kernel.panic_on_oops: 0 -> 1
+test-env:         vm.overcommit_memory: 0 -> 1
+test-env:       This script did not set them; the cluster's components did. They stay until reboot. To undo one: sudo sysctl KEY=OLD-VALUE
+```
+
+To undo one, set the old value it printed, for example `sudo sysctl kernel.panic_on_oops=0`.
+`kernel.unprivileged_bpf_disabled` is the exception: once it is `1`, the kernel refuses any change
+until reboot. Values that change by themselves aren't compared: open-file and inode counts,
+disk-quota statistics, the random UUID and the last PID. Neither is `net.*`, because most of it
+belongs to a network namespace, so each node gets its own copy and the host's copy isn't touched.
+
+On a machine that has run Kubernetes since its last reboot, most of these are already loaded or
+set, and `up` has nothing to report. That doesn't mean nothing was changed. It means the changes
+were already there. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
 itself.
 
 ## What `check` verifies

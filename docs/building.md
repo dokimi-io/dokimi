@@ -103,6 +103,12 @@ demand, rather than on every pull request, because seven clusters cost minutes t
 unrelated change gains nothing from. Its job summary states, on every run, that the
 environment validates orchestration and not measurement.
 
+Every action in all three workflows is pinned to a commit SHA, with its version in a trailing
+comment, such as `actions/checkout@11d5960a… # v4.4.0`. A tag can be moved to different code,
+and the release workflow runs with permission to push images and sign them.
+`tests/test_workflows.py` fails on any action that isn't pinned. To upgrade one, replace both
+the SHA and the comment.
+
 The third job in `ci.yml` is the one that keeps an architectural rule real rather than aspirational.
 It deliberately does not test `import robot`: this repository has a `robot/` directory at
 its root, which Python treats as a namespace package, so that import succeeds with Robot

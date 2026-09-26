@@ -89,6 +89,14 @@ or k3d with Calico, Cilium or flannel, for when CNI-specific behaviour matters. 
 [environment's README](../test-env/README.md) lists them all, with what each one verifiably
 provides.
 
+**On Linux, and inside WSL2, a cluster changes some host kernel settings until you reboot.**
+Every node container shares your kernel. The kubelet sets `kernel.panic_on_oops=1` and
+`kernel.panic=10`, so a kernel oops reboots the machine after 10 seconds, where it might otherwise
+have survived. `up` says which settings it's about to change before it creates anything.
+Afterwards, it names every change it saw, with the old value to set back. On macOS, the
+changes land in Docker's Linux VM, not in macOS itself. The whole list is in
+[what it changes on your machine](../test-env/README.md#what-it-changes-on-your-machine).
+
 The cluster needs the orchestrator image, and a local build is not in any registry it can
 reach — so build it and load it in directly:
 
