@@ -1,7 +1,7 @@
 # Container images
 
 Dockerfiles for the images this project builds and publishes to
-`ghcr.io/test-orchestrator/<image-name>`, pinned by digest and signed with provenance
+`ghcr.io/dokimi-io/<image-name>`, pinned by digest and signed with provenance
 attestation (ADR-05-04, ADR-05-08).
 
 | Image | Base | Status |
@@ -49,7 +49,7 @@ Robot writes its per-pair `output.xml` before `rebot` merges them (phase 9a).
 
 `.github/workflows/release.yml`, on a `v*` tag. It builds and pushes for `linux/amd64`
 and `linux/arm64`, signs the result with keyless cosign, attests build provenance, and
-only then writes the digest it got back into `src/test_orchestrator/_image_digest.py` and
+only then writes the digest it got back into `src/dokimi/_image_digest.py` and
 builds the distribution — so a released CLI always carries the digest of the image built
 from its own commit (ADR-05-08).
 

@@ -25,14 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from test_orchestrator.k8s.cluster import ClusterClient, ClusterError
-from test_orchestrator.k8s.identity import (
+from dokimi.k8s.cluster import ClusterClient, ClusterError
+from dokimi.k8s.identity import (
     default_namespace,
     new_run_id,
     run_selector,
     validate_run_id,
 )
-from test_orchestrator.k8s.manifests import (
+from dokimi.k8s.manifests import (
     OWNER_COMPONENT,
     RUN_COMPONENT,
     bind_owner,
@@ -40,7 +40,7 @@ from test_orchestrator.k8s.manifests import (
     render_manifests,
     resource_name,
 )
-from test_orchestrator.model import TestDefinition
+from dokimi.model import TestDefinition
 
 __all__ = [
     "CONTAINER_NAME",
@@ -202,9 +202,7 @@ def follow(
         for line in cluster.stream_logs(namespace, pod_name, CONTAINER_NAME):
             write(line)
     except ClusterError as error:
-        error.add_note(
-            f"The run is unaffected; `test-orchestrator attach {run_id}` resumes following it."
-        )
+        error.add_note(f"The run is unaffected; `dokimi attach {run_id}` resumes following it.")
         raise
 
     code, reason = _await_exit_code(cluster, namespace, run_id, pod_name, sleep=sleep, clock=clock)
@@ -259,7 +257,7 @@ def _await_pod(
             state = "not scheduled" if pod is None else f"still {_phase(pod)}"
             raise ClusterError(
                 f"run {run_id!r} is {state} after {timeout:.0f}s. The run itself is "
-                f"unaffected; `test-orchestrator attach {run_id}` picks it up again."
+                f"unaffected; `dokimi attach {run_id}` picks it up again."
             )
         sleep(1.0)
 

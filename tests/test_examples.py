@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_orchestrator.formats import SUFFIXES, parse, parse_file
+from dokimi.formats import SUFFIXES, parse, parse_file
 from tests.conftest import robot_framework_installed
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"

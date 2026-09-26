@@ -17,8 +17,8 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
-from test_orchestrator.model.criterion import Criterion
-from test_orchestrator.model.errors import ConfigError
+from dokimi.model.criterion import Criterion
+from dokimi.model.errors import ConfigError
 
 __all__ = [
     "Bandwidth",

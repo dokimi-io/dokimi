@@ -23,8 +23,8 @@ import enum
 from dataclasses import dataclass
 from typing import Any
 
-from test_orchestrator.model import ConfigError, TestDefinition
-from test_orchestrator.planning.nodes import NodeFacts, NodeInventory
+from dokimi.model import ConfigError, TestDefinition
+from dokimi.planning.nodes import NodeFacts, NodeInventory
 
 __all__ = [
     "PLACEMENT_MODE",

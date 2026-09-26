@@ -1,4 +1,4 @@
-apiVersion: test-orchestrator/v1alpha1
+apiVersion: dokimi.io/v1alpha1
 kind: NetworkTest
 
 metadata:

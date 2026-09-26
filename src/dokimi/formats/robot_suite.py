@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from test_orchestrator.model import (
+from dokimi.model import (
     DEFAULT_RESULTS_DIRECTORY,
     Bandwidth,
     Comparison,
@@ -50,7 +50,7 @@ from test_orchestrator.model import (
 
 __all__ = ["parse_robot", "render_robot"]
 
-RESOURCE_IMPORT = "resources/TestOrchestrator.resource"
+RESOURCE_IMPORT = "resources/Dokimi.resource"
 
 _VARIABLES = {
     "SOURCE_NODE": "source_node",

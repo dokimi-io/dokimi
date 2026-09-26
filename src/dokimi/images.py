@@ -1,20 +1,20 @@
 """The orchestrator's own container image: what reference a run actually submits.
 
 [ADR-01-06] makes the orchestrator a one-shot in-cluster Job, so a run *is* a reference
-to an image. [ADR-05-08] decides what that reference is — ``ghcr.io/test-orchestrator/
+to an image. [ADR-05-08] decides what that reference is — ``ghcr.io/dokimi-io/
 orchestrator``, pinned by digest, the digest of the image built from the CLI's own
 commit, overridable for air-gapped or policy-constrained clusters, and recorded in the
 run metadata.
 
 ADR-05-08 left two things as follow-up work. This module settles both:
 
-* **Release mechanism** — a generated constants file, :mod:`test_orchestrator._image_digest`,
+* **Release mechanism** — a generated constants file, :mod:`dokimi._image_digest`,
   rewritten by the release workflow between pushing the image and building the
   distribution. Chosen over a build-time template or a lockfile-adjacent manifest because
   it needs no packaging hook and is readable by the same import machinery as everything
   else.
 * **Override interface** — ``--orchestrator-image`` for one run, the
-  ``TEST_ORCHESTRATOR_IMAGE`` environment variable for one installation, the baked-in
+  ``DOKIMI_IMAGE`` environment variable for one installation, the baked-in
   digest otherwise. Two levels and no config file, deliberately: [ADR-04-02]
   (configuration sources and precedence) is still ``proposed``, and Milestone-01 must not
   implement a precedence chain a later decision would overturn.
@@ -34,7 +34,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from test_orchestrator._image_digest import ORCHESTRATOR_IMAGE_DIGEST
+from dokimi._image_digest import ORCHESTRATOR_IMAGE_DIGEST
 
 __all__ = [
     "IMAGE_OVERRIDE_ENV_VAR",
@@ -47,10 +47,10 @@ __all__ = [
 ]
 
 #: Registry and repository, inherited from ADR-05-04 rather than decided again here.
-IMAGE_REPOSITORY = "ghcr.io/test-orchestrator/orchestrator"
+IMAGE_REPOSITORY = "ghcr.io/dokimi-io/orchestrator"
 
 #: Per-installation override. The per-run override is a CLI argument, not an env var.
-IMAGE_OVERRIDE_ENV_VAR = "TEST_ORCHESTRATOR_IMAGE"
+IMAGE_OVERRIDE_ENV_VAR = "DOKIMI_IMAGE"
 
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -121,7 +121,7 @@ def resolve_image(
 ) -> OrchestratorImage:
     """Resolve the image reference for a run.
 
-    Precedence: *override* (one run) beats ``TEST_ORCHESTRATOR_IMAGE`` (one installation)
+    Precedence: *override* (one run) beats ``DOKIMI_IMAGE`` (one installation)
     beats the digest baked in at release time.
 
     Raises:

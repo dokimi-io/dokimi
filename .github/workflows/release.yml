@@ -25,7 +25,7 @@ env:
   # 0.12.18 fixes GHSA-2cv4-cqwr-gwf7 (Windows wheel-install path traversal) and is the
   # floor ADR-01-09 sets and `[tool.uv] required-version` enforces.
   UV_VERSION: "0.12.18"
-  IMAGE: ghcr.io/test-orchestrator/orchestrator
+  IMAGE: ghcr.io/dokimi-io/orchestrator
 
 jobs:
   image:
@@ -140,7 +140,7 @@ jobs:
           if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
               raise SystemExit(f"not a sha256 digest: {digest!r}")
 
-          path = pathlib.Path("src/test_orchestrator/_image_digest.py")
+          path = pathlib.Path("src/dokimi/_image_digest.py")
           source = path.read_text()
           patched, count = re.subn(
               r"^ORCHESTRATOR_IMAGE_DIGEST: str \| None = .*$",
@@ -164,7 +164,7 @@ jobs:
           uv run python - <<'PY'
           import os
 
-          from test_orchestrator.images import IMAGE_REPOSITORY, ImageSource, resolve_image
+          from dokimi.images import IMAGE_REPOSITORY, ImageSource, resolve_image
 
           expected = f"{IMAGE_REPOSITORY}@{os.environ['DIGEST']}"
           image = resolve_image(env={})

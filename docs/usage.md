@@ -5,10 +5,10 @@ validates the definition, renders the manifests, submits the Job and streams its
 back. Everything after that happens in the cluster (ADR-01-06).
 
 ```console
-$ test-orchestrator validate test.yaml          # parse and check, no cluster involved
-$ test-orchestrator submit test.yaml --dry-run  # render the matrix and the manifests
-$ test-orchestrator submit test.yaml            # create the run and stream its logs
-$ test-orchestrator attach <run-id>             # resume streaming a run already going
+$ dokimi validate test.yaml          # parse and check, no cluster involved
+$ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
+$ dokimi submit test.yaml            # create the run and stream its logs
+$ dokimi attach <run-id>             # resume streaming a run already going
 ```
 
 - [What a run does today](#what-a-run-does-today)
@@ -54,26 +54,26 @@ namespace's default service account cannot. Grant it once per cluster:
 $ kubectl apply -f deploy/rbac.yaml
 ```
 
-That creates the `test-orchestrator-iperf2` namespace, a `test-orchestrator` service
+That creates the `dokimi-iperf2` namespace, a `dokimi` service
 account in it, and a read-only ClusterRole — `get` and `list` on nodes, nothing else.
 Then submit with that service account:
 
 ```console
-$ test-orchestrator submit test.yaml --service-account test-orchestrator
+$ dokimi submit test.yaml --service-account dokimi
 ```
 
 Without it, the run gets as far as phase 3 and stops with the fix spelled out:
 
 ```
-test-orchestrator: listing nodes was refused. Planning resolves the definition's nodes
+dokimi: listing nodes was refused. Planning resolves the definition's nodes
 against the cluster, which needs `get` and `list` on nodes — a cluster-wide permission.
 deploy/rbac.yaml grants exactly that; apply it, then submit with --service-account
-test-orchestrator.
+dokimi.
 ```
 
 The grant widens as later phases land, one commented rule per phase.
 
-The service account exists only in `test-orchestrator-iperf2`, the namespace
+The service account exists only in `dokimi-iperf2`, the namespace
 `deploy/rbac.yaml` creates. A run submitted with `--namespace` somewhere else will not find
 it there. For another namespace, copy the file, change the namespace in the `Namespace`,
 the `ServiceAccount` and the binding's subject, and apply that copy.
@@ -81,7 +81,7 @@ the `ServiceAccount` and the binding's subject, and apply that copy.
 ## validate
 
 ```console
-$ test-orchestrator validate examples/worker-01-to-worker-02-udp.yaml
+$ dokimi validate examples/worker-01-to-worker-02-udp.yaml
 examples/worker-01-to-worker-02-udp.yaml is valid.
 
   name        worker-01-to-worker-02-udp
@@ -120,7 +120,7 @@ Keyword names are matched the way Robot matches them, so `packet loss should be`
 line and the reason:
 
 ```
-test-orchestrator: line 26: unrecognised keyword 'Packet Loss Shuld Be'. A test case may
+dokimi: line 26: unrecognised keyword 'Packet Loss Shuld Be'. A test case may
 call only 'Run Network Test' and the criterion keywords, because anything else would not
 be carried into the suite that runs.
 ```
@@ -139,8 +139,8 @@ even when it passes: it shows the *parsed* values, so `1G` coming back as `1G` a
 ## submit
 
 ```console
-$ test-orchestrator submit test.yaml
-submitted run 20260924-200229-ca532a to namespace test-orchestrator-iperf2
+$ dokimi submit test.yaml
+submitted run 20260924-200229-ca532a to namespace dokimi-iperf2
 run 20260924-200229-ca532a
 ...
 ```
@@ -162,7 +162,7 @@ own exit code.
 ### --dry-run
 
 ```console
-$ test-orchestrator submit test.yaml --dry-run > manifests.yaml
+$ dokimi submit test.yaml --dry-run > manifests.yaml
 Planned matrix (1 test, sequential; nodes not checked)
 
   worker-01 -> worker-02
@@ -173,8 +173,8 @@ Planned matrix (1 test, sequential; nodes not checked)
 Nodes were not checked against a cluster. A dry run contacts nothing unless given --kubeconfig or --context, and then only to read.
 
 Run id     20260924-200229-ca532a
-Namespace  test-orchestrator-iperf2
-Image      ghcr.io/test-orchestrator/orchestrator@sha256:...
+Namespace  dokimi-iperf2
+Image      ghcr.io/dokimi-io/orchestrator@sha256:...
 Deadline   930s
 
 dry run: nothing was created.
@@ -192,7 +192,7 @@ next, and even then it only reads.
 cluster's nodes and resolves the plan against them — read-only, creating nothing:
 
 ```console
-$ test-orchestrator submit test.yaml --dry-run --context kind-test > /dev/null
+$ dokimi submit test.yaml --dry-run --context kind-test > /dev/null
 Planned matrix (1 test, sequential)
 
   pair-001  worker-01 -> worker-02
@@ -215,9 +215,9 @@ is created, and submission fills it in before creating anything that points at i
 Submits and returns immediately, printing how to pick the run back up:
 
 ```console
-$ test-orchestrator submit test.yaml --no-follow
-submitted run 20260924-200229-ca532a to namespace test-orchestrator-iperf2
-not following. Reattach with: test-orchestrator attach 20260924-200229-ca532a
+$ dokimi submit test.yaml --no-follow
+submitted run 20260924-200229-ca532a to namespace dokimi-iperf2
+not following. Reattach with: dokimi attach 20260924-200229-ca532a
 ```
 
 The exit code is `0` for a successful submission — it says nothing about the run, which
@@ -230,7 +230,7 @@ Ctrl-C stops the log stream, not the run:
 ```console
 ^C
 stopped following run 20260924-200229-ca532a. The run is unaffected and continues in the
-cluster; resume with: test-orchestrator attach 20260924-200229-ca532a
+cluster; resume with: dokimi attach 20260924-200229-ca532a
 ```
 
 This is not special handling so much as the absence of it. The Job is a server-side
@@ -240,7 +240,7 @@ outright has the same effect.
 ## attach
 
 ```console
-$ test-orchestrator attach 20260924-200229-ca532a
+$ dokimi attach 20260924-200229-ca532a
 ```
 
 Resumes streaming a run and exits with its exit code. It needs the run id and cluster
@@ -260,8 +260,8 @@ run is somewhere else.
 ## image
 
 ```console
-$ test-orchestrator image
-ghcr.io/test-orchestrator/orchestrator@sha256:ab...
+$ dokimi image
+ghcr.io/dokimi-io/orchestrator@sha256:ab...
   source: release-default
   digest: sha256:ab...
 ```
@@ -362,7 +362,7 @@ Three objects, in this order:
 | `run-<id>-definition` (ConfigMap) | the authored document, mounted into the Job |
 | `run-<id>` (Job) | the run itself |
 
-They live in a namespace derived from the test type — `test-orchestrator-iperf2` — shared
+They live in a namespace derived from the test type — `dokimi-iperf2` — shared
 by every run of that type rather than created per run, which would need cluster-level
 permission on every invocation and make cleanup wait on namespace deletion (ADR-05-02).
 The namespace is checked first and created only if it is not already there, so once it
@@ -373,8 +373,8 @@ deleted again, and takes with it anything already bound to it. That is different
 failed *run*, whose objects are kept as evidence: a submission that never got as far as
 a Job has no evidence to keep.
 
-Every object carries `app.kubernetes.io/managed-by: test-orchestrator` and
-`test-orchestrator/run-id: <id>`. Nothing without those labels is ever modified or
+Every object carries `app.kubernetes.io/managed-by: dokimi` and
+`dokimi.io/run-id: <id>`. Nothing without those labels is ever modified or
 deleted, and every lookup and delete is scoped by label selector rather than by name.
 
 The definition travels with the run in a ConfigMap rather than being re-read from your
@@ -399,7 +399,7 @@ Precedence, highest first:
 | Source | How | Scope |
 | --- | --- | --- |
 | Run override | `--orchestrator-image ghcr.io/example/orchestrator@sha256:…` | one run |
-| Installation override | `TEST_ORCHESTRATOR_IMAGE` | one installation |
+| Installation override | `DOKIMI_IMAGE` | one installation |
 | Release default | baked in at release time, by digest | the released build |
 
 A released CLI carries the digest of the image built from its own commit, so the two can
@@ -418,14 +418,14 @@ takes the rest with it — the cluster's own garbage collector cascades through 
 `ownerReferences`:
 
 ```console
-$ kubectl delete configmap run-20260924-200229-ca532a-owner -n test-orchestrator-iperf2
+$ kubectl delete configmap run-20260924-200229-ca532a-owner -n dokimi-iperf2
 ```
 
 Or by label, across everything a run created:
 
 ```console
-$ kubectl delete job,configmap -n test-orchestrator-iperf2 \
-    -l test-orchestrator/run-id=20260924-200229-ca532a
+$ kubectl delete job,configmap -n dokimi-iperf2 \
+    -l dokimi.io/run-id=20260924-200229-ca532a
 ```
 
 The run id reads the same in the object name and the label, so either command can be

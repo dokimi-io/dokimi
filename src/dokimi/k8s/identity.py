@@ -5,7 +5,7 @@ second and six characters of ``[0-9a-z]`` — the same format M1-05 (#28) implem
 the two agree on the join key of the whole architecture before either merges. ADR-02-08
 refines ADR-02-04's "sortable ``<timestamp>-<short-random>``, not a UUID"; it is still
 ``proposed``, and this module changes with it if its deciders do. ADR-05-02
-fixes the labels: ``app.kubernetes.io/managed-by`` and ``test-orchestrator/run-id`` at
+fixes the labels: ``app.kubernetes.io/managed-by`` and ``dokimi.io/run-id`` at
 minimum, and nothing without them is ever modified or deleted.
 
 Both decisions are accepted, so this module implements them rather than inventing
@@ -21,7 +21,7 @@ import re
 import secrets
 from datetime import UTC, datetime
 
-from test_orchestrator.model import ConfigError, TestType
+from dokimi.model import ConfigError, TestType
 
 __all__ = [
     "MANAGED_BY",
@@ -36,10 +36,10 @@ __all__ = [
 ]
 
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
-RUN_ID_LABEL = "test-orchestrator/run-id"
+RUN_ID_LABEL = "dokimi.io/run-id"
 COMPONENT_LABEL = "app.kubernetes.io/component"
 
-MANAGED_BY = "test-orchestrator"
+MANAGED_BY = "dokimi"
 
 #: ``YYYYMMDD-HHMMSS-xxxxxx`` (ADR-02-08): 20260924-143012-k3f9x2.
 #:
@@ -119,4 +119,4 @@ def default_namespace(test_type: TestType) -> str:
     Per test type, not per run: a namespace per run would need cluster-level permission
     to create one on every invocation and would make cleanup wait on namespace deletion.
     """
-    return f"test-orchestrator-{test_type.value}"
+    return f"dokimi-{test_type.value}"

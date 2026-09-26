@@ -20,8 +20,8 @@ import enum
 from dataclasses import dataclass
 from decimal import Decimal
 
-from test_orchestrator.model.errors import ConfigError
-from test_orchestrator.model.units import Dimension, Unit
+from dokimi.model.errors import ConfigError
+from dokimi.model.units import Dimension, Unit
 
 __all__ = ["Comparison", "Criterion", "Metric", "Statistic"]
 

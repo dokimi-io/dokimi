@@ -13,15 +13,15 @@ from typing import Any, TextIO
 
 import yaml
 
-from test_orchestrator.cli.exit_codes import ExitCode
-from test_orchestrator.formats import parse_file
-from test_orchestrator.images import ImageResolutionError, resolve_image
-from test_orchestrator.k8s.cluster import ClusterClient, connect
-from test_orchestrator.k8s.identity import default_namespace, validate_run_id
-from test_orchestrator.k8s.manifests import deadline_seconds
-from test_orchestrator.k8s.submission import Submission, follow, plan_submission, submit
-from test_orchestrator.model import ConfigError, Criterion, TestDefinition, TestType
-from test_orchestrator.planning import Plan, discover, plan_run
+from dokimi.cli.exit_codes import ExitCode
+from dokimi.formats import parse_file
+from dokimi.images import ImageResolutionError, resolve_image
+from dokimi.k8s.cluster import ClusterClient, connect
+from dokimi.k8s.identity import default_namespace, validate_run_id
+from dokimi.k8s.manifests import deadline_seconds
+from dokimi.k8s.submission import Submission, follow, plan_submission, submit
+from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
+from dokimi.planning import Plan, discover, plan_run
 
 __all__ = ["Console", "attach", "execute", "show_image", "submit_run", "validate"]
 
@@ -40,7 +40,7 @@ class Console:
         print(message, file=self.err)
 
     def fail(self, message: str) -> None:
-        print(f"test-orchestrator: {message}", file=self.err)
+        print(f"dokimi: {message}", file=self.err)
 
 
 def validate(console: Console, *, path: Path) -> int:
@@ -95,7 +95,7 @@ def submit_run(
     console.warn(f"submitted run {submission.run_id} to namespace {submission.namespace}")
 
     if not follow_logs:
-        console.warn(f"not following. Reattach with: test-orchestrator attach {submission.run_id}")
+        console.warn(f"not following. Reattach with: dokimi attach {submission.run_id}")
         return ExitCode.PASS
 
     return _follow(console, cluster, submission.namespace, submission.run_id)
@@ -181,7 +181,7 @@ def _follow(console: Console, cluster: ClusterClient, namespace: str, run_id: st
         console.warn("")
         console.warn(
             f"stopped following run {run_id}. The run is unaffected and continues in the "
-            f"cluster; resume with: test-orchestrator attach {run_id}"
+            f"cluster; resume with: dokimi attach {run_id}"
         )
         return ExitCode.INTERRUPTED
 

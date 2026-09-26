@@ -7,7 +7,7 @@ then builds the distribution — so a released CLI and its image always come fro
 commit and one ``uv.lock``.
 
 In a source checkout the value is ``None``: this build was never published, there is no
-digest to submit, and :mod:`test_orchestrator.images` says so rather than inventing a
+digest to submit, and :mod:`dokimi.images` says so rather than inventing a
 tag that might resolve to something else tomorrow.
 """
 

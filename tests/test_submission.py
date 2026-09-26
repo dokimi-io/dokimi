@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from test_orchestrator.cli.exit_codes import ExitCode
-from test_orchestrator.k8s.cluster import ClusterError
-from test_orchestrator.k8s.identity import RUN_ID_LABEL, run_selector
-from test_orchestrator.k8s.manifests import OWNER_COMPONENT
-from test_orchestrator.k8s.submission import (
+from dokimi.cli.exit_codes import ExitCode
+from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.identity import RUN_ID_LABEL, run_selector
+from dokimi.k8s.manifests import OWNER_COMPONENT
+from dokimi.k8s.submission import (
     CONTAINER_NAME,
     RUN_OUTCOMES,
     RunNotFound,
@@ -26,7 +26,7 @@ from test_orchestrator.k8s.submission import (
     plan_submission,
     submit,
 )
-from test_orchestrator.model import (
+from dokimi.model import (
     Bandwidth,
     Comparison,
     ConfigError,
@@ -41,7 +41,7 @@ from test_orchestrator.model import (
 from tests.fake_cluster import FakeCluster
 
 RUN_ID = "20260101-100000-4f2a9c"
-IMAGE = "ghcr.io/test-orchestrator/orchestrator@sha256:" + "ab" * 32
+IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def definition() -> TestDefinition:
 def _plan(definition: TestDefinition, namespace: str | None = None) -> Submission:
     return plan_submission(
         definition,
-        source="apiVersion: test-orchestrator/v1alpha1\n",
+        source="apiVersion: dokimi.io/v1alpha1\n",
         source_path=Path("pair.yaml"),
         image=IMAGE,
         run_id=RUN_ID,
@@ -86,7 +86,7 @@ def test_planning_needs_no_cluster(definition: TestDefinition) -> None:
     submission = _plan(definition)
 
     assert submission.run_id == RUN_ID
-    assert submission.namespace == "test-orchestrator-iperf2"
+    assert submission.namespace == "dokimi-iperf2"
     assert len(submission.manifests) == 3
 
 
@@ -103,7 +103,7 @@ def test_submit_creates_the_owner_first_and_binds_the_rest_to_it(
 
     submit(cluster, _plan(definition))
 
-    assert cluster.namespaces == ["test-orchestrator-iperf2"]
+    assert cluster.namespaces == ["dokimi-iperf2"]
     assert cluster.created_kinds == ["ConfigMap", "ConfigMap", "Job"]
     for manifest in cluster.created[1:]:
         assert manifest["metadata"]["ownerReferences"][0]["uid"] == cluster.owner_uid
@@ -224,7 +224,7 @@ def test_a_failed_submission_removes_its_owner(definition: TestDefinition) -> No
     with pytest.raises(ClusterError, match="422"):
         submit(cluster, _plan(definition))
 
-    assert cluster.deleted == [("test-orchestrator-iperf2", run_selector(RUN_ID, OWNER_COMPONENT))]
+    assert cluster.deleted == [("dokimi-iperf2", run_selector(RUN_ID, OWNER_COMPONENT))]
 
 
 def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
@@ -313,7 +313,7 @@ def test_a_dropped_log_stream_points_back_at_attach() -> None:
     with pytest.raises(ClusterError) as error:
         follow(DroppingCluster(), namespace="ns", run_id=RUN_ID, write=_ignore, sleep=_never_sleep)
 
-    assert f"test-orchestrator attach {RUN_ID}" in " ".join(error.value.__notes__)
+    assert f"dokimi attach {RUN_ID}" in " ".join(error.value.__notes__)
 
 
 def _ignore(_line: str) -> None:

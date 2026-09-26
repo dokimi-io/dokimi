@@ -74,7 +74,7 @@ class Unit(enum.Enum):
         accepted spellings exactly, and inventing synonyms here would create two names for
         one number.
         """
-        from test_orchestrator.model.errors import ConfigError
+        from dokimi.model.errors import ConfigError
 
         normalised = " ".join(text.strip().lower().split())
         for unit in cls:
