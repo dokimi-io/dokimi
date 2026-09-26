@@ -116,7 +116,16 @@ cmd_up() {
 
   case "$profile" in kind-kindnet | k3d-flannel) config="$here/$tool/cluster.yaml" ;; *) config="$here/$tool/cluster-no-cni.yaml" ;; esac
   [[ "$profile" == kind-flannel ]] && require_br_netfilter "$load_modules"
-  local modules_before; modules_before="$(kernel_modules)"
+  announce_kernel_changes "$profile"
+  local modules_before settings_before
+  modules_before="$(kernel_modules)"
+  settings_before="$(kernel_settings)"
+
+  # Recorded before anything is created, not after. Whatever fails from here on, `down`
+  # knows which cluster to remove: written after creation, a failure inside `kind create`
+  # or `k3d cluster create` would leave a cluster that `down` refused to touch.
+  echo "$profile" > "$state/profile"
+  trap 'on_up_failure "$profile"' EXIT
 
   say "creating $profile: 1 control plane + $WORKERS workers, Kubernetes from versions.env"
   case "$tool" in
@@ -130,15 +139,24 @@ cmd_up() {
       k3d kubeconfig get "$cluster" > "$KUBECONFIG"
       ;;
   esac
-  echo "$profile" > "$state/profile"
 
   install_cni "$profile"
 
   say "waiting for every node to be Ready"
   kubectl wait --for=condition=Ready node --all --timeout=300s >/dev/null
   kubectl -n kube-system rollout status deployment/coredns --timeout=300s >/dev/null
-  report_kernel_changes "$modules_before" "$profile"
+  report_kernel_changes "$modules_before" "$settings_before" "$profile"
+  trap - EXIT
   say "$profile is up. export KUBECONFIG=$KUBECONFIG"
+}
+
+on_up_failure() {
+  # Runs when `up` exits early. The partial cluster is kept rather than deleted, because
+  # what it contains is the evidence of why it failed; CI's failure step reads it.
+  local rc=$?
+  [[ "$rc" -eq 0 ]] && return
+  echo "test-env: bringing up $1 failed. Whatever was created is kept for inspection" \
+    "(export KUBECONFIG=$KUBECONFIG); remove it with: test-env/test-env.sh down" >&2
 }
 
 install_cni() {
@@ -226,16 +244,58 @@ kernel_modules() {
   docker run --rm "$CHECK_IMAGE" cut -d' ' -f1 /proc/modules 2>/dev/null | sort
 }
 
-report_kernel_changes() { # report_kernel_changes MODULES_BEFORE PROFILE
-  # This script loads a kernel module only when asked. The tools it drives are not so
-  # careful: k3s, a CNI, or the kernel's own auto-loading can pull modules in while a
-  # cluster comes up. Nothing changes the host kernel without the user being told, so
-  # whatever appeared during provisioning is reported, whoever loaded it.
-  local added
+kernel_settings() {
+  # The host-wide kernel settings under /proc/sys, as `path=value`. Only kernel/, vm/ and
+  # fs/: net/ is per network namespace, so a container sees its own values there, not the
+  # host's. Left out too are values that change by themselves - counters, a random UUID,
+  # the last PID, disk-quota statistics - and the container's own hostname. Found by
+  # snapshotting twice with nothing in between, and by what CI's clean runners reported.
+  docker run --rm "$CHECK_IMAGE" sh -c '
+    cd /proc/sys && find kernel vm fs -type f | sort | while read -r f; do
+      v="$(tr "\n\t" "  " < "$f" | sed "s/ *\$//")" && printf "%s=%s\n" "$f" "$v"
+    done' 2>/dev/null \
+    | grep -v -E '^(fs/(dentry-state|file-nr|inode-nr|inode-state|aio-nr|quota/(lookups|drops|reads|writes|cache_hits|allocated_dquots|free_dquots|syncs))|kernel/(hostname|domainname|ns_last_pid|random/uuid|random/entropy_avail|pty/nr))='
+}
+
+announce_kernel_changes() { # announce_kernel_changes PROFILE
+  # What CI measured each profile changing on a clean host, said before anything is
+  # created. The kubelet and the CNIs change these through privileged node containers,
+  # without sudo and without asking, so the only way to tell the user first is to say it
+  # here. test-env/README.md has the same list as a table; a test keeps the two in step.
+  say "note: bringing up $1 changes these host-wide kernel settings, until reboot:"
+  say "        kernel.panic_on_oops=1 and kernel.panic=10, by the kubelet: a kernel oops reboots the host after 10 seconds"
+  say "        vm.overcommit_memory=1, by the kubelet"
+  if [[ "$(tool_of "$1")" == kind ]]; then
+    say "        kernel.core_pattern=core and fs.nr_open=1073741816, by kind's nodes"
+  fi
+  if [[ "$(cni_of "$1")" == cilium ]]; then
+    say "        kernel.unprivileged_bpf_disabled=1 and kernel.timer_migration=0, by Cilium"
+  fi
+  say "      On macOS that is Docker's Linux VM, not macOS. Once $1 is up, what actually changed is listed."
+}
+
+report_kernel_changes() { # report_kernel_changes MODULES_BEFORE SETTINGS_BEFORE PROFILE
+  # This script changes the kernel only when asked. The tools it drives are not so
+  # careful: k3s, a CNI, the kubelet, or the kernel's own auto-loading can load modules and
+  # change host-wide settings while a cluster comes up. Nothing changes the host kernel
+  # without the user being told, so whatever changed during provisioning is reported,
+  # whoever changed it.
+  local added changed line key old
   added="$(comm -13 <(echo "$1") <(kernel_modules) | tr '\n' ' ')"
   if [[ -n "${added// /}" ]]; then
-    say "note: while $2 came up, these kernel modules were loaded into the host kernel: $added"
+    say "note: while $3 came up, these kernel modules were loaded into the host kernel: $added"
     say "      This script did not load them; the cluster's components or the kernel did. They stay loaded until reboot."
+  fi
+  changed="$(comm -13 <(echo "$2") <(kernel_settings))"
+  if [[ -n "$changed" ]]; then
+    say "note: while $3 came up, these host-wide kernel settings changed:"
+    while IFS= read -r line; do
+      key="${line%%=*}"
+      old="$(echo "$2" | grep "^$key=" | cut -d= -f2- || true)"
+      say "        ${key//\//.}: ${old:-(not present)} -> ${line#*=}"
+    done <<< "$changed"
+    say "      This script did not set them; the cluster's components did. They stay until reboot. To undo one: sudo sysctl KEY=OLD-VALUE"
+    say "      (kernel.unprivileged_bpf_disabled=1 is the exception: the kernel refuses to change it again until reboot)."
   fi
 }
 
@@ -432,9 +492,12 @@ cmd_down() {
   profile="$(active_profile)"
   tool="$(tool_of "$profile")"
   require_tools docker "$tool"
+  # The delete itself is allowed to fail: after a failed `up` there may be a half-made
+  # cluster, or none. What `down` guarantees is the check below, that nothing labelled with
+  # this cluster remains, and that is what decides whether it succeeds.
   case "$tool" in
-    kind) kind delete cluster --name "$cluster" --kubeconfig "$KUBECONFIG" >/dev/null ;;
-    k3d) k3d cluster delete "$cluster" >/dev/null ;;
+    kind) kind delete cluster --name "$cluster" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 || true ;;
+    k3d) k3d cluster delete "$cluster" >/dev/null 2>&1 || true ;;
   esac
 
   # "Reproducible teardown" means provably nothing left: no container, volume or network
