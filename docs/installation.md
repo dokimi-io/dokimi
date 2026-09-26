@@ -68,10 +68,10 @@ The project is not published to PyPI. Install it from source, which is also what
 $ git clone git@github.com:Test-Orchestrator/test-orchestrator.git
 $ cd test-orchestrator
 $ uv sync --locked
-$ uv run test-orchestrator --version
+$ uv run dokimi --version
 ```
 
-To get a `test-orchestrator` command on your `PATH` rather than one behind `uv run`:
+To get a `dokimi` command on your `PATH` rather than one behind `uv run`:
 
 ```console
 $ uv tool install .
@@ -80,7 +80,7 @@ $ uv tool install .
 Once releases are cut, a release will carry a built wheel you can install directly:
 
 ```console
-$ uv tool install ./test_orchestrator-<version>-py3-none-any.whl
+$ uv tool install ./dokimi-<version>-py3-none-any.whl
 ```
 
 [Building](building.md) covers producing that wheel yourself.
@@ -124,7 +124,7 @@ administrator grants it once per cluster:
 $ kubectl apply -f deploy/rbac.yaml
 ```
 
-Runs then pass `--service-account test-orchestrator`. See
+Runs then pass `--service-account dokimi`. See
 [before the first run](usage.md#before-the-first-run).
 
 There is deliberately no configuration file of our own in that chain. The
@@ -140,17 +140,17 @@ digest of the image built from its own commit (ADR-05-08).
 tell you so rather than falling back to a tag that might mean something else tomorrow:
 
 ```console
-$ test-orchestrator submit test.yaml
-test-orchestrator: this is a development build with no published orchestrator image, so
-there is no default to submit. Pass an explicit reference or set TEST_ORCHESTRATOR_IMAGE.
+$ dokimi submit test.yaml
+dokimi: this is a development build with no published orchestrator image, so
+there is no default to submit. Pass an explicit reference or set DOKIMI_IMAGE.
 ```
 
 Until then — and afterwards, in an air-gapped or policy-constrained cluster — point it at
 an image yourself:
 
 ```console
-$ export TEST_ORCHESTRATOR_IMAGE=registry.internal/orchestrator@sha256:...
-$ test-orchestrator submit test.yaml
+$ export DOKIMI_IMAGE=registry.internal/orchestrator@sha256:...
+$ dokimi submit test.yaml
 ```
 
 [Building](building.md#the-orchestrator-image) covers building that image, and
@@ -160,10 +160,10 @@ the environment variable and the release default.
 ## Checking the installation
 
 ```console
-$ test-orchestrator --version
-test-orchestrator 0.1.0
+$ dokimi --version
+dokimi 0.1.0
 
-$ test-orchestrator validate examples/worker-01-to-worker-02-udp.yaml
+$ dokimi validate examples/worker-01-to-worker-02-udp.yaml
 examples/worker-01-to-worker-02-udp.yaml is valid.
 ...
 ```

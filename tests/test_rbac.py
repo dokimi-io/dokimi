@@ -14,13 +14,13 @@ from typing import Any
 import pytest
 import yaml
 
-from test_orchestrator.k8s.identity import (
+from dokimi.k8s.identity import (
     MANAGED_BY,
     MANAGED_BY_LABEL,
     RUN_ID_LABEL,
     default_namespace,
 )
-from test_orchestrator.model import TestType
+from dokimi.model import TestType
 
 RBAC = pathlib.Path(__file__).resolve().parent.parent / "deploy" / "rbac.yaml"
 
@@ -73,11 +73,7 @@ def test_the_error_message_names_the_service_account_this_file_creates(
     objects: dict[str, dict[str, Any]],
 ) -> None:
     source = (
-        pathlib.Path(__file__).resolve().parent.parent
-        / "src"
-        / "test_orchestrator"
-        / "k8s"
-        / "_kubernetes.py"
+        pathlib.Path(__file__).resolve().parent.parent / "src" / "dokimi" / "k8s" / "_kubernetes.py"
     ).read_text()
     name = objects["ServiceAccount"]["metadata"]["name"]
 

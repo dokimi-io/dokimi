@@ -12,8 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
-from test_orchestrator.k8s.cluster import ClusterError
-from test_orchestrator.k8s.submission import CONTAINER_NAME
+from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.submission import CONTAINER_NAME
 
 __all__ = ["ExplodingCluster", "FakeCluster", "node"]
 

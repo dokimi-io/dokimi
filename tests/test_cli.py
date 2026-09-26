@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from test_orchestrator import images
-from test_orchestrator.cli import commands
-from test_orchestrator.cli.exit_codes import ExitCode
-from test_orchestrator.cli.main import main
-from test_orchestrator.images import IMAGE_OVERRIDE_ENV_VAR, IMAGE_REPOSITORY
+from dokimi import images
+from dokimi.cli import commands
+from dokimi.cli.exit_codes import ExitCode
+from dokimi.cli.main import main
+from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, IMAGE_REPOSITORY
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 
 DIGEST = "sha256:" + "ab" * 32
@@ -56,10 +56,10 @@ def test_validate_rejects_a_malformed_definition(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     broken = tmp_path / "broken.yaml"
-    broken.write_text("apiVersion: test-orchestrator/v1alpha1\nkind: NetworkTest\n")
+    broken.write_text("apiVersion: dokimi.io/v1alpha1\nkind: NetworkTest\n")
 
     assert main(["validate", str(broken)]) == ExitCode.CONFIG_ERROR
-    assert capsys.readouterr().err.startswith("test-orchestrator: ")
+    assert capsys.readouterr().err.startswith("dokimi: ")
 
 
 def test_a_missing_file_is_a_config_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -348,7 +348,7 @@ def test_image_on_a_development_build_is_a_config_error(
 
 def test_no_arguments_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == ExitCode.PASS
-    assert "usage: test-orchestrator" in capsys.readouterr().out
+    assert "usage: dokimi" in capsys.readouterr().out
 
 
 def test_version_reports_the_version(capsys: pytest.CaptureFixture[str]) -> None:
@@ -356,7 +356,7 @@ def test_version_reports_the_version(capsys: pytest.CaptureFixture[str]) -> None
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.startswith("test-orchestrator ")
+    assert capsys.readouterr().out.startswith("dokimi ")
 
 
 def test_an_unknown_command_is_a_config_error() -> None:

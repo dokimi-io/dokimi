@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from test_orchestrator.k8s.identity import (
+from dokimi.k8s.identity import (
     MANAGED_BY,
     MANAGED_BY_LABEL,
     RUN_ID_LABEL,
@@ -17,7 +17,7 @@ from test_orchestrator.k8s.identity import (
     run_selector,
     validate_run_id,
 )
-from test_orchestrator.model import ConfigError, TestType
+from dokimi.model import ConfigError, TestType
 
 # -- the run_id format (ADR-02-08) ---------------------------------------------
 #
@@ -114,4 +114,4 @@ def test_namespaces_are_per_test_type_not_per_run() -> None:
     first = default_namespace(TestType.IPERF2)
     second = default_namespace(TestType.IPERF2)
 
-    assert first == second == "test-orchestrator-iperf2"
+    assert first == second == "dokimi-iperf2"

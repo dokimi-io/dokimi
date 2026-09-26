@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 
-import test_orchestrator.k8s.ownership as ownership_module
-from test_orchestrator.k8s.deadlines import DeadlineBudget, bound_job, bound_pod
-from test_orchestrator.k8s.ownership import (
+import dokimi.k8s.ownership as ownership_module
+from dokimi.k8s.deadlines import DeadlineBudget, bound_job, bound_pod
+from dokimi.k8s.ownership import (
     MANAGED_BY_LABEL,
     ORCHESTRATOR_COMPONENT,
     OWNER_COMPONENT,
@@ -26,13 +26,13 @@ from test_orchestrator.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
-from test_orchestrator.k8s.resources import CONFIG_MAP, JOB, POD, SERVICE, ClusterError, Manifest
-from test_orchestrator.run_identity import RunId
+from dokimi.k8s.resources import CONFIG_MAP, JOB, POD, SERVICE, ClusterError, Manifest
+from dokimi.run_identity import RunId
 from tests.fake_resources import FakeResources
 
 RUN = RunId("20260924-143012-k3f9x2")
 OTHER_RUN = RunId("20260924-120000-a1b2c3")
-NAMESPACE = "test-orchestrator-iperf2"
+NAMESPACE = "dokimi-iperf2"
 BUDGET = DeadlineBudget(test_duration=10, startup=60, direct_read=5, scrape_confirmation=30)
 
 
@@ -76,7 +76,7 @@ def test_created_objects_carry_the_ownership_labels(
     created = ownership.create(POD, pod("iperf2-server"), test_id="t-001")
 
     labels = created["metadata"]["labels"]
-    assert labels[MANAGED_BY_LABEL] == "test-orchestrator"
+    assert labels[MANAGED_BY_LABEL] == "dokimi"
     assert labels[RUN_ID_LABEL] == str(RUN)
     assert labels[TEST_ID_LABEL] == "t-001"
 
@@ -94,7 +94,7 @@ def test_the_owner_is_created_before_anything_else_in_its_namespace(
 def test_owner_shape(cluster: FakeResources, ownership: RunOwnership) -> None:
     owner = ownership.owner_in(NAMESPACE)
 
-    assert owner["metadata"]["name"] == f"test-orchestrator-run-{RUN}"
+    assert owner["metadata"]["name"] == f"dokimi-run-{RUN}"
     assert owner["metadata"]["labels"] == ownership_labels(RUN, component=OWNER_COMPONENT)
     assert owner["data"]["run_id"] == str(RUN)
     assert datetime.fromisoformat(owner["data"]["created_at"]).tzinfo == UTC
@@ -105,11 +105,11 @@ def test_owner_shape(cluster: FakeResources, ownership: RunOwnership) -> None:
 def test_every_created_object_has_a_valid_owner_reference(
     cluster: FakeResources, ownership: RunOwnership
 ) -> None:
-    cluster.namespaces.add("test-orchestrator-prometheus")
+    cluster.namespaces.add("dokimi-prometheus")
     ownership.create(POD, pod("iperf2-server"), test_id="t-001")
     ownership.create(POD, pod("iperf2-client"), test_id="t-001")
     ownership.create(SERVICE, service("iperf2-server"), test_id="t-001")
-    ownership.create(SERVICE, service("prometheus", "test-orchestrator-prometheus"))
+    ownership.create(SERVICE, service("prometheus", "dokimi-prometheus"))
     ownership.create(
         JOB,
         bound_job(
@@ -138,15 +138,15 @@ def test_every_created_object_has_a_valid_owner_reference(
 
 
 def test_one_owner_per_namespace(cluster: FakeResources, ownership: RunOwnership) -> None:
-    cluster.namespaces.add("test-orchestrator-prometheus")
+    cluster.namespaces.add("dokimi-prometheus")
     ownership.create(POD, pod("a"))
     ownership.create(POD, pod("b"))
-    ownership.create(SERVICE, service("c", "test-orchestrator-prometheus"))
+    ownership.create(SERVICE, service("c", "dokimi-prometheus"))
 
     owners = [obj for kind, obj in cluster.created if kind == CONFIG_MAP]
     assert sorted(o["metadata"]["namespace"] for o in owners) == [
-        "test-orchestrator-iperf2",
-        "test-orchestrator-prometheus",
+        "dokimi-iperf2",
+        "dokimi-prometheus",
     ]
 
 

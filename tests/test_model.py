@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from test_orchestrator.model import (
+from dokimi.model import (
     Bandwidth,
     Comparison,
     ConfigError,

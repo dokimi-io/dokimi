@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from test_orchestrator.run_identity import InvalidRunIdError, RunId, new_run_id, parse_run_id
+from dokimi.run_identity import InvalidRunIdError, RunId, new_run_id, parse_run_id
 
 # What Kubernetes accepts as a label value, and as a segment of a DNS-1123 object name.
 _LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")

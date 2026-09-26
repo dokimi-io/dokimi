@@ -19,7 +19,7 @@ REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCKERFILE = REPOSITORY_ROOT / "images" / "orchestrator" / "Dockerfile"
 PYPROJECT = REPOSITORY_ROOT / "pyproject.toml"
 RELEASE_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
-GENERATED_DIGEST = REPOSITORY_ROOT / "src" / "test_orchestrator" / "_image_digest.py"
+GENERATED_DIGEST = REPOSITORY_ROOT / "src" / "dokimi" / "_image_digest.py"
 
 
 def _instructions() -> str:

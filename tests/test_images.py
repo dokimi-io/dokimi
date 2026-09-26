@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from test_orchestrator import images
-from test_orchestrator.images import (
+from dokimi import images
+from dokimi.images import (
     IMAGE_OVERRIDE_ENV_VAR,
     IMAGE_REPOSITORY,
     ImageResolutionError,
@@ -105,10 +105,10 @@ def test_run_metadata_records_reference_digest_and_source(released: str) -> None
 @pytest.mark.parametrize(
     "reference",
     [
-        "ghcr.io/test-orchestrator/orchestrator:1.0.0",
-        "ghcr.io/test-orchestrator/orchestrator@sha256:short",
-        "ghcr.io/test-orchestrator/orchestrator@sha512:" + "ab" * 32,
-        "ghcr.io/test-orchestrator/orchestrator@" + "AB" * 32,
+        "ghcr.io/dokimi-io/orchestrator:1.0.0",
+        "ghcr.io/dokimi-io/orchestrator@sha256:short",
+        "ghcr.io/dokimi-io/orchestrator@sha512:" + "ab" * 32,
+        "ghcr.io/dokimi-io/orchestrator@" + "AB" * 32,
     ],
 )
 def test_references_that_do_not_pin_a_digest(reference: str) -> None:

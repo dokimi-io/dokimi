@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from test_orchestrator.k8s.identity import MANAGED_BY_LABEL, RUN_ID_LABEL
-from test_orchestrator.k8s.manifests import (
+from dokimi.k8s.identity import MANAGED_BY_LABEL, RUN_ID_LABEL
+from dokimi.k8s.manifests import (
     DEFINITION_MOUNT_PATH,
     bind_owner,
     deadline_seconds,
@@ -21,7 +21,7 @@ from test_orchestrator.k8s.manifests import (
     render_manifests,
     resource_name,
 )
-from test_orchestrator.model import (
+from dokimi.model import (
     Bandwidth,
     Comparison,
     Criterion,
@@ -34,7 +34,7 @@ from test_orchestrator.model import (
 )
 
 RUN_ID = "20260101-100000-4f2a9c"
-IMAGE = "ghcr.io/test-orchestrator/orchestrator@sha256:" + "ab" * 32
+IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
 
 #: Kubernetes object names: DNS-1123 labels, which forbid the uppercase a run id has.
 DNS_1123 = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
@@ -65,11 +65,11 @@ def definition() -> TestDefinition:
 def manifests(definition: TestDefinition) -> list[dict[str, Any]]:
     return render_manifests(
         definition,
-        source="apiVersion: test-orchestrator/v1alpha1\n",
+        source="apiVersion: dokimi.io/v1alpha1\n",
         source_suffix=".yaml",
         run_id=RUN_ID,
         image=IMAGE,
-        namespace="test-orchestrator-iperf2",
+        namespace="dokimi-iperf2",
     )
 
 
@@ -135,7 +135,7 @@ def test_the_job_carries_a_self_limiting_deadline(
 def test_every_object_carries_the_ownership_labels(manifests: list[dict[str, Any]]) -> None:
     for manifest in manifests:
         labels = manifest["metadata"]["labels"]
-        assert labels[MANAGED_BY_LABEL] == "test-orchestrator"
+        assert labels[MANAGED_BY_LABEL] == "dokimi"
         assert labels[RUN_ID_LABEL] == RUN_ID
 
 
@@ -159,7 +159,7 @@ def test_the_definition_travels_with_the_run(manifests: list[dict[str, Any]]) ->
     # The Job reads the document from a ConfigMap, not from the submitter's disk, which
     # is what lets a reattaching process on another machine need nothing local.
     definition_map = manifests[1]
-    assert definition_map["data"] == {"definition.yaml": "apiVersion: test-orchestrator/v1alpha1\n"}
+    assert definition_map["data"] == {"definition.yaml": "apiVersion: dokimi.io/v1alpha1\n"}
 
     assert _container(manifests)["args"] == [
         "execute",
@@ -178,7 +178,7 @@ def test_a_robot_suite_stays_a_robot_suite(definition: TestDefinition) -> None:
         source_suffix=".robot",
         run_id=RUN_ID,
         image=IMAGE,
-        namespace="test-orchestrator-iperf2",
+        namespace="dokimi-iperf2",
     )
 
     assert "definition.robot" in manifests[1]["data"]
@@ -209,9 +209,9 @@ def test_the_image_is_submitted_exactly_as_resolved(manifests: list[dict[str, An
 def test_the_namespace_is_not_run_owned() -> None:
     # It is shared by every run of the test type, so a run-scoped cleanup selecting on
     # run-id must never match it.
-    manifest = namespace_manifest("test-orchestrator-iperf2")
+    manifest = namespace_manifest("dokimi-iperf2")
 
-    assert manifest["metadata"]["labels"] == {MANAGED_BY_LABEL: "test-orchestrator"}
+    assert manifest["metadata"]["labels"] == {MANAGED_BY_LABEL: "dokimi"}
     assert RUN_ID_LABEL not in manifest["metadata"]["labels"]
 
 

@@ -13,8 +13,8 @@ from typing import Any
 import pytest
 from kubernetes.client.exceptions import ApiException
 
-from test_orchestrator.k8s.ownership import RUN_OWNED_KINDS
-from test_orchestrator.k8s.resources import (
+from dokimi.k8s.ownership import RUN_OWNED_KINDS
+from dokimi.k8s.resources import (
     CONFIG_MAP,
     LEASE,
     AlreadyExistsError,

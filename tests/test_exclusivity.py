@@ -12,27 +12,27 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from test_orchestrator.k8s.exclusivity import (
+from dokimi.k8s.exclusivity import (
     LOCK_NAME,
     RunAlreadyActiveError,
     RunExclusivityError,
     claim_run,
 )
-from test_orchestrator.k8s.ownership import (
+from dokimi.k8s.ownership import (
     ORCHESTRATOR_COMPONENT,
     RunOwnership,
     delete_run_owned,
     owner_name,
     ownership_labels,
 )
-from test_orchestrator.k8s.resources import CONFIG_MAP, LEASE, POD, Kind, Manifest
-from test_orchestrator.run_identity import RunId, new_run_id
+from dokimi.k8s.resources import CONFIG_MAP, LEASE, POD, Kind, Manifest
+from dokimi.run_identity import RunId, new_run_id
 from tests.fake_resources import FakeResources
 
 FIRST = RunId("20260924-143012-k3f9x2")
 SECOND = RunId("20260924-143013-p7m2q8")
-NAMESPACE = "test-orchestrator-iperf2"
-LOCK_NAMESPACE = "test-orchestrator"
+NAMESPACE = "dokimi-iperf2"
+LOCK_NAMESPACE = "dokimi"
 
 
 @pytest.fixture
@@ -62,13 +62,13 @@ def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeResources) -
     message = str(refused.value)
     assert f"refusing to start run {SECOND}" in message
     assert f"run {FIRST} already active" in message
-    assert f"test-orchestrator/run-id={FIRST}" in message
+    assert f"dokimi.io/run-id={FIRST}" in message
     assert not cluster.exists(CONFIG_MAP, NAMESPACE, owner_name(SECOND))
 
 
 def test_exclusivity_spans_every_namespace(cluster: FakeResources) -> None:
-    cluster.namespaces.add("test-orchestrator-irtt")
-    claim_run(cluster, FIRST, namespace="test-orchestrator-irtt")
+    cluster.namespaces.add("dokimi-irtt")
+    claim_run(cluster, FIRST, namespace="dokimi-irtt")
 
     with pytest.raises(RunAlreadyActiveError, match=str(FIRST)):
         claim(cluster, SECOND)
@@ -238,7 +238,7 @@ def test_the_lock_is_released_when_the_claim_is_refused(cluster: FakeResources) 
 def test_a_missing_lock_namespace_is_a_clear_error() -> None:
     cluster = FakeResources(namespaces={NAMESPACE})
 
-    with pytest.raises(RunExclusivityError, match="'test-orchestrator' does not exist"):
+    with pytest.raises(RunExclusivityError, match="'dokimi' does not exist"):
         claim(cluster, FIRST)
 
 

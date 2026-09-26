@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from test_orchestrator.model import (
+from dokimi.model import (
     Bandwidth,
     Comparison,
     ConfigError,
@@ -24,14 +24,14 @@ from test_orchestrator.model import (
     TestType,
     Unit,
 )
-from test_orchestrator.planning import (
+from dokimi.planning import (
     Concurrency,
     NodeInventory,
     Plan,
     discover,
     plan_run,
 )
-from test_orchestrator.planning.nodes import node_facts
+from dokimi.planning.nodes import node_facts
 from tests.fake_cluster import FakeCluster, node
 
 CONTROL_PLANE_TAINT = ("node-role.kubernetes.io/control-plane", "", "NoSchedule")

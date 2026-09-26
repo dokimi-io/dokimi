@@ -11,15 +11,15 @@ they cannot resolve different dependency versions:
 ```console
 $ uv build
 $ ls dist/
-test_orchestrator-0.1.0-py3-none-any.whl
-test_orchestrator-0.1.0.tar.gz
+dokimi-0.1.0-py3-none-any.whl
+dokimi-0.1.0.tar.gz
 ```
 
-Hatchling builds it from `src/test_orchestrator`. The wheel installs anywhere with Python
+Hatchling builds it from `src/dokimi`. The wheel installs anywhere with Python
 3.14 or newer:
 
 ```console
-$ uv tool install dist/test_orchestrator-0.1.0-py3-none-any.whl
+$ uv tool install dist/dokimi-0.1.0-py3-none-any.whl
 ```
 
 ## The orchestrator image
@@ -65,7 +65,7 @@ an implementation detail:
 1. Build and push the image for `linux/amd64` and `linux/arm64`.
 2. Sign it with keyless cosign and attest its build provenance, pushing the attestation to
    the registry.
-3. Write the digest the registry returned into `src/test_orchestrator/_image_digest.py`.
+3. Write the digest the registry returned into `src/dokimi/_image_digest.py`.
 4. Verify the baked-in default now resolves to exactly that digest.
 5. `uv build`, then create or update the GitHub release and attach the distribution.
 

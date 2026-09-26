@@ -1,4 +1,4 @@
-"""An in-memory :class:`~test_orchestrator.k8s.resources.ResourceClient` for tests.
+"""An in-memory :class:`~dokimi.k8s.resources.ResourceClient` for tests.
 
 It reproduces the API-server behaviour the safety rules depend on, and nothing else:
 ``create`` is atomic and fails on a taken name, ``replace`` and ``delete`` honour
@@ -14,7 +14,7 @@ import threading
 import uuid
 from collections.abc import Callable
 
-from test_orchestrator.k8s.resources import (
+from dokimi.k8s.resources import (
     AlreadyExistsError,
     ConflictError,
     Kind,
@@ -29,9 +29,7 @@ Hook = Callable[[Kind, str, Manifest], None]
 class FakeResources:
     def __init__(self, namespaces: set[str] | None = None) -> None:
         self.namespaces = (
-            {"default", "test-orchestrator", "test-orchestrator-iperf2"}
-            if namespaces is None
-            else namespaces
+            {"default", "dokimi", "dokimi-iperf2"} if namespaces is None else namespaces
         )
         self.objects: dict[Key, Manifest] = {}
         self.created: list[tuple[Kind, Manifest]] = []

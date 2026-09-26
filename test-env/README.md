@@ -144,21 +144,21 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 $ test-env/test-env.sh load orchestrator:dev
 $ kubectl apply -f deploy/rbac.yaml
 $ test-env/test-env.sh nodes
-test-orchestrator-worker
-test-orchestrator-worker2
-test-orchestrator-worker3
+dokimi-worker
+dokimi-worker2
+dokimi-worker3
 ```
 
 Put two of those names in the definition's `placement`, then submit:
 
 ```console
-$ export KUBECONFIG=.test-env/kubeconfig TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
-$ uv run test-orchestrator submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
-$ uv run test-orchestrator submit test.yaml --service-account test-orchestrator
+$ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev
+$ uv run dokimi submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
+$ uv run dokimi submit test.yaml --service-account dokimi
 ```
 
-The worker names differ by tool: kind calls them `test-orchestrator-worker`, `-worker2` and
-`-worker3`, and k3d calls them `k3d-test-orchestrator-agent-0` to `-agent-2`. `nodes` prints
+The worker names differ by tool: kind calls them `dokimi-worker`, `-worker2` and
+`-worker3`, and k3d calls them `k3d-dokimi-agent-0` to `-agent-2`. `nodes` prints
 whichever this cluster has.
 
 ## Things that will catch you out

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from test_orchestrator.k8s.deadlines import DeadlineBudget, DeadlineError, bound_job, bound_pod
-from test_orchestrator.k8s.resources import Manifest
+from dokimi.k8s.deadlines import DeadlineBudget, DeadlineError, bound_job, bound_pod
+from dokimi.k8s.resources import Manifest
 
 
 def budget(**overrides: float) -> DeadlineBudget:

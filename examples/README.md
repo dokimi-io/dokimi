@@ -12,6 +12,6 @@ either format that broke the other would fail there rather than in a reader's ed
 ```console
 $ uv run python -c "
 from pathlib import Path
-from test_orchestrator.formats import parse_file
+from dokimi.formats import parse_file
 print(parse_file(Path('examples/worker-01-to-worker-02-udp.yaml')))"
 ```

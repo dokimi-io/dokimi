@@ -17,8 +17,8 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import MaxRetryError, ProtocolError
 
-from test_orchestrator.k8s._kubernetes import KubernetesCluster
-from test_orchestrator.k8s.cluster import ClusterError
+from dokimi.k8s._kubernetes import KubernetesCluster
+from dokimi.k8s.cluster import ClusterError
 
 NAMESPACE = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "ns"}}
 
