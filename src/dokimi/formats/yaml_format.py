@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from test_orchestrator.model import (
+from dokimi.model import (
     DEFAULT_RESULTS_DIRECTORY,
     Bandwidth,
     Comparison,
@@ -34,7 +34,7 @@ from test_orchestrator.model import (
 
 __all__ = ["parse_yaml", "render_yaml"]
 
-API_VERSION = "test-orchestrator/v1alpha1"
+API_VERSION = "dokimi.io/v1alpha1"
 KIND = "NetworkTest"
 
 _TOP_LEVEL = {

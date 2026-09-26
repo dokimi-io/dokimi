@@ -1,9 +1,9 @@
 # What the orchestrator Job needs from the cluster, and nothing more.
 #
-# Apply once per cluster, then submit with `--service-account test-orchestrator`:
+# Apply once per cluster, then submit with `--service-account dokimi`:
 #
 #   kubectl apply -f deploy/rbac.yaml
-#   test-orchestrator submit test.yaml --service-account test-orchestrator
+#   dokimi submit test.yaml --service-account dokimi
 #
 # This grows as phases land. Today the Job reads nodes in phase 3 (planning) to resolve
 # the definition's two nodes and check they can take a test pod. Nodes are
@@ -14,26 +14,26 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: test-orchestrator-iperf2
+  name: dokimi-iperf2
   labels:
     # managed-by but no run-id: the namespace is shared by every iperf2 run, so a
     # run-scoped cleanup must never select it (ADR-05-02).
-    app.kubernetes.io/managed-by: test-orchestrator
+    app.kubernetes.io/managed-by: dokimi
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: test-orchestrator
-  namespace: test-orchestrator-iperf2
+  name: dokimi
+  namespace: dokimi-iperf2
   labels:
-    app.kubernetes.io/managed-by: test-orchestrator
+    app.kubernetes.io/managed-by: dokimi
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: test-orchestrator
+  name: dokimi
   labels:
-    app.kubernetes.io/managed-by: test-orchestrator
+    app.kubernetes.io/managed-by: dokimi
 rules:
   # Phase 3: discovery and explicit node resolution (M1-06).
   - apiGroups: [""]
@@ -43,14 +43,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: test-orchestrator
+  name: dokimi
   labels:
-    app.kubernetes.io/managed-by: test-orchestrator
+    app.kubernetes.io/managed-by: dokimi
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: test-orchestrator
+  name: dokimi
 subjects:
   - kind: ServiceAccount
-    name: test-orchestrator
-    namespace: test-orchestrator-iperf2
+    name: dokimi
+    namespace: dokimi-iperf2

@@ -1,7 +1,7 @@
 """CLI entry point: parse arguments, dispatch, translate failures into exit codes.
 
 Phase 1 of a run and the only part that executes outside the cluster (ADR-01-06). The
-commands themselves live in :mod:`test_orchestrator.cli.commands`; this module is the
+commands themselves live in :mod:`dokimi.cli.commands`; this module is the
 adapter between a command line and those functions, and the single place where an
 exception becomes an exit code.
 
@@ -20,8 +20,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from test_orchestrator import __version__
-from test_orchestrator.cli.commands import (
+from dokimi import __version__
+from dokimi.cli.commands import (
     Console,
     attach,
     execute,
@@ -29,11 +29,11 @@ from test_orchestrator.cli.commands import (
     submit_run,
     validate,
 )
-from test_orchestrator.cli.exit_codes import ExitCode
-from test_orchestrator.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
-from test_orchestrator.k8s.cluster import ClusterError
-from test_orchestrator.k8s.submission import RunNotFound
-from test_orchestrator.model import ConfigError
+from dokimi.cli.exit_codes import ExitCode
+from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
+from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.submission import RunNotFound
+from dokimi.model import ConfigError
 
 __all__ = ["build_parser", "main"]
 
@@ -62,7 +62,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
-        prog="test-orchestrator",
+        prog="dokimi",
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--version",
         "-V",
         action="version",
-        version=f"test-orchestrator {__version__}",
+        version=f"dokimi {__version__}",
     )
     commands = parser.add_subparsers(dest="command", metavar="<command>")
 

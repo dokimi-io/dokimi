@@ -26,7 +26,7 @@ repo="$(cd "$here/.." && pwd)"
 source "$here/versions.env"
 
 state="${TEST_ENV_STATE:-$repo/.test-env}"
-cluster="${TEST_ENV_CLUSTER:-test-orchestrator}"
+cluster="${TEST_ENV_CLUSTER:-dokimi}"
 [[ -d "$state/bin" ]] && export PATH="$state/bin:$PATH"
 export KUBECONFIG="$state/kubeconfig"
 
@@ -322,7 +322,7 @@ add_bridge_plugin() {
 
 schedulable_workers() {
   # A node a test pod can land on: not cordoned, no NoSchedule or NoExecute taint. The
-  # same rule planning applies (src/test_orchestrator/planning/nodes.py).
+  # same rule planning applies (src/dokimi/planning/nodes.py).
   kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.unschedulable}{"\t"}{.spec.taints[*].effect}{"\n"}{end}' \
     | awk -F'\t' '$2 != "true" && $3 !~ /NoSchedule|NoExecute/ {print $1}' | sort
 }

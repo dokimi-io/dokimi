@@ -1,4 +1,4 @@
-"""The real :class:`~test_orchestrator.k8s.cluster.ClusterClient`, over the official client.
+"""The real :class:`~dokimi.k8s.cluster.ClusterClient`, over the official client.
 
 Kept apart from the protocol it implements so that importing the protocol — which the
 dry-run path does — never imports the client library, and so the parts worth testing
@@ -21,7 +21,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
 from urllib3.exceptions import HTTPError as TransportError
 
-from test_orchestrator.k8s.cluster import ClusterError
+from dokimi.k8s.cluster import ClusterError
 
 __all__ = ["KubernetesCluster"]
 
@@ -198,7 +198,7 @@ class KubernetesCluster:
                     "listing nodes was refused. Planning resolves the definition's nodes "
                     "against the cluster, which needs `get` and `list` on nodes — a "
                     "cluster-wide permission. deploy/rbac.yaml grants exactly that; apply "
-                    "it, then submit with --service-account test-orchestrator."
+                    "it, then submit with --service-account dokimi."
                 ) from error
             raise ClusterError(_explain(error, "listing nodes")) from error
         return [self._to_dict(node) for node in nodes.items]

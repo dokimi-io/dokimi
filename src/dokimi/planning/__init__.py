@@ -1,8 +1,8 @@
 """Node resolution, matrix construction and the concurrency plan.
 
-Phase 3. Discovery reads the cluster's nodes once (:mod:`~test_orchestrator.planning.nodes`)
+Phase 3. Discovery reads the cluster's nodes once (:mod:`~dokimi.planning.nodes`)
 and planning resolves the definition against that snapshot
-(:mod:`~test_orchestrator.planning.plan`). Bounded concurrency with node exclusivity is
+(:mod:`~dokimi.planning.plan`). Bounded concurrency with node exclusivity is
 ADR-04-04's default and the scheduler stays here in Python rather than inside Robot's
 execution model (ADR-04-01, ADR-04-04); Milestone-01 plans one explicit pair,
 sequentially.
@@ -10,8 +10,8 @@ sequentially.
 
 from __future__ import annotations
 
-from test_orchestrator.planning.nodes import NodeFacts, NodeInventory, NodeSource, Taint, discover
-from test_orchestrator.planning.plan import (
+from dokimi.planning.nodes import NodeFacts, NodeInventory, NodeSource, Taint, discover
+from dokimi.planning.plan import (
     PLACEMENT_MODE,
     Concurrency,
     Plan,

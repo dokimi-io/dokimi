@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation       Shared keywords for Test Orchestrator suites.
+Documentation       Shared keywords for dokimi suites.
 ...
 ...                 A user-facing suite imports this resource, which imports the Python
 ...                 library. No PromQL and no Kubernetes objects appear in the suite
@@ -7,4 +7,4 @@ Documentation       Shared keywords for Test Orchestrator suites.
 ...
 ...                 Scaffolding only - the keyword vocabulary arrives with M1-11 (#46).
 
-Library             ../libraries/TestOrchestratorLibrary.py
+Library             ../libraries/DokimiLibrary.py

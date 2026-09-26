@@ -19,7 +19,7 @@ correctness** — does a run deploy, measure, evaluate, report and clean up corr
 **not measurement realism**. Throughput, loss and jitter measured here say nothing about real
 hardware, and a threshold that is meaningful on real hardware is not meaningful here. The
 reasoning, and what follows from it, is
-[ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md).
+[ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md).
 
 It needs Docker and bash, and runs on macOS, Linux and Windows through WSL2. Which of those
 it has actually been tested on, and with which container runtime, is listed in
@@ -183,21 +183,21 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 $ test-env/test-env.sh load orchestrator:dev
 $ kubectl apply -f deploy/rbac.yaml
 $ test-env/test-env.sh nodes
-test-orchestrator-worker
-test-orchestrator-worker2
-test-orchestrator-worker3
+dokimi-worker
+dokimi-worker2
+dokimi-worker3
 ```
 
 Put two of those names in the definition's `placement`, then submit:
 
 ```console
-$ export KUBECONFIG=.test-env/kubeconfig TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
-$ uv run test-orchestrator submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
-$ uv run test-orchestrator submit test.yaml --service-account test-orchestrator
+$ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev
+$ uv run dokimi submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
+$ uv run dokimi submit test.yaml --service-account dokimi
 ```
 
-The worker names differ by tool: kind calls them `test-orchestrator-worker`, `-worker2` and
-`-worker3`, and k3d calls them `k3d-test-orchestrator-agent-0` to `-agent-2`. `nodes` prints
+The worker names differ by tool: kind calls them `dokimi-worker`, `-worker2` and
+`-worker3`, and k3d calls them `k3d-dokimi-agent-0` to `-agent-2`. `nodes` prints
 whichever this cluster has.
 
 ## Things that will catch you out

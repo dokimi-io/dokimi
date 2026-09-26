@@ -24,8 +24,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from test_orchestrator.k8s.identity import MANAGED_BY, MANAGED_BY_LABEL, ownership_labels
-from test_orchestrator.model import TestDefinition
+from dokimi.k8s.identity import MANAGED_BY, MANAGED_BY_LABEL, ownership_labels
+from dokimi.model import TestDefinition
 
 __all__ = [
     "DEFINITION_MOUNT_PATH",
@@ -40,7 +40,7 @@ __all__ = [
 ]
 
 #: Where the definition ConfigMap is mounted inside the orchestrator container.
-DEFINITION_MOUNT_PATH = "/etc/test-orchestrator"
+DEFINITION_MOUNT_PATH = "/etc/dokimi"
 
 OWNER_COMPONENT = "run-owner"
 RUN_COMPONENT = "orchestrator"
@@ -210,7 +210,7 @@ def _job_manifest(
                 "name": "orchestrator",
                 "image": image,
                 "args": ["execute", "--definition", definition_path, "--run-id", run_id],
-                "env": [{"name": "TEST_ORCHESTRATOR_RUN_ID", "value": run_id}],
+                "env": [{"name": "DOKIMI_RUN_ID", "value": run_id}],
                 "securityContext": {
                     "allowPrivilegeEscalation": False,
                     "readOnlyRootFilesystem": True,

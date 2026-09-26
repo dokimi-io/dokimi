@@ -1,4 +1,4 @@
-# test-orchestrator
+# dokimi
 
 Test orchestration framework for functional and non-functional validation of Kubernetes clusters.
 
@@ -150,10 +150,10 @@ executed.
 ## Using the CLI
 
 ```console
-$ test-orchestrator validate test.yaml          # parse and check, no cluster involved
-$ test-orchestrator submit test.yaml --dry-run  # render the matrix and the manifests
-$ test-orchestrator submit test.yaml            # create the run and stream its logs
-$ test-orchestrator attach <run-id>             # resume streaming a run already going
+$ dokimi validate test.yaml          # parse and check, no cluster involved
+$ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
+$ dokimi submit test.yaml            # create the run and stream its logs
+$ dokimi attach <run-id>             # resume streaming a run already going
 ```
 
 `submit` validates the definition locally first, so an invalid one never reaches the
@@ -210,7 +210,7 @@ drifting renderer.
 ### YAML
 
 ```yaml
-apiVersion: test-orchestrator/v1alpha1
+apiVersion: dokimi.io/v1alpha1
 kind: NetworkTest
 
 metadata:
@@ -253,7 +253,7 @@ library.
 ```robot
 *** Settings ***
 Documentation       worker-01-to-worker-02-udp
-Resource            resources/TestOrchestrator.resource
+Resource            resources/Dokimi.resource
 
 *** Variables ***
 ${SOURCE_NODE}         worker-01
@@ -328,7 +328,7 @@ returned series against the expected matrix and errors on any missing pair.
 
 ### Naming rules
 
-- **Prefix:** all framework metrics use `test_orchestrator_`.
+- **Prefix:** all framework metrics use `dokimi_`.
 - **Base units:** time in seconds, throughput in bits per second, data in bytes. Never
   milliseconds, megabits or mebibytes in a metric name.
 - **Unit suffix:** every metric name ends in its unit; counters end in `_total`.
@@ -340,13 +340,13 @@ returned series against the expected matrix and errors on any missing pair.
   prefix, so normalized and native metrics can never be confused.
 
 ```text
-test_orchestrator_test_completed
-test_orchestrator_execution_errors_total
-test_orchestrator_throughput_bits_per_second
-test_orchestrator_packet_loss_percent
-test_orchestrator_jitter_seconds
-test_orchestrator_latency_one_way_seconds
-test_orchestrator_latency_round_trip_seconds
+dokimi_test_completed
+dokimi_execution_errors_total
+dokimi_throughput_bits_per_second
+dokimi_packet_loss_percent
+dokimi_jitter_seconds
+dokimi_latency_one_way_seconds
+dokimi_latency_round_trip_seconds
 ```
 
 Two deliberate choices worth naming so they are not mistaken for oversights:
@@ -462,7 +462,7 @@ Further rules:
 ## Safety and cleanup
 
 - **Every created object carries run-ownership labels** — at minimum
-  `app.kubernetes.io/managed-by: test-orchestrator` and `test-orchestrator/run-id: <run_id>`, plus
+  `app.kubernetes.io/managed-by: dokimi` and `dokimi.io/run-id: <run_id>`, plus
   `test-id` where applicable.
 - **Nothing lacking those labels is ever modified or deleted.** Delete operations are always scoped
   by label selector, never by name alone.
@@ -543,7 +543,7 @@ labels. This also covers a pod playing more than one role across a matrix.
 
 An exporter parses its tool's native output, exposes the normalized metric set with the required
 labels, may additionally expose tool-specific metrics under a clearly separated prefix, and
-**reports completion state explicitly** via `test_orchestrator_test_completed`, so that "test
+**reports completion state explicitly** via `dokimi_test_completed`, so that "test
 failed", "test never ran" and "metric absent" stay distinguishable.
 
 Node- and pod-level supporting metrics come from `node_exporter` and `kube-state-metrics`.
@@ -592,7 +592,7 @@ disabled per test.
 ## Container images
 
 Built and published from Dockerfiles in this repository, to
-`ghcr.io/test-orchestrator/<image-name>`.
+`ghcr.io/dokimi-io/<image-name>`.
 
 - **Pinned by digest**, not by tag. The pinned digest is recorded in the run metadata, because the
   tool version alone does not identify what was measured.
@@ -622,12 +622,12 @@ later decision has to overturn.
 | Source | How | Scope |
 | --- | --- | --- |
 | Run override | `--orchestrator-image ghcr.io/example/orchestrator@sha256:…` | one run |
-| Installation override | `TEST_ORCHESTRATOR_IMAGE` | one installation |
+| Installation override | `DOKIMI_IMAGE` | one installation |
 | Release default | baked in at release time, by digest | the released build |
 
 ```console
-$ test-orchestrator image
-ghcr.io/test-orchestrator/orchestrator@sha256:…
+$ dokimi image
+ghcr.io/dokimi-io/orchestrator@sha256:…
   source: release-default
   digest: sha256:…
 ```
@@ -651,7 +651,7 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 | Packaging | **`uv` 0.12.18+**, with a single `uv.lock` at the repository root as the one source of resolved versions |
 | Kubernetes client | the official `kubernetes` library, **35+** (its major tracks the Kubernetes minor it targets, so this is Kubernetes **1.35+**) |
 | Robot Framework | **7.5+**, an optional extra rather than a core dependency — see below |
-| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism ([ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md)) |
+| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism ([ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md)) |
 
 The orchestration logic is a library with **no Robot Framework imports in its core**. The Robot
 resource library, the CLI, a CI entry point and a future Operator are all thin adapters over the

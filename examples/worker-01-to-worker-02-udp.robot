@@ -1,6 +1,6 @@
 *** Settings ***
 Documentation       worker-01-to-worker-02-udp
-Resource            resources/TestOrchestrator.resource
+Resource            resources/Dokimi.resource
 
 *** Variables ***
 ${SOURCE_NODE}         worker-01

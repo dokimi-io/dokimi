@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from test_orchestrator.formats import parse_robot, render_robot
-from test_orchestrator.model import ConfigError
+from dokimi.formats import parse_robot, render_robot
+from dokimi.model import ConfigError
 
 pytestmark = pytest.mark.requires_robot
 
@@ -160,9 +160,7 @@ def test_a_typo_ending_in_should_be_lists_the_real_keywords() -> None:
             id="library import",
         ),
         pytest.param(
-            lambda s: s.replace(
-                "resources/TestOrchestrator.resource", "resources/Something.resource"
-            ),
+            lambda s: s.replace("resources/Dokimi.resource", "resources/Something.resource"),
             "'Resource' is not supported",
             id="a different resource",
         ),

@@ -14,17 +14,17 @@ from pathlib import Path
 
 import pytest
 
-from test_orchestrator.formats import (
+from dokimi.formats import (
     parse_file,
     parse_robot,
     parse_yaml,
     render_robot,
     render_yaml,
 )
-from test_orchestrator.model import ConfigError, Metric, TestDefinition
+from dokimi.model import ConfigError, Metric, TestDefinition
 
 YAML_SOURCE = """\
-apiVersion: test-orchestrator/v1alpha1
+apiVersion: dokimi.io/v1alpha1
 kind: NetworkTest
 
 metadata:
@@ -91,7 +91,7 @@ def test_the_round_trip_also_holds_through_yaml() -> None:
 @pytest.mark.parametrize("metric", list(Metric))
 def test_no_criterion_is_expressible_in_one_format_but_not_the_other(metric: Metric) -> None:
     """Every criterion the model allows survives both renderers and both parsers."""
-    from test_orchestrator.model import Comparison, Criterion, Statistic, Unit
+    from dokimi.model import Comparison, Criterion, Statistic, Unit
 
     unit = {
         Metric.THROUGHPUT: Unit.MEGABITS_PER_SECOND,
@@ -144,11 +144,11 @@ sys.meta_path.insert(0, Blocker())
 for name in [n for n in sys.modules if n == "robot" or n.startswith("robot.")]:
     del sys.modules[name]
 
-import test_orchestrator
-import test_orchestrator.formats as formats
+import dokimi
+import dokimi.formats as formats
 
 # Rendering must work with no Robot Framework anywhere.
-from test_orchestrator.formats import render_robot, parse_yaml
+from dokimi.formats import render_robot, parse_yaml
 suite = render_robot(parse_yaml(open(sys.argv[1], encoding="utf-8").read()))
 assert "*** Test Cases ***" in suite
 
@@ -242,7 +242,7 @@ def test_the_rendered_suite_matches_the_documented_keyword_surface() -> None:
 
     assert "Throughput Should Be At Least 950 megabits per second" in lines
     assert "Packet Loss Should Be At Most 0 percent" in lines
-    assert "Resource resources/TestOrchestrator.resource" in lines
+    assert "Resource resources/Dokimi.resource" in lines
 
 
 def test_the_rendered_criterion_columns_line_up() -> None:

@@ -6,7 +6,7 @@ peers — no criterion expressible in one but not the other — is not a propert
 format can have.
 
 Robot Framework's *parsing* API is imported inside
-:mod:`test_orchestrator.formats.robot_suite` only, and only when parsing is actually
+:mod:`dokimi.formats.robot_suite` only, and only when parsing is actually
 called, so the core library stays importable without it (ADR-01-02, ADR-01-08 phase 2).
 Rendering needs no Robot at all.
 
@@ -21,9 +21,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from test_orchestrator.formats.robot_suite import parse_robot, render_robot
-from test_orchestrator.formats.yaml_format import parse_yaml, render_yaml
-from test_orchestrator.model import ConfigError, TestDefinition
+from dokimi.formats.robot_suite import parse_robot, render_robot
+from dokimi.formats.yaml_format import parse_yaml, render_yaml
+from dokimi.model import ConfigError, TestDefinition
 
 __all__ = [
     "SUFFIXES",

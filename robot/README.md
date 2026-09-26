@@ -1,7 +1,7 @@
 # Robot Framework adapter
 
 The Robot-facing surface of the project, kept outside `src/` on purpose. Files here may
-know Robot Framework exists; the orchestration library in `src/test_orchestrator/` may
+know Robot Framework exists; the orchestration library in `src/dokimi/` may
 not (ADR-01-02, ADR-01-08).
 
 | Path | Contents |

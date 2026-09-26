@@ -8,13 +8,13 @@ Scaffolding only — the keyword vocabulary arrives with M1-11 (issue #46).
 
 from __future__ import annotations
 
-from test_orchestrator import __version__
+from dokimi import __version__
 
 ROBOT_LIBRARY_SCOPE = "GLOBAL"
 ROBOT_LIBRARY_VERSION = __version__
 
 
-class TestOrchestratorLibrary:
+class DokimiLibrary:
     """Robot library exposing the orchestration keywords.
 
     ``GLOBAL`` scope, per ADR-01-03's open point closed as OQ-35: tests within one cluster

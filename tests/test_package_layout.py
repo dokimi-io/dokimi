@@ -7,19 +7,19 @@ import importlib
 import pytest
 
 CORE_MODULES = [
-    "test_orchestrator",
-    "test_orchestrator.cleanup",
-    "test_orchestrator.cli",
-    "test_orchestrator.diagnostics",
-    "test_orchestrator.formats",
-    "test_orchestrator.k8s",
-    "test_orchestrator.metrics",
-    "test_orchestrator.model",
-    "test_orchestrator.planning",
-    "test_orchestrator.preflight",
-    "test_orchestrator.results",
-    "test_orchestrator.testtypes",
-    "test_orchestrator.validation",
+    "dokimi",
+    "dokimi.cleanup",
+    "dokimi.cli",
+    "dokimi.diagnostics",
+    "dokimi.formats",
+    "dokimi.k8s",
+    "dokimi.metrics",
+    "dokimi.model",
+    "dokimi.planning",
+    "dokimi.preflight",
+    "dokimi.results",
+    "dokimi.testtypes",
+    "dokimi.validation",
 ]
 
 

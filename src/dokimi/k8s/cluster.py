@@ -67,7 +67,7 @@ def connect(kubeconfig: str | None = None, context: str | None = None) -> Cluste
     path works for a CI runner inside the cluster and a laptop outside it.
     """
     try:
-        from test_orchestrator.k8s._kubernetes import KubernetesCluster
+        from dokimi.k8s._kubernetes import KubernetesCluster
     except ImportError as error:  # pragma: no cover - the dependency is not optional
         raise ClusterError(f"the Kubernetes client library is unavailable: {error}") from error
 

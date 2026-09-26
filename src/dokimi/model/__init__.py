@@ -10,8 +10,8 @@ formats depend on this package, never the reverse.
 
 from __future__ import annotations
 
-from test_orchestrator.model.criterion import Comparison, Criterion, Metric, Statistic
-from test_orchestrator.model.definition import (
+from dokimi.model.criterion import Comparison, Criterion, Metric, Statistic
+from dokimi.model.definition import (
     DEFAULT_RESULTS_DIRECTORY,
     Bandwidth,
     Duration,
@@ -20,8 +20,8 @@ from test_orchestrator.model.definition import (
     TestDefinition,
     TestType,
 )
-from test_orchestrator.model.errors import ConfigError
-from test_orchestrator.model.units import Dimension, Unit
+from dokimi.model.errors import ConfigError
+from dokimi.model.units import Dimension, Unit
 
 __all__ = [
     "DEFAULT_RESULTS_DIRECTORY",

@@ -5,8 +5,8 @@ A development environment, and a throwaway cluster to submit runs against.
 ## The environment
 
 ```console
-$ git clone git@github.com:Test-Orchestrator/test-orchestrator.git
-$ cd test-orchestrator
+$ git clone git@github.com:dokimi-io/dokimi.git
+$ cd dokimi
 $ uv sync --locked --all-extras
 ```
 
@@ -28,7 +28,7 @@ Run anything through `uv run`, which uses the project environment whether or not
 activated it:
 
 ```console
-$ uv run test-orchestrator --help
+$ uv run dokimi --help
 $ uv run pytest
 ```
 
@@ -103,7 +103,7 @@ reach — so build it and load it in directly:
 ```console
 $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 $ test-env/test-env.sh load orchestrator:dev
-$ export TEST_ORCHESTRATOR_IMAGE=orchestrator:dev
+$ export DOKIMI_IMAGE=orchestrator:dev
 ```
 
 Grant the run's Job what it needs to plan, once:
@@ -118,18 +118,18 @@ them:
 
 ```console
 $ test-env/test-env.sh nodes
-test-orchestrator-worker
-test-orchestrator-worker2
-test-orchestrator-worker3
-$ sed -e 's/worker-01/test-orchestrator-worker/' -e 's/worker-02/test-orchestrator-worker2/' \
+dokimi-worker
+dokimi-worker2
+dokimi-worker3
+$ sed -e 's/worker-01/dokimi-worker/' -e 's/worker-02/dokimi-worker2/' \
     examples/worker-01-to-worker-02-udp.yaml > kind-pair.yaml
 ```
 
 Check the plan without creating anything, then submit:
 
 ```console
-$ uv run test-orchestrator submit kind-pair.yaml --dry-run --kubeconfig .test-env/kubeconfig > /dev/null
-$ uv run test-orchestrator submit kind-pair.yaml --service-account test-orchestrator
+$ uv run dokimi submit kind-pair.yaml --dry-run --kubeconfig .test-env/kubeconfig > /dev/null
+$ uv run dokimi submit kind-pair.yaml --service-account dokimi
 ```
 
 The first command resolves both nodes read-only and prints the plan. The second runs it:
@@ -137,7 +137,7 @@ phases 2 and 3 in the cluster, then an exit `5` because phases 4 to 11 are still
 built — see [what a run does today](usage.md#what-a-run-does-today).
 
 Worth trying once, to see the errors a first run can hit: point the definition at
-`test-orchestrator-control-plane` (tainted), `kubectl cordon` a worker, or leave off
+`dokimi-control-plane` (tainted), `kubectl cordon` a worker, or leave off
 `--service-account`. Each fails with a message that names its fix.
 
 **What this cluster can and cannot tell you.** Its nodes share one machine's network stack, so
@@ -145,7 +145,7 @@ traffic between them is bounded by host CPU and memory bandwidth rather than by 
 CNI datapath. It validates **orchestration correctness**, not **measurement realism**:
 throughput, loss and jitter measured here say nothing about real hardware, and a threshold
 that means something on real hardware means nothing here. That boundary is a recorded decision,
-[ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
+[ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
 not a caveat.
 
 Tearing down — and proving nothing was left behind:
@@ -157,7 +157,7 @@ $ test-env/test-env.sh down
 ## Repository layout
 
 ```text
-src/test_orchestrator/
+src/dokimi/
     model/          canonical test definition model
     formats/        parse() / render() plugins (robot, yaml)
     planning/       node resolution, matrix, concurrency plan

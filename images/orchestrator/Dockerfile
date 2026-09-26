@@ -50,8 +50,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-LABEL org.opencontainers.image.source="https://github.com/Test-Orchestrator/test-orchestrator" \
-      org.opencontainers.image.description="Test Orchestrator: one-shot in-cluster orchestrator Job" \
+LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
+      org.opencontainers.image.description="dokimi: one-shot in-cluster orchestrator Job" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # Non-root, as ADR-05-04 requires of every image this project publishes. The orchestrator
@@ -72,4 +72,4 @@ ENV PATH="/opt/orchestrator/bin:${PATH}" \
 USER 65532:65532
 WORKDIR /work
 
-ENTRYPOINT ["test-orchestrator"]
+ENTRYPOINT ["dokimi"]
