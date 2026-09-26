@@ -5,8 +5,8 @@ A development environment, and a throwaway cluster to submit runs against.
 ## The environment
 
 ```console
-$ git clone git@github.com:Test-Orchestrator/test-orchestrator.git
-$ cd test-orchestrator
+$ git clone git@github.com:dokimi-io/dokimi.git
+$ cd dokimi
 $ uv sync --locked --all-extras
 ```
 
@@ -137,7 +137,7 @@ traffic between them is bounded by host CPU and memory bandwidth rather than by 
 CNI datapath. It validates **orchestration correctness**, not **measurement realism**:
 throughput, loss and jitter measured here say nothing about real hardware, and a threshold
 that means something on real hardware means nothing here. That boundary is a recorded decision,
-[ADR-05-11](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
+[ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
 not a caveat.
 
 Tearing down — and proving nothing was left behind:

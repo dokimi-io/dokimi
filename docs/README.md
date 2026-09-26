@@ -15,7 +15,7 @@ Two documents sit outside this folder and are the ones to read first if you want
 
 - The [repository README](../README.md) — the execution model, the phases of a run, the
   metric contract and the interfaces.
-- The [`test-orchestrator-adrs`](https://github.com/Test-Orchestrator/test-orchestrator-adrs)
+- The [`dokimi-adrs`](https://github.com/dokimi-io/dokimi-adrs)
   repository — every architectural decision, with the alternatives that were rejected and
   the reasons. These guides cite ADRs by number; that is where to resolve one.
 
