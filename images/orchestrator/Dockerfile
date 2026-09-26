@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-LABEL org.opencontainers.image.source="https://github.com/Test-Orchestrator/test-orchestrator" \
+LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
       org.opencontainers.image.description="dokimi: one-shot in-cluster orchestrator Job" \
       org.opencontainers.image.licenses="Apache-2.0"
 

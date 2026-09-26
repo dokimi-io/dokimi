@@ -65,8 +65,8 @@ The project is not published to PyPI. Install it from source, which is also what
 [Setup](setup.md) does for development:
 
 ```console
-$ git clone git@github.com:Test-Orchestrator/test-orchestrator.git
-$ cd test-orchestrator
+$ git clone git@github.com:dokimi-io/dokimi.git
+$ cd dokimi
 $ uv sync --locked
 $ uv run dokimi --version
 ```

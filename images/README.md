@@ -10,7 +10,7 @@ attestation (ADR-05-04, ADR-05-08).
 | One per test type, tool plus its exporter | slim Alpine, with a glibc exception where a tool needs it | M1-10 (adrs#45) |
 
 Version floors for the base image and the build toolchain are fixed by
-[ADR-01-09](https://github.com/Test-Orchestrator/test-orchestrator-adrs/blob/main/adrs/01-09-implementation-dependency-version-floors.md),
+[ADR-01-09](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/01-09-implementation-dependency-version-floors.md),
 not here — this table records which image uses which base, not what the floor should be.
 
 ## `orchestrator`
