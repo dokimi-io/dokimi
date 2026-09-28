@@ -1,6 +1,6 @@
 # The test suite
 
-325 tests, none of which need a cluster, a network or a container runtime. Everything runs
+474 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -22,22 +22,27 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_examples.py`](test_examples.py) | 8 | The shipped examples parse and agree; every test definition in the docs parses, and the README shows the examples verbatim |
 | [`test_planning.py`](test_planning.py) | 24 | Discovery, explicit node resolution, and the plan |
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
-| [`test_manifests.py`](test_manifests.py) | 16 | What a submission renders, and the properties those manifests must have |
+| [`test_run_identity.py`](test_run_identity.py) | 18 | The `RunId` type ownership and exclusivity are written against |
+| [`test_ownership.py`](test_ownership.py) | 18 | Run-owned object creation, owner references, and label-scoped deletion |
+| [`test_exclusivity.py`](test_exclusivity.py) | 66 | One run at a time: the run-start lease, the claim lifecycle and its expiry, and two racing submissions through `submit` |
+| [`test_deadlines.py`](test_deadlines.py) | 14 | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |
+| [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
+| [`test_manifests.py`](test_manifests.py) | 18 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
-| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 9 | How the real Kubernetes adapter translates the client library's failures |
-| [`test_cli.py`](test_cli.py) | 40 | Every command, and the exit code each produces |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
+| [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
+| [`test_cli.py`](test_cli.py) | 44 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
 | [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
-| [`test_rbac.py`](test_rbac.py) | 5 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
-| [`test_package_layout.py`](test_package_layout.py) | 13 | The prescribed package layout exists and imports |
+| [`test_rbac.py`](test_rbac.py) | 9 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
+| [`test_package_layout.py`](test_package_layout.py) | 20 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
 
 ## How the cluster-facing tests work without a cluster
 
-Everything a run does to a cluster goes through an eight-method protocol,
-`ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
+Everything the CLI does to a cluster goes through a small protocol, `ClusterClient`. [`fake_cluster.py`](fake_cluster.py) provides two implementations:
 
 - **`FakeCluster`** records every write and answers reads from a script — a list of pod
   phases, a log, an exit code, the cluster's nodes. Assertions are then made about the calls: that the owner
@@ -58,6 +63,18 @@ translates the client library's failures — an `ApiException`, or a urllib3 err
 API server cannot be reached at all. [`test_cluster_adapter.py`](test_cluster_adapter.py)
 covers that by handing a real `KubernetesCluster` a stand-in for the library's `CoreV1Api`
 that raises whatever the test asks for.
+
+Ownership, exclusivity and cleanup use a second, per-kind protocol, `ResourceClient` in
+`k8s/resources.py`: create, get, list, replace, and delete with uid and resourceVersion
+preconditions. [`fake_resources.py`](fake_resources.py)'s **`FakeResources`** is an
+in-memory API server with the semantics those rules depend on — an atomic `create` that
+fails on a taken name, preconditions that are honoured, label selectors evaluated
+server-side, all behind one lock so concurrent callers race the way real ones do.
+`FakeCluster` stores everything it creates in a `FakeResources` too, and hands it out from
+`resources()`, so a test can submit through M1-04's path and claim through M1-05's
+against one cluster.
+[`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) checks the real adapter,
+`KubernetesResources`, against the client library's actual method names.
 
 Time is injected too: `follow()` takes `sleep` and `clock`, so a test can exercise the
 "pod is still Pending" and "the log stream ended before the status caught up" paths
@@ -84,8 +101,8 @@ working while being wrong:
   `restartPolicy: Never`. A Job with the defaults runs perfectly well and silently re-runs
   the entire matrix when a run exits non-zero for a plain failure.
 - [`test_rbac.py`](test_rbac.py) parses `deploy/rbac.yaml` and checks it against the code:
-  the namespace runs actually use, the service account the error message tells people to
-  pass, and a grant that is read-only. An administrator applies that file by hand and the
+  the namespaces runs actually use, the service account the error message tells people to
+  pass, and the exact grant, rule by rule, so that each widening is a deliberate change. An administrator applies that file by hand and the
   code never reads it, so nothing else would notice the two drifting apart until a real
   cluster refused a call.
 - [`test_test_env.py`](test_test_env.py) holds the [test environment](../test-env/README.md) to its

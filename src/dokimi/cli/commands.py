@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -16,12 +17,17 @@ import yaml
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.formats import parse_file
 from dokimi.images import ImageResolutionError, resolve_image
-from dokimi.k8s.cluster import ClusterClient, connect
-from dokimi.k8s.identity import default_namespace, validate_run_id
-from dokimi.k8s.manifests import deadline_seconds
+from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
+from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
+from dokimi.k8s.identity import validate_run_id
+from dokimi.k8s.manifests import job_deadline_seconds
+from dokimi.k8s.namespaces import namespace_for
+from dokimi.k8s.ownership import format_timestamp
+from dokimi.k8s.resources import ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
+from dokimi.run_identity import RunId
 
 __all__ = ["Console", "attach", "execute", "show_image", "submit_run", "validate"]
 
@@ -115,7 +121,7 @@ def attach(
     # Milestone-01 runs one test type, so its namespace is derivable. Once a run can be
     # of another type, the namespace stops being guessable from nothing and --namespace
     # becomes the way to say which one.
-    resolved_namespace = namespace or default_namespace(TestType.IPERF2)
+    resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
     cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
     return _follow(console, cluster, resolved_namespace, resolved_run_id)
 
@@ -125,7 +131,10 @@ def execute(
     *,
     path: Path,
     run_id: str,
+    namespace: str,
+    deadline_seconds: int,
     connect_to: Callable[..., ClusterClient] | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> int:
     """The in-cluster entry point: what the submitted Job runs.
 
@@ -133,11 +142,21 @@ def execute(
     M1-04, so the contract is fixed here: the Job is invoked with the mounted definition
     and the run's id, and it owns phases 2 to 11.
 
-    Phases 2 and 3 are implemented. The rest are not yet: preflight is M1-07 (#42),
-    execution M1-11 (#46), validation M1-13 (#48), results M1-14 (#49), cleanup and the
-    real exit code M1-16 (#51). Rather than exit 0 and let a submitter read that as a
-    passing run, this reports an orchestrator error and names what is missing.
+    Phases 2 and 3 are implemented, and phase 4 begins with the run-exclusivity claim
+    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). The rest of phase 4 and
+    the phases after it are not yet: preflight is M1-07 (#42), execution M1-11 (#46),
+    validation M1-13 (#48), results M1-14 (#49), cleanup and the real exit code M1-16
+    (#51). Rather than exit 0 and let a submitter read that as a passing run, this
+    reports an orchestrator error and names what is missing.
+
+    Once claimed, the run is always marked finished on the way out — the start of phase
+    11 (ADR-05-13) — so a run that ends, however it ends, stops holding the cluster.
     """
+    resolved_run_id = RunId(validate_run_id(run_id))
+    resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
+    if deadline_seconds <= 0:
+        raise ConfigError(f"--deadline-seconds must be positive, got {deadline_seconds}")
+
     console.say(f"run {run_id}")
     definition = parse_file(path)
     console.say("phase 2 (ingestion): definition parsed")
@@ -156,12 +175,46 @@ def execute(
         console.say(line)
     console.say()
 
-    console.warn(
-        "phases 4 to 11 are not implemented in this build: preflight (#42), execution "
-        "(#46), validation (#48), results (#49), cleanup and outcome (#51). The run stops "
-        "here without a verdict."
+    # Phase 4 begins with the claim (ADR-05-10). The Job's deadline, its start time plus
+    # activeDeadlineSeconds, is when the claim expires: by then the cluster has killed
+    # this Job, so an expired claim is safe to ignore (ADR-05-13).
+    resources = cluster.resources()
+    expires_at = claim_expiry(
+        resources, resolved_run_id, namespace=resolved_namespace, deadline_seconds=deadline_seconds
     )
-    return ExitCode.INTERNAL
+    claim_run(
+        resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
+    )
+    try:
+        console.say(
+            "phase 4 (preflight): cluster claimed for this run until "
+            f"{format_timestamp(expires_at)}"
+        )
+        console.warn(
+            "the rest of phases 4 to 11 is not implemented in this build: preflight (#42), "
+            "execution (#46), validation (#48), results (#49), cleanup and outcome (#51). "
+            "The run stops here without a verdict."
+        )
+        return ExitCode.INTERNAL
+    finally:
+        _finish(console, resources, resolved_run_id, resolved_namespace, now)
+
+
+def _finish(
+    console: Console,
+    resources: ResourceClient,
+    run_id: RunId,
+    namespace: str,
+    now: Callable[[], datetime],
+) -> None:
+    """The start of phase 11: record that the run no longer holds the cluster."""
+    try:
+        mark_finished(resources, run_id, namespace=namespace, now=now)
+    except ClusterError as error:
+        # Never mask the run's own outcome. The claim still ends when it expires.
+        console.warn(
+            f"could not mark run {run_id} finished; its claim ends when it expires: {error}"
+        )
 
 
 def show_image(console: Console, *, image_override: str | None = None) -> int:
@@ -234,7 +287,7 @@ def _render(
     console.warn(f"Run id     {submission.run_id}")
     console.warn(f"Namespace  {submission.namespace}")
     console.warn(f"Image      {submission.image}")
-    console.warn(f"Deadline   {deadline_seconds(definition)}s")
+    console.warn(f"Deadline   {job_deadline_seconds(definition)}s")
     console.warn("")
 
     console.say("---")

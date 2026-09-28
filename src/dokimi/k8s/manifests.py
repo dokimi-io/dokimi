@@ -4,7 +4,9 @@ Three objects, in this order, because the order is what makes cleanup survive a 
 (ADR-05-02):
 
 1. A **placeholder owner object** — a ConfigMap acting as a tombstone, since no CRD
-   exists yet. It is created first and owns everything else.
+   exists yet, named ``run-<run_id>-owner`` ([ADR-05-13]). It is created first and owns
+   everything else. It carries no claim: the Job writes that in phase 4, so what a
+   submission creates is never evidence of an active run.
 2. A **ConfigMap carrying the test definition** exactly as authored, mounted into the
    Job. The document travels with the run rather than being re-read from the submitter's
    disk, so the Job is self-contained and a reattaching process needs nothing local.
@@ -24,17 +26,19 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from dokimi.k8s.identity import MANAGED_BY, MANAGED_BY_LABEL, ownership_labels
+from dokimi.k8s.deadlines import job_budget_for
+from dokimi.k8s.identity import ownership_labels
+from dokimi.k8s.ownership import OWNER_COMPONENT, owner_manifest
 from dokimi.model import TestDefinition
+from dokimi.run_identity import RunId
 
 __all__ = [
     "DEFINITION_MOUNT_PATH",
     "OWNER_COMPONENT",
     "RUN_COMPONENT",
     "bind_owner",
-    "deadline_seconds",
     "definition_file_name",
-    "namespace_manifest",
+    "job_deadline_seconds",
     "render_manifests",
     "resource_name",
 ]
@@ -42,14 +46,7 @@ __all__ = [
 #: Where the definition ConfigMap is mounted inside the orchestrator container.
 DEFINITION_MOUNT_PATH = "/etc/dokimi"
 
-OWNER_COMPONENT = "run-owner"
 RUN_COMPONENT = "orchestrator"
-
-#: Margin added to the test duration for everything around it — preflight, workload
-#: deployment and readiness, measurement, diagnostics and cleanup. Deliberately generous:
-#: this bound exists to stop an orphaned run, not to enforce a schedule. M1-05 (#40) owns
-#: the deadline policy and may refine it; ADR-05-02 only requires that one exists.
-DEADLINE_MARGIN_SECONDS = 900
 
 
 def resource_name(run_id: str, suffix: str = "") -> str:
@@ -70,22 +67,9 @@ def definition_file_name(source_suffix: str) -> str:
     return f"definition{source_suffix.lower()}"
 
 
-def deadline_seconds(definition: TestDefinition) -> int:
-    """``activeDeadlineSeconds`` for the run's Job (ADR-05-02)."""
-    return int(definition.duration.seconds) + DEADLINE_MARGIN_SECONDS
-
-
-def namespace_manifest(namespace: str) -> dict[str, Any]:
-    """The per-test-type namespace a run's objects live in.
-
-    It carries ``managed-by`` but deliberately **not** a ``run-id``: the namespace is
-    shared by every run of that test type, so a run-scoped cleanup must never select it.
-    """
-    return {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {"name": namespace, "labels": {MANAGED_BY_LABEL: MANAGED_BY}},
-    }
+def job_deadline_seconds(definition: TestDefinition) -> int:
+    """``activeDeadlineSeconds`` for the run's Job: its :class:`JobBudget` (ADR-05-13)."""
+    return job_budget_for(definition).active_deadline_seconds
 
 
 def render_manifests(
@@ -123,16 +107,7 @@ def render_manifests(
 
 
 def _owner_manifest(run_id: str, namespace: str) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {
-            "name": resource_name(run_id, "-owner"),
-            "namespace": namespace,
-            "labels": ownership_labels(run_id, OWNER_COMPONENT),
-        },
-        "data": {"run-id": run_id},
-    }
+    return owner_manifest(RunId(run_id), namespace)
 
 
 def _owner_reference(owner: dict[str, Any]) -> dict[str, Any]:
@@ -140,13 +115,15 @@ def _owner_reference(owner: dict[str, Any]) -> dict[str, Any]:
 
     The uid is not known until the API server has created it, so this carries a
     placeholder that :func:`bind_owner` replaces.
+
+    ``blockOwnerDeletion`` is deliberately unset (ADR-05-13): setting it needs permission
+    on the owner's finalizers, and nothing needs deleting the owner to wait.
     """
     return {
         "apiVersion": owner["apiVersion"],
         "kind": owner["kind"],
         "name": owner["metadata"]["name"],
         "uid": "",
-        "blockOwnerDeletion": True,
     }
 
 
@@ -197,6 +174,7 @@ def _job_manifest(
 ) -> dict[str, Any]:
     labels = ownership_labels(run_id, RUN_COMPONENT)
     definition_path = f"{DEFINITION_MOUNT_PATH}/{definition_file_name(source_suffix)}"
+    deadline = job_deadline_seconds(definition)
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "securityContext": {
@@ -209,7 +187,19 @@ def _job_manifest(
             {
                 "name": "orchestrator",
                 "image": image,
-                "args": ["execute", "--definition", definition_path, "--run-id", run_id],
+                # The namespace and deadline let phase 4 find its owner and its Job,
+                # and date its claim's expiry from the Job's start (ADR-05-13).
+                "args": [
+                    "execute",
+                    "--definition",
+                    definition_path,
+                    "--run-id",
+                    run_id,
+                    "--namespace",
+                    namespace,
+                    "--deadline-seconds",
+                    str(deadline),
+                ],
                 "env": [{"name": "DOKIMI_RUN_ID", "value": run_id}],
                 "securityContext": {
                     "allowPrivilegeEscalation": False,
@@ -247,7 +237,7 @@ def _job_manifest(
         "spec": {
             # ADR-01-08: the exit code is the verdict, so the controller must never retry.
             "backoffLimit": 0,
-            "activeDeadlineSeconds": deadline_seconds(definition),
+            "activeDeadlineSeconds": deadline,
             "template": {"metadata": {"labels": labels}, "spec": pod_spec},
         },
     }

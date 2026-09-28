@@ -13,7 +13,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.k8s.submission import CONTAINER_NAME
+from tests.fake_resources import FakeResources
 
 __all__ = ["ExplodingCluster", "FakeCluster", "node"]
 
@@ -66,6 +68,7 @@ class FakeCluster:
         fail_on_kind: str | None = None,
         fail_deleting: bool = False,
         nodes: Sequence[dict[str, Any]] = EXAMPLE_NODES,
+        resources: FakeResources | None = None,
     ) -> None:
         self.log_lines = list(log_lines)
         self.exit_code = exit_code
@@ -79,12 +82,13 @@ class FakeCluster:
         self.has_pod_after_stream = has_pod_after_stream
         self.job_conditions = list(job_conditions)
         self.fail_on_kind = fail_on_kind
-        self.fail_deleting = fail_deleting
-        self.deleted: list[tuple[str, str]] = []
+        #: The same cluster, as the per-kind client sees it. Everything :meth:`create`
+        #: creates is also stored here, so ownership and exclusivity code sees it too.
+        self.store = resources if resources is not None else FakeResources()
+        self.store.fail_deleting = fail_deleting
         self.nodes = list(nodes)
         self.node_reads = 0
 
-        self.namespaces: list[str] = []
         self.created: list[dict[str, Any]] = []
         self.selectors: list[str] = []
         self.streamed: list[tuple[str, str, str]] = []
@@ -93,12 +97,13 @@ class FakeCluster:
 
     # -- ClusterClient --------------------------------------------------------
 
-    def ensure_namespace(self, manifest: Mapping[str, Any]) -> None:
-        self.namespaces.append(manifest["metadata"]["name"])
-
     def create(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
         if manifest["kind"] == self.fail_on_kind:
             raise ClusterError(f"creating {manifest['kind']}: 422 Unprocessable Entity")
+        namespace = manifest["metadata"]["namespace"]
+        self.store.namespaces.add(namespace)
+        kind = CONFIG_MAP if manifest["kind"] == "ConfigMap" else JOB
+        self.store.put(kind, namespace, dict(manifest))
         stored = dict(manifest)
         metadata = dict(stored["metadata"])
         metadata["uid"] = self.owner_uid if not self.created else f"uid-{len(self.created)}"
@@ -147,10 +152,8 @@ class FakeCluster:
         self.streamed.append((namespace, pod, container))
         yield from self.log_lines
 
-    def delete_config_maps(self, namespace: str, selector: str) -> None:
-        if self.fail_deleting:
-            raise ClusterError("deleting ConfigMaps: 403 Forbidden")
-        self.deleted.append((namespace, selector))
+    def resources(self) -> FakeResources:
+        return self.store
 
     def list_nodes(self) -> list[dict[str, Any]]:
         self.node_reads += 1
@@ -162,6 +165,11 @@ class FakeCluster:
     def created_kinds(self) -> list[str]:
         return [manifest["kind"] for manifest in self.created]
 
+    @property
+    def deleted(self) -> list[tuple[str, str, str]]:
+        """``(kind, namespace, name)`` of every object deleted through :meth:`resources`."""
+        return self.store.deleted
+
 
 class ExplodingCluster:
     """Fails on contact. Anything that must not touch a cluster gets one of these."""
@@ -169,8 +177,8 @@ class ExplodingCluster:
     def _explode(self, *args: object, **kwargs: object) -> Any:
         raise AssertionError("this code path must not contact a cluster")
 
-    ensure_namespace = _explode
     create = _explode
+    resources = _explode
     find_job = _explode
     find_pod = _explode
     read_pod = _explode

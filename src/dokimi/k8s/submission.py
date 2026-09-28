@@ -27,20 +27,21 @@ from typing import Any
 
 from dokimi.k8s.cluster import ClusterClient, ClusterError
 from dokimi.k8s.identity import (
-    default_namespace,
     new_run_id,
     run_selector,
     validate_run_id,
 )
 from dokimi.k8s.manifests import (
-    OWNER_COMPONENT,
     RUN_COMPONENT,
     bind_owner,
-    namespace_manifest,
     render_manifests,
     resource_name,
 )
+from dokimi.k8s.namespaces import namespace_for
+from dokimi.k8s.ownership import delete_run_owned
+from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.model import TestDefinition
+from dokimi.run_identity import RunId
 
 __all__ = [
     "CONTAINER_NAME",
@@ -110,7 +111,9 @@ def plan_submission(
     # every object name and a term in the selectors that find the run again, so a bad one
     # breaks all three — and a dry run would print manifests that cannot be applied.
     resolved_run_id = validate_run_id(run_id) if run_id is not None else new_run_id()
-    resolved_namespace = namespace or default_namespace(definition.test_type)
+    # Validated like the default: a malformed --namespace is a config_error (ADR-01-11),
+    # not an API server refusal after the owner has already been created.
+    resolved_namespace = namespace_for(definition.test_type.value, namespace)
     manifests = render_manifests(
         definition,
         source=source,
@@ -135,9 +138,9 @@ def submit(cluster: ClusterClient, submission: Submission) -> None:
     manifests are bound to it here rather than at render time. Until that binding
     happens there is nothing for the garbage collector to cascade from, which is why the
     owner is created first and alone.
-    """
-    cluster.ensure_namespace(namespace_manifest(submission.namespace))
 
+    The namespace must already exist: a run never creates one (ADR-05-13).
+    """
     owner, *rest = submission.manifests
     created_owner = cluster.create(owner)
     owner_uid = created_owner.get("metadata", {}).get("uid", "")
@@ -158,20 +161,35 @@ def submit(cluster: ClusterClient, submission: Submission) -> None:
 def _abandon(cluster: ClusterClient, submission: Submission, error: ClusterError) -> None:
     """Remove a submission that failed after its owner was created.
 
-    The owner cascades to anything bound to it, so deleting it is the whole cleanup. This
-    is not ADR-05-02's retain-on-failure, which keeps a failed *run's* evidence: a Job
-    that was never created left no evidence, only an owner that, under run exclusivity,
-    would block every later run until someone found it.
+    This is not ADR-05-02's retain-on-failure, which keeps a failed *run's* evidence: a
+    Job that was never created left no evidence, only an unclaimed owner. That owner
+    would not block later runs (ADR-05-13), but it is debris all the same.
+
+    :func:`~dokimi.k8s.ownership.delete_run_owned` re-checks the labels on what it
+    selected and deletes each object by name and uid, so a broken selector cannot widen
+    what a failed submission removes.
     """
-    selector = run_selector(submission.run_id, OWNER_COMPONENT)
+    selector = run_selector(submission.run_id)
+    remedy = f"kubectl delete configmap,job -n {submission.namespace} -l {selector}"
     try:
-        cluster.delete_config_maps(submission.namespace, selector)
+        report = delete_run_owned(
+            cluster.resources(),
+            RunId(submission.run_id),
+            namespace=submission.namespace,
+            kinds=(CONFIG_MAP, JOB),
+        )
     except ClusterError as cleanup_error:
         # ADR-05-02: cleanup failures are reported with what remains and how to remove
         # it, never swallowed. The original error is still the one that is raised.
         error.add_note(
             f"Removing the partial submission failed too ({cleanup_error}). Remove it with: "
-            f"kubectl delete configmap -n {submission.namespace} -l {selector}"
+            f"{remedy}"
+        )
+        return
+    if not report.complete:
+        remaining = ", ".join(str(obj) for obj, _ in report.failed)
+        error.add_note(
+            f"Removing the partial submission left {remaining} behind. Remove it with: {remedy}"
         )
 
 

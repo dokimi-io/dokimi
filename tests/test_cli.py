@@ -6,6 +6,7 @@ as values rather than as "non-zero".
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,37 @@ from dokimi.cli import commands
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import main
 from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, IMAGE_REPOSITORY
+from dokimi.k8s.exclusivity import claim_run
+from dokimi.k8s.manifests import resource_name
+from dokimi.k8s.ownership import (
+    CLAIM_EXPIRES_AT_ANNOTATION,
+    FINISHED_AT_ANNOTATION,
+    owner_manifest,
+    owner_name,
+    ownership_labels,
+)
+from dokimi.k8s.resources import CONFIG_MAP, JOB
+from dokimi.run_identity import RunId
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = f"{IMAGE_REPOSITORY}@{DIGEST}"
 RUN_ID = "20260101-100000-4f2a9c"
+#: When the cluster started the Job ``submit`` created for a run, in the Job's status.
+JOB_STARTED = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "worker-01-to-worker-02-udp.yaml"
+#: What the Job's manifest passes to the in-cluster entry point.
+EXECUTE = [
+    "execute",
+    "--definition",
+    str(EXAMPLE),
+    "--run-id",
+    RUN_ID,
+    "--namespace",
+    "dokimi-iperf2",
+    "--deadline-seconds",
+    "3600",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -30,11 +56,31 @@ def _released_build(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
 
 
+def submitted(fake: FakeCluster, run_id: str, namespace: str = "dokimi-iperf2") -> None:
+    """What ``submit`` leaves for the Job to find: the run's owner, and its started Job."""
+    fake.store.put(CONFIG_MAP, namespace, owner_manifest(RunId(run_id), namespace))
+    fake.store.put(
+        JOB,
+        namespace,
+        {
+            "metadata": {"name": resource_name(run_id), "labels": ownership_labels(RunId(run_id))},
+            "status": {"startTime": JOB_STARTED.isoformat().replace("+00:00", "Z")},
+        },
+    )
+
+
 @pytest.fixture
 def cluster(monkeypatch: pytest.MonkeyPatch) -> FakeCluster:
     fake = FakeCluster(log_lines=["run started", "run finished"], exit_code=0)
     monkeypatch.setattr(commands, "connect", lambda **_kwargs: fake)
     return fake
+
+
+@pytest.fixture
+def job_cluster(cluster: FakeCluster) -> FakeCluster:
+    """The cluster as the Job sees it: its run already submitted."""
+    submitted(cluster, RUN_ID)
+    return cluster
 
 
 @pytest.fixture
@@ -159,7 +205,15 @@ def test_no_follow_returns_immediately_with_a_way_back(
 def test_submit_honours_the_namespace_override(cluster: FakeCluster) -> None:
     main(["submit", str(EXAMPLE), "--namespace", "somewhere-else"])
 
-    assert cluster.namespaces == ["somewhere-else"]
+    assert {manifest["metadata"]["namespace"] for manifest in cluster.created} == {"somewhere-else"}
+
+
+def test_a_malformed_namespace_is_a_config_error(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ADR-01-11: an invalid request exits 3 before anything is created, not 5.
+    assert main(["submit", str(EXAMPLE), "--namespace", "Not_Valid"]) == ExitCode.CONFIG_ERROR
+    assert "not a valid namespace name" in capsys.readouterr().err
 
 
 # -- attach -------------------------------------------------------------------
@@ -222,20 +276,67 @@ def test_interrupting_leaves_the_run_alone(
 
 
 def test_execute_parses_then_plans(
-    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
+    code = main(EXECUTE)
 
     out = capsys.readouterr()
     assert f"run {RUN_ID}" in out.out
     assert "phase 2 (ingestion): definition parsed" in out.out
     assert "phase 3 (planning): 1 test, sequential" in out.out
     assert "pair-001  worker-01 -> worker-02" in out.out
-    assert cluster.node_reads == 1
-    # Phases 4 to 11 do not exist yet, and a run that stops early must not look like
-    # one that passed.
+    assert job_cluster.node_reads == 1
+    assert "phase 4 (preflight): cluster claimed for this run until" in out.out
+    # The rest of phases 4 to 11 do not exist yet, and a run that stops early must not
+    # look like one that passed.
     assert code == ExitCode.INTERNAL
-    assert "phases 4 to 11 are not implemented" in out.err
+    assert "the rest of phases 4 to 11 is not implemented" in out.err
+
+
+def test_execute_marks_its_run_finished_so_the_next_one_can_start(
+    job_cluster: FakeCluster,
+) -> None:
+    # ADR-05-13: however a claimed run ends, it stops holding the cluster.
+    main(EXECUTE)
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+    submitted(job_cluster, "20260101-110000-aaaaaa")
+    other = [*EXECUTE[:4], "20260101-110000-aaaaaa", *EXECUTE[5:]]
+    assert main(other) == ExitCode.INTERNAL
+
+
+def test_execute_dates_its_claim_from_the_jobs_start(job_cluster: FakeCluster) -> None:
+    # ADR-05-13: the Job's start time plus its activeDeadlineSeconds, not the moment the
+    # claim was written after phases 2 and 3.
+    main(EXECUTE)
+
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    expected = JOB_STARTED + timedelta(seconds=3600)
+    assert owner["metadata"]["annotations"][CLAIM_EXPIRES_AT_ANNOTATION] == (
+        expected.isoformat().replace("+00:00", "Z")
+    )
+
+
+def test_execute_is_refused_with_4_while_another_run_is_active(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ADR-01-11: a refused claim is a run-level preflight failure, reason named.
+    submitted(job_cluster, "20260101-090000-bbbbbb")
+    claim_run(
+        job_cluster.store,
+        RunId("20260101-090000-bbbbbb"),
+        namespace="dokimi-iperf2",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    code = main(EXECUTE)
+
+    assert code == ExitCode.PREFLIGHT_FAILURE
+    err = capsys.readouterr().err
+    assert "run_already_active" in err
+    assert "20260101-090000-bbbbbb already active" in err
+    assert "Traceback" not in err
 
 
 def test_execute_rejects_a_missing_node_as_a_config_error(
@@ -244,7 +345,7 @@ def test_execute_rejects_a_missing_node_as_a_config_error(
     fake = FakeCluster(nodes=[node("worker-01"), node("worker-03")])
     monkeypatch.setattr(commands, "connect", lambda **_k: fake)
 
-    code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
+    code = main(EXECUTE)
 
     assert code == ExitCode.CONFIG_ERROR
     assert "target node 'worker-02' does not exist" in capsys.readouterr().err
@@ -258,7 +359,7 @@ def test_execute_rejects_an_unschedulable_node_as_a_config_error(
     fake = FakeCluster(nodes=[node("worker-01"), node("worker-02", cordoned=True)])
     monkeypatch.setattr(commands, "connect", lambda **_k: fake)
 
-    code = main(["execute", "--definition", str(EXAMPLE), "--run-id", RUN_ID])
+    code = main(EXECUTE)
 
     assert code == ExitCode.CONFIG_ERROR
     assert "cordoned" in capsys.readouterr().err
@@ -296,7 +397,6 @@ def test_a_dry_run_with_a_kubeconfig_only_reads(cluster: FakeCluster) -> None:
 
     assert cluster.node_reads == 1
     assert cluster.created == []
-    assert cluster.namespaces == []
 
 
 def test_a_dry_run_with_a_kubeconfig_catches_a_missing_node(

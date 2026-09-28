@@ -32,6 +32,8 @@ from dokimi.cli.commands import (
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.exclusivity import RunExclusivityError
+from dokimi.k8s.ownership import OwnershipError
 from dokimi.k8s.submission import RunNotFound
 from dokimi.model import ConfigError
 
@@ -123,6 +125,8 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser = commands.add_parser("execute")
     execute_parser.add_argument("--definition", type=Path, required=True)
     execute_parser.add_argument("--run-id", required=True)
+    execute_parser.add_argument("--namespace", required=True)
+    execute_parser.add_argument("--deadline-seconds", type=int, required=True)
 
     return parser
 
@@ -165,6 +169,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunNotFound as error:
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
+    except (RunExclusivityError, OwnershipError) as error:
+        # ADR-01-11: another run holds the cluster, or an owner belongs to another run.
+        # A run-level precondition checked before any workload exists, so a preflight
+        # failure (4). A refusal's message names its `run_already_active` reason.
+        console.fail(_with_notes(error))
+        return ExitCode.PREFLIGHT_FAILURE
     except ClusterError as error:
         console.fail(_with_notes(error))
         return ExitCode.INTERNAL
@@ -212,7 +222,13 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
     if args.command == "image":
         return show_image(console, image_override=args.image_override)
     if args.command == "execute":
-        return execute(console, path=args.definition, run_id=args.run_id)
+        return execute(
+            console,
+            path=args.definition,
+            run_id=args.run_id,
+            namespace=args.namespace,
+            deadline_seconds=args.deadline_seconds,
+        )
     raise AssertionError(f"unreachable: argparse accepted {args.command!r}")
 
 
