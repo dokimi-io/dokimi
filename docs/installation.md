@@ -22,42 +22,62 @@ of a run's execution phase, which happens inside the cluster, in an image that h
 | **macOS**, Apple silicon | supported, tested |
 | **Linux**, x86_64 | supported, tested |
 | macOS, Intel · Linux, arm64 | supported, **not yet tested** — the tooling handles both architectures, but nobody has run it there |
-| **Windows**, through WSL2 | supported, **not yet tested** — WSL2 is Linux, so it takes the Linux path; see below |
+| **Windows**, through WSL2 | supported, tested — WSL2 is Linux, so it takes the Linux path; see below |
 | Windows, natively | **not supported** — the test environment is bash scripts, and nothing is tested there |
 
 ### Where each part was tested
 
-Last verified on 2026-09-25.
+Last verified on 2026-09-25, and the WSL2 column on 2026-09-28.
 
-| | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-latest`) |
-| --- | --- | --- |
-| Library and CLI: lint, types, test suite | the full suite, with and without Robot Framework | on every pull request, with and without Robot Framework |
-| Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 |
-| Against a real cluster | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37 | — (the acceptance run, M1-17) |
-| [Test environment](../test-env/README.md) | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time | the same, whenever `test-env/` changes and weekly |
+| | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-latest`) | Windows 11 through WSL2, x86_64 |
+| --- | --- | --- | --- |
+| Library and CLI: lint, types, test suite | the full suite, with and without Robot Framework | on every pull request, with and without Robot Framework | the full suite, with and without Robot Framework |
+| Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 | built and run, amd64 |
+| Against a real cluster | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37 | — (the acceptance run, M1-17) | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37, and the three first-run errors [Setup](setup.md#a-cluster-to-submit-runs-against) lists |
+| [Test environment](../test-env/README.md) | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time | the same, whenever `test-env/` changes and weekly | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time |
 
-Both use Python 3.14.0 through `uv` 0.12.18. On macOS the container runtime was OrbStack 2.2.3
-(Docker 29.4.0); on Linux, the Docker engine GitHub's runners ship.
+macOS and Linux use Python 3.14.0 through `uv` 0.12.18. On macOS the container runtime was
+OrbStack 2.2.3 (Docker 29.4.0); on Linux, the Docker engine GitHub's runners ship. WSL2 was
+WSL 2.7.14 with kernel 6.18.33.2 and Ubuntu 22.04, using Python 3.14.7 through `uv` 0.12.18 and
+the Docker engine 28.3.2 installed in the distribution rather than Docker Desktop.
 
-**Not tested with:** Docker Desktop, colima or Podman on either platform. Docker Desktop and
-colima provide the same Docker API and are expected to work; Podman is not supported by k3d and
-only experimentally by kind.
+**Not tested with:** Docker Desktop, colima or Podman on any platform, including Docker
+Desktop's WSL2 integration. Docker Desktop and colima provide the same Docker API and are
+expected to work; Podman is not supported by k3d and only experimentally by kind.
 
 ### Windows, through WSL2
 
-WSL2 runs a real Linux kernel, so this is the Linux path rather than a separate port. The steps
-below are the standard ones, and not yet tested for this project:
+WSL2 runs a real Linux kernel, so this is the Linux path rather than a separate port. These are
+the steps the WSL2 column above was verified with:
 
 1. Install a Linux distribution in WSL2 — Ubuntu is the usual choice.
-2. Make Docker available inside it: either Docker Desktop with its WSL2 integration enabled for
-   that distribution, or the Docker engine installed in the distribution itself.
+2. Make Docker available inside it: either the Docker engine installed in the distribution
+   itself, which is what was tested, or Docker Desktop with its WSL2 integration enabled for that
+   distribution, which is expected to work but was not tested.
 3. **Clone the repository inside the Linux filesystem** (`~/…`), not under `/mnt/c/…`. Under
-   `/mnt/c` the files take Windows semantics: executable bits are lost and filesystem access is
-   much slower.
+   `/mnt/c` the files take Windows semantics: every file shows as mode `0777`, so the scripts
+   still run but their real permissions are lost, and filesystem access is much slower.
 4. From there, follow this guide and [Setup](setup.md) as on Linux.
 
 The repository's `.gitattributes` keeps shell scripts and `versions.env` at Unix line endings
-even on a checkout with `core.autocrlf=true`, which would otherwise break them.
+even on a checkout with `core.autocrlf=true`, which would otherwise break them. That was checked
+on such a checkout: most other files get CRLF, including `pyproject.toml`, `uv.lock` and the
+cluster configs, and `uv sync --locked`, the test suite and `ruff format --check` still pass.
+Provisioning a cluster from those CRLF cluster configs was not tried.
+
+What differs from a Linux machine is all about the kernel the test environment's nodes share:
+
+- **The kernel is the WSL2 VM's, shared by every distribution you run.** Where the
+  [test environment](../test-env/README.md#what-it-changes-on-your-machine) says a module or
+  setting stays "until reboot", on WSL2 that means until `wsl --shutdown`, which resets all of
+  them. An oops that `kernel.panic=10` turns into a panic restarts the WSL2 VM and every
+  distribution in it, not Windows.
+- **`kernel.core_pattern` starts out as WSL's own crash reporter** (`|/wsl-capture-crash …`).
+  The kind profiles set it to `core`, which switches WSL's crash capture off until
+  `wsl --shutdown`.
+- **`kernel.panic_on_oops` is already `1`**, so `up` does not report it as changed.
+- **`br_netfilter` was already loaded** on the tested machine, so `kind-flannel` came up without
+  `--load-modules` and without `sudo`. `up` checks for it either way.
 
 ## Installing
 
