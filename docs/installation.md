@@ -27,7 +27,7 @@ of a run's execution phase, which happens inside the cluster, in an image that h
 
 ### Where each part was tested
 
-Last verified on 2026-09-25, and the WSL2 column on 2026-09-28.
+The WSL2 column was verified on 2026-09-28; the macOS and Linux columns were last verified on 2026-09-25.
 
 | | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-latest`) | Windows 11 through WSL2, x86_64 |
 | --- | --- | --- | --- |
