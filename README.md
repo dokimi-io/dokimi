@@ -534,6 +534,16 @@ Every test type is a plugin behind a stable interface, declaring:
 - its exporter
 - any test-type-specific teardown beyond generic pod deletion
 
+`iperf2` is the first, in `src/dokimi/testtypes/iperf2.py`. Its client pod starts idle,
+listening on a trigger port. `start()` connects to that port and sends the server's pod IP,
+and the client runs the warm-up pass, then the measurement. Completion is the client
+process exiting, and its final `-y C` summary line is read from the pod's termination
+message. Neither step needs `exec` into a pod. The warm-up pass defaults to 10 s, and its
+duration is recorded in the run metadata as `warmup_duration_seconds`, `0` when disabled.
+In Milestone-01 it can be disabled through the library, but not yet from a test document;
+see [ADR-04-06](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/04-06-milestone-01-test-definition-input.md)
+for the fields a document may carry.
+
 ### Exporter
 
 **One dedicated exporter per test type, running as a sidecar** alongside the test workload, one per

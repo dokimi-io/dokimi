@@ -26,6 +26,10 @@ CORE_MODULES = [
     "dokimi.results",
     "dokimi.run_identity",
     "dokimi.testtypes",
+    "dokimi.testtypes.images",
+    "dokimi.testtypes.interface",
+    "dokimi.testtypes.iperf2",
+    "dokimi.testtypes.lifecycle",
     "dokimi.validation",
 ]
 

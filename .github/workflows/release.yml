@@ -1,10 +1,11 @@
-# Release: publish the orchestrator image, then build the distribution that points at it.
+# Release: publish the images, then build the distribution that points at them.
 #
 # The order is the decision, not an implementation detail. ADR-05-08 requires a released
-# CLI to ship the digest of the image built from its own commit, so the image is built
-# and pushed first, its digest is written into the generated constants file, and only
-# then is the distribution built. The two cannot be released independently — that is a
-# consequence ADR-05-08 accepts explicitly.
+# CLI to ship the digest of the orchestrator image built from its own commit, and
+# ADR-05-04 pins every test-workload image by digest the same way. So the images are
+# built and pushed first, their digests are written into the generated constants file,
+# and only then is the distribution built. They cannot be released independently — that
+# is a consequence ADR-05-08 accepts explicitly.
 
 name: Release
 
@@ -26,6 +27,7 @@ env:
   # floor ADR-01-09 sets and `[tool.uv] required-version` enforces.
   UV_VERSION: "0.12.18"
   IMAGE: ghcr.io/dokimi-io/orchestrator
+  IPERF2_IMAGE: ghcr.io/dokimi-io/iperf2
 
 jobs:
   image:
@@ -116,9 +118,95 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
 
+  iperf2-image:
+    name: Build, publish, sign and attest the iperf2 workload image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # keyless cosign signing and provenance attestation
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Decide whether this run publishes
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GitHub Container Registry
+        if: steps.mode.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.IPERF2_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      # As for the orchestrator: tags are for humans, the digest is what the pods run.
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: images/iperf2/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.mode.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=iperf2
+          cache-to: type=gha,mode=max,scope=iperf2
+
+      - name: Install cosign
+        if: steps.mode.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Sign the image
+        if: steps.mode.outputs.publish == 'true'
+        run: cosign sign --yes "${IPERF2_IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Attest build provenance
+        if: steps.mode.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IPERF2_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Report the digest
+        run: |
+          echo "### iperf2 image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${IPERF2_IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
   distribution:
-    name: Build the CLI distribution against that digest
-    needs: image
+    name: Build the CLI distribution against those digests
+    needs: [image, iperf2-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write       # attach the distribution to the release
@@ -129,52 +217,72 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
-      - name: Bake the image digest into the distribution
+      - name: Bake the image digests into the distribution
         run: |
           python - <<'PY'
           import os
           import pathlib
           import re
 
-          digest = os.environ["DIGEST"]
-          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-              raise SystemExit(f"not a sha256 digest: {digest!r}")
-
           path = pathlib.Path("src/dokimi/_image_digest.py")
           source = path.read_text()
-          patched, count = re.subn(
-              r"^ORCHESTRATOR_IMAGE_DIGEST: str \| None = .*$",
-              f'ORCHESTRATOR_IMAGE_DIGEST: str | None = "{digest}"',
-              source,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit(f"{path} no longer has the assignment this step rewrites")
-          path.write_text(patched)
+          for pattern, name, digest in (
+              (
+                  r"^ORCHESTRATOR_IMAGE_DIGEST: str \| None = .*$",
+                  "ORCHESTRATOR_IMAGE_DIGEST",
+                  os.environ["DIGEST"],
+              ),
+              (
+                  r"^IPERF2_IMAGE_DIGEST: str \| None = .*$",
+                  "IPERF2_IMAGE_DIGEST",
+                  os.environ["IPERF2_DIGEST"],
+              ),
+          ):
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"{name}: not a sha256 digest: {digest!r}")
+              source, count = re.subn(
+                  pattern,
+                  f'{name}: str | None = "{digest}"',
+                  source,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"{path} no longer has the {name} assignment to rewrite")
+          path.write_text(source)
           PY
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
+          IPERF2_DIGEST: ${{ needs.iperf2-image.outputs.digest }}
 
       # ADR-05-08's requirement, checked rather than assumed: a released CLI resolves its
-      # default image to the digest of the image built from this same commit.
-      - name: Verify the baked-in default resolves to that digest
+      # default images to the digests of the images built from this same commit.
+      - name: Verify the baked-in defaults resolve to those digests
         run: |
           uv sync --locked
           uv run python - <<'PY'
           import os
 
           from dokimi.images import IMAGE_REPOSITORY, ImageSource, resolve_image
+          from dokimi.testtypes.interface import ImageSource as WorkloadImageSource
+          from dokimi.testtypes.iperf2 import Iperf2
 
           expected = f"{IMAGE_REPOSITORY}@{os.environ['DIGEST']}"
           image = resolve_image(env={})
           assert image.reference == expected, f"{image.reference} != {expected}"
           assert image.source is ImageSource.RELEASE_DEFAULT
           assert image.digest == os.environ["DIGEST"]
-          print(f"default resolves to {image.reference}")
+          print(f"orchestrator default resolves to {image.reference}")
+
+          expected = f"ghcr.io/dokimi-io/iperf2@{os.environ['IPERF2_DIGEST']}"
+          workload = Iperf2().images().client
+          assert workload.reference == expected, f"{workload.reference} != {expected}"
+          assert workload.source is WorkloadImageSource.RELEASE_DEFAULT
+          print(f"iperf2 default resolves to {workload.reference}")
           PY
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
+          IPERF2_DIGEST: ${{ needs.iperf2-image.outputs.digest }}
 
       - run: uv build
 
@@ -193,9 +301,11 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" \
               --verify-tag \
               --generate-notes \
-              --notes "Orchestrator image: \`${IMAGE}@${DIGEST}\`"
+              --notes "Orchestrator image: \`${IMAGE}@${DIGEST}\`
+          iperf2 image: \`${IPERF2_IMAGE}@${IPERF2_DIGEST}\`"
           fi
           gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ needs.image.outputs.digest }}
+          IPERF2_DIGEST: ${{ needs.iperf2-image.outputs.digest }}

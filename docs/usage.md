@@ -58,7 +58,8 @@ $ kubectl apply -f deploy/rbac.yaml
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
 `list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
-`dokimi-iperf2` `get` and `update` on ConfigMaps and `get` on Jobs. Then submit with that service account:
+`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create` and `get` on
+Pods for each pair's client and server. Then submit with that service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
