@@ -152,7 +152,8 @@ belongs to a network namespace, so each node gets its own copy and the host's co
 On a machine that has run Kubernetes since its last reboot, most of these are already loaded or
 set, and `up` has nothing to report. That doesn't mean nothing was changed. It means the changes
 were already there. On macOS, "the host kernel" is the Linux VM your Docker runs in, not macOS
-itself.
+itself. Inside WSL2 it is the WSL2 VM every distribution shares, and "until reboot" means until
+`wsl --shutdown`.
 
 ## What `check` verifies
 
