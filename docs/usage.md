@@ -454,6 +454,35 @@ may be all that offers one. What a run will not do is claim a pin it does not ha
 run metadata records the reference, the digest if there is one, and where the reference
 came from.
 
+## Choosing the images a run deploys
+
+A run also deploys images of its own: today the `iperf2` test workload. Each one is chosen
+the same way as the orchestrator's, per component (ADR-04-08):
+
+| Source | How | Scope |
+| --- | --- | --- |
+| Run override | `--image iperf2=registry.internal/iperf2@sha256:…`, repeatable | one run |
+| Installation override | `DOKIMI_IPERF2_IMAGE`, on the machine that submits | one installation |
+| Release default | baked in at release time, by digest | the released build |
+
+They are chosen **at submission, never in the test document.** An image depends on where a
+run is submitted, not on what it tests: the same document runs unchanged in every cluster,
+while each site may pull from its own mirror. `submit` resolves every image and writes it,
+with its source, into the Job's environment (`DOKIMI_IPERF2_IMAGE` and
+`DOKIMI_IPERF2_IMAGE_SOURCE`), so `--dry-run` shows exactly what will run. The Job uses what
+it was given and never reads the submitter's environment, which does not reach it anyway.
+
+A source checkout has no default for any of them, and `submit` refuses before creating
+anything:
+
+```console
+$ dokimi submit test.yaml
+dokimi: this is a development build with no published iperf2 image, so there is no
+default to run. Choose one with --image iperf2=<reference> or DOKIMI_IPERF2_IMAGE
+```
+
+`dokimi image` shows every image a run would use and where each one came from.
+
 ## Cleaning up
 
 Automatic cleanup arrives with M1-16 (#51). Until then, deleting a run's owner object

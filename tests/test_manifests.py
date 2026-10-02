@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from dokimi.images import ImageSource
 from dokimi.k8s.deadlines import job_budget_for, workload_budget_for
 from dokimi.k8s.identity import MANAGED_BY_LABEL, RUN_ID_LABEL
 from dokimi.k8s.manifests import (
@@ -33,9 +34,16 @@ from dokimi.model import (
     TestType,
     Unit,
 )
+from dokimi.testtypes.interface import WorkloadImage
 
 RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
+#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+RUN_IMAGES = {
+    "iperf2": WorkloadImage(
+        "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
+    )
+}
 
 #: Kubernetes object names: DNS-1123 labels, which forbid the uppercase a run id has.
 DNS_1123 = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
@@ -70,6 +78,7 @@ def manifests(definition: TestDefinition) -> list[dict[str, Any]]:
         source_suffix=".yaml",
         run_id=RUN_ID,
         image=IMAGE,
+        images=RUN_IMAGES,
         namespace="dokimi-iperf2",
     )
 
@@ -218,6 +227,7 @@ def test_a_robot_suite_stays_a_robot_suite(definition: TestDefinition) -> None:
         source_suffix=".robot",
         run_id=RUN_ID,
         image=IMAGE,
+        images=RUN_IMAGES,
         namespace="dokimi-iperf2",
     )
 
@@ -246,6 +256,14 @@ def test_the_image_is_submitted_exactly_as_resolved(manifests: list[dict[str, An
     assert _container(manifests)["image"] == IMAGE
 
 
+def test_the_job_is_given_the_images_the_run_deploys(manifests: list[dict[str, Any]]) -> None:
+    # Resolved on the submitter's side, whose environment the Job never sees (ADR-04-08).
+    env = {entry["name"]: entry["value"] for entry in _container(manifests)["env"]}
+
+    assert env["DOKIMI_IPERF2_IMAGE"] == RUN_IMAGES["iperf2"].reference
+    assert env["DOKIMI_IPERF2_IMAGE_SOURCE"] == "release-default"
+
+
 def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition) -> None:
     without = render_manifests(
         definition,
@@ -253,6 +271,7 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
         source_suffix=".yaml",
         run_id=RUN_ID,
         image=IMAGE,
+        images=RUN_IMAGES,
         namespace="ns",
     )
     with_account = render_manifests(
@@ -261,6 +280,7 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
         source_suffix=".yaml",
         run_id=RUN_ID,
         image=IMAGE,
+        images=RUN_IMAGES,
         namespace="ns",
         service_account="runner",
     )

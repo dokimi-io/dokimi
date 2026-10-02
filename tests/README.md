@@ -1,6 +1,6 @@
 # The test suite
 
-566 tests, none of which need a cluster, a network or a container runtime. Everything runs
+594 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -30,12 +30,13 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
 | [`test_iperf2.py`](test_iperf2.py) | 41 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
 | [`test_lifecycle.py`](test_lifecycle.py) | 21 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
-| [`test_manifests.py`](test_manifests.py) | 18 | What a submission renders, and the properties those manifests must have |
+| [`test_manifests.py`](test_manifests.py) | 19 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 44 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 51 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
+| [`test_run_images.py`](test_run_images.py) | 20 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 18 | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |

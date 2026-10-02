@@ -20,7 +20,7 @@ exit status the verdict, so translating it here would be inventing a second opin
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,7 @@ from dokimi.k8s.ownership import delete_run_owned
 from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.model import TestDefinition
 from dokimi.run_identity import RunId
+from dokimi.testtypes.interface import WorkloadImage
 
 __all__ = [
     "CONTAINER_NAME",
@@ -85,6 +86,8 @@ class Submission:
     run_id: str
     namespace: str
     image: str
+    #: The images the run deploys, by component (ADR-04-08).
+    images: Mapping[str, WorkloadImage]
     manifests: tuple[dict[str, Any], ...]
 
     @property
@@ -98,6 +101,7 @@ def plan_submission(
     source: str,
     source_path: Path,
     image: str,
+    images: Mapping[str, WorkloadImage],
     run_id: str | None = None,
     namespace: str | None = None,
     service_account: str | None = None,
@@ -121,12 +125,14 @@ def plan_submission(
         run_id=resolved_run_id,
         image=image,
         namespace=resolved_namespace,
+        images=images,
         service_account=service_account,
     )
     return Submission(
         run_id=resolved_run_id,
         namespace=resolved_namespace,
         image=image,
+        images=dict(images),
         manifests=tuple(manifests),
     )
 

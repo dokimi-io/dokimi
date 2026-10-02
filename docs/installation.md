@@ -189,6 +189,10 @@ $ dokimi submit test.yaml
 [Usage](usage.md#choosing-the-orchestrator-image) covers the precedence between the flag,
 the environment variable and the release default.
 
+The same holds for the images a run deploys, today the `iperf2` test workload: a source
+checkout has none, and `submit` refuses until one is chosen with `--image iperf2=<reference>`
+or `DOKIMI_IPERF2_IMAGE` ([Usage](usage.md#choosing-the-images-a-run-deploys)).
+
 ## Checking the installation
 
 ```console

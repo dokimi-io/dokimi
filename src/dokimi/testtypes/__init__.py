@@ -12,14 +12,14 @@ plugin's parameters.
 from __future__ import annotations
 
 from dokimi.model import TestDefinition, TestType
-from dokimi.testtypes.interface import TestTypePlugin
+from dokimi.testtypes.interface import TestTypePlugin, WorkloadImage
 from dokimi.testtypes.iperf2 import Iperf2
 
 __all__ = ["parameters_for", "plugin_for"]
 
 
-def plugin_for(test_type: TestType, *, image: str | None = None) -> TestTypePlugin:
-    """The plugin for *test_type*. *image* overrides its release-default image."""
+def plugin_for(test_type: TestType, *, image: WorkloadImage | str | None = None) -> TestTypePlugin:
+    """The plugin for *test_type*. *image* replaces its release-default image."""
     match test_type:
         case TestType.IPERF2:
             return Iperf2(image=image)

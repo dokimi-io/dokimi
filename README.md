@@ -642,7 +642,10 @@ later decision has to overturn.
 
 ```console
 $ dokimi image
-ghcr.io/dokimi-io/orchestrator@sha256:…
+orchestrator  ghcr.io/dokimi-io/orchestrator@sha256:…
+  source: release-default
+  digest: sha256:…
+iperf2        ghcr.io/dokimi-io/iperf2@sha256:…
   source: release-default
   digest: sha256:…
 ```
@@ -651,6 +654,22 @@ A source checkout has no default: it was never published, so there is no digest 
 submit, and resolution says so rather than falling back to a tag. Pass an override to run from a
 checkout. An override is used exactly as given — including a tag, which an air-gapped mirror may be
 all that offers — but the run metadata records whether what ran was actually pinned.
+
+### Choosing the images a run deploys
+
+The images a run deploys itself, today the `iperf2` test workload, follow the same precedence,
+per component (ADR-04-08):
+
+| Source | How | Scope |
+| --- | --- | --- |
+| Run override | `--image iperf2=registry.internal/iperf2@sha256:…`, repeatable | one run |
+| Installation override | `DOKIMI_IPERF2_IMAGE`, on the machine that submits | one installation |
+| Release default | baked in at release time, by digest | the released build |
+
+They are resolved **at submission and never written in the test document**, because an image is
+specific to where a run is submitted, not to what it tests. `submit` writes each one and its source
+into the Job's environment, so `--dry-run` shows what will run, and the Job never depends on the
+submitter's environment.
 
 Build it locally with:
 

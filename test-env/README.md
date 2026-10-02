@@ -181,7 +181,9 @@ the job summary, where a reader of a green run will see it.
 ```console
 $ test-env/test-env.sh up kind-kindnet
 $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
+$ docker build -f images/iperf2/Dockerfile -t iperf2:dev .
 $ test-env/test-env.sh load orchestrator:dev
+$ test-env/test-env.sh load iperf2:dev
 $ kubectl apply -f deploy/rbac.yaml
 $ test-env/test-env.sh nodes
 dokimi-worker
@@ -192,7 +194,7 @@ dokimi-worker3
 Put two of those names in the definition's `placement`, then submit:
 
 ```console
-$ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev
+$ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
 $ uv run dokimi submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
 $ uv run dokimi submit test.yaml --service-account dokimi
 ```

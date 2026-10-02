@@ -24,6 +24,7 @@ against ADR-05-05's rule that a ``fail`` is never re-rolled.
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import Any
 
 from dokimi.k8s.deadlines import job_budget_for
@@ -31,6 +32,8 @@ from dokimi.k8s.identity import ownership_labels
 from dokimi.k8s.ownership import OWNER_COMPONENT, owner_manifest
 from dokimi.model import TestDefinition
 from dokimi.run_identity import RunId
+from dokimi.run_images import job_environment
+from dokimi.testtypes.interface import WorkloadImage
 
 __all__ = [
     "DEFINITION_MOUNT_PATH",
@@ -80,9 +83,14 @@ def render_manifests(
     run_id: str,
     image: str,
     namespace: str,
+    images: Mapping[str, WorkloadImage],
     service_account: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Render the objects a submission creates, in the order they must be created."""
+    """Render the objects a submission creates, in the order they must be created.
+
+    *image* is the orchestrator's own; *images* are the ones the run deploys, resolved at
+    submission and handed to the Job in its environment (ADR-04-08).
+    """
     owner = _owner_manifest(run_id, namespace)
     owner_reference = _owner_reference(owner)
     return [
@@ -99,6 +107,7 @@ def render_manifests(
             run_id=run_id,
             namespace=namespace,
             image=image,
+            images=images,
             source_suffix=source_suffix,
             service_account=service_account,
             owner_reference=owner_reference,
@@ -168,6 +177,7 @@ def _job_manifest(
     run_id: str,
     namespace: str,
     image: str,
+    images: Mapping[str, WorkloadImage],
     source_suffix: str,
     service_account: str | None,
     owner_reference: dict[str, Any],
@@ -200,7 +210,9 @@ def _job_manifest(
                     "--deadline-seconds",
                     str(deadline),
                 ],
-                "env": [{"name": "DOKIMI_RUN_ID", "value": run_id}],
+                # The images the run deploys, resolved on the submitter's side, whose
+                # environment the Job never sees (ADR-04-08).
+                "env": [{"name": "DOKIMI_RUN_ID", "value": run_id}, *job_environment(images)],
                 "securityContext": {
                     "allowPrivilegeEscalation": False,
                     "readOnlyRootFilesystem": True,

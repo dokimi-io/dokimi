@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from dokimi import images
+from dokimi import _image_digest, images
 from dokimi.cli import commands
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import main
@@ -27,6 +27,7 @@ from dokimi.k8s.ownership import (
 )
 from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.run_identity import RunId
+from dokimi.run_images import COMPONENTS
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 
 DIGEST = "sha256:" + "ab" * 32
@@ -51,9 +52,20 @@ EXECUTE = [
 
 @pytest.fixture(autouse=True)
 def _released_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Most commands need an image to submit; a checkout has none by design."""
+    """Most commands need images to submit and deploy; a checkout has none by design."""
     monkeypatch.delenv(IMAGE_OVERRIDE_ENV_VAR, raising=False)
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
+    monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", DIGEST)
+    for component in COMPONENTS.values():
+        monkeypatch.delenv(component.env_var, raising=False)
+        monkeypatch.delenv(component.source_env_var, raising=False)
+
+
+def given_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What ``submit`` writes into the Job's environment: each image and its source."""
+    for component in COMPONENTS.values():
+        monkeypatch.setenv(component.env_var, f"ghcr.io/dokimi-io/{component.name}@{DIGEST}")
+        monkeypatch.setenv(component.source_env_var, "release-default")
 
 
 def submitted(fake: FakeCluster, run_id: str, namespace: str = "dokimi-iperf2") -> None:
@@ -77,9 +89,10 @@ def cluster(monkeypatch: pytest.MonkeyPatch) -> FakeCluster:
 
 
 @pytest.fixture
-def job_cluster(cluster: FakeCluster) -> FakeCluster:
-    """The cluster as the Job sees it: its run already submitted."""
+def job_cluster(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> FakeCluster:
+    """The cluster as the Job sees it: its run already submitted, with its images."""
     submitted(cluster, RUN_ID)
+    given_images(monkeypatch)
     return cluster
 
 
@@ -342,6 +355,7 @@ def test_execute_is_refused_with_4_while_another_run_is_active(
 def test_execute_rejects_a_missing_node_as_a_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    given_images(monkeypatch)
     fake = FakeCluster(nodes=[node("worker-01"), node("worker-03")])
     monkeypatch.setattr(commands, "connect", lambda **_k: fake)
 
@@ -356,6 +370,7 @@ def test_execute_rejects_a_missing_node_as_a_config_error(
 def test_execute_rejects_an_unschedulable_node_as_a_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    given_images(monkeypatch)
     fake = FakeCluster(nodes=[node("worker-01"), node("worker-02", cordoned=True)])
     monkeypatch.setattr(commands, "connect", lambda **_k: fake)
 
@@ -546,3 +561,79 @@ def test_the_in_cluster_command_is_not_advertised(capsys: pytest.CaptureFixture[
     assert "validate" in commands
     assert "execute" not in commands
     assert "SUPPRESS" not in listed
+
+
+# -- the images a run deploys (ADR-04-08) ---------------------------------------------
+
+
+def test_a_dry_run_shows_the_images_the_run_deploys(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["submit", str(EXAMPLE), "--dry-run", "--image", "iperf2=iperf2:dev"]) == 0
+    captured = capsys.readouterr()
+
+    assert "iperf2   iperf2:dev (run-override)" in captured.err
+    # They are part of the rendered Job, which is what submit would create.
+    assert "name: DOKIMI_IPERF2_IMAGE\n" in captured.out
+    assert "value: iperf2:dev\n" in captured.out
+    assert "value: run-override\n" in captured.out
+
+
+def test_the_installation_override_reaches_the_job_resolved(
+    no_cluster: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DOKIMI_IPERF2_IMAGE", "mirror.local/iperf2:2.2.1")
+
+    assert main(["submit", str(EXAMPLE), "--dry-run"]) == ExitCode.PASS
+    out = capsys.readouterr().out
+
+    assert "value: mirror.local/iperf2:2.2.1\n" in out
+    assert "value: installation-override\n" in out
+
+
+def test_a_source_build_without_an_iperf2_image_creates_nothing(
+    no_cluster: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", None)
+
+    assert main(["submit", str(EXAMPLE)]) == ExitCode.CONFIG_ERROR
+    assert "--image iperf2=<reference> or DOKIMI_IPERF2_IMAGE" in capsys.readouterr().err
+
+
+def test_an_unknown_image_component_is_a_config_error(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["submit", str(EXAMPLE), "--image", "iperf3=x:1"]) == ExitCode.CONFIG_ERROR
+    assert "no component 'iperf3'" in capsys.readouterr().err
+
+
+def test_image_lists_every_image_and_where_it_came_from(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["image", "--image", "iperf2=iperf2:dev"]) == ExitCode.PASS
+    out = capsys.readouterr().out
+
+    assert f"orchestrator  {IMAGE}" in out
+    assert "iperf2        iperf2:dev\n  source: run-override\n" in out
+
+
+def test_execute_reports_the_images_it_was_given(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+
+    assert f"image       iperf2 ghcr.io/dokimi-io/iperf2@{DIGEST} (release-default)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_execute_without_its_images_is_refused_before_it_claims(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A Job this CLI did not make. Nothing is claimed, so nothing has to be released.
+    submitted(cluster, RUN_ID)
+
+    assert main(EXECUTE) == ExitCode.CONFIG_ERROR
+    assert "submitted without an image for iperf2" in capsys.readouterr().err
+    owner = cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
