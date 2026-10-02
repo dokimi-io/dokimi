@@ -24,12 +24,14 @@ from dokimi import __version__
 from dokimi.cli.commands import (
     Console,
     attach,
+    convert,
     execute,
     show_image,
     submit_run,
     validate,
 )
 from dokimi.cli.exit_codes import ExitCode
+from dokimi.execution import RobotRunError
 from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
@@ -82,6 +84,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="check a test definition without contacting a cluster",
     )
     validate_parser.add_argument("definition", type=Path, help="a .yaml or .robot test definition")
+
+    convert_parser = commands.add_parser(
+        "convert",
+        help="print a test definition in the other format, without contacting a cluster",
+    )
+    convert_parser.add_argument("definition", type=Path, help="a .yaml or .robot test definition")
+    convert_parser.add_argument(
+        "--to",
+        choices=("robot", "yaml"),
+        default="robot",
+        help="the format to print; robot (the default) is exactly the suite a run executes",
+    )
 
     submit_parser = commands.add_parser(
         "submit",
@@ -192,7 +206,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # failure (4). A refusal's message names its `run_already_active` reason.
         console.fail(_with_notes(error))
         return ExitCode.PREFLIGHT_FAILURE
-    except ClusterError as error:
+    except (ClusterError, RobotRunError) as error:
+        # Robot Framework not being able to run at all is the orchestrator's failure,
+        # never a test outcome: no report from such a run can be trusted (ADR-01-08).
         console.fail(_with_notes(error))
         return ExitCode.INTERNAL
     except Exception as error:  # noqa: BLE001 - the whole point is to catch everything
@@ -215,6 +231,8 @@ def _with_notes(error: BaseException) -> str:
 def _dispatch(console: Console, args: argparse.Namespace) -> int:
     if args.command == "validate":
         return validate(console, path=args.definition)
+    if args.command == "convert":
+        return convert(console, path=args.definition, to=args.to)
     if args.command == "submit":
         return submit_run(
             console,

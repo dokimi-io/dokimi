@@ -9,7 +9,24 @@ not (ADR-01-02, ADR-01-08).
 | `resources/` | Robot resource files a user-facing suite imports |
 | `libraries/` | Thin adapter exposing the orchestration library as Robot keywords |
 
-The keyword vocabulary arrives with M1-11 (adrs#46); both files here are scaffolding.
+The orchestrator image ships both under `/opt/dokimi/robot` (`DOKIMI_ROBOT_DIR`), and phase 6
+starts every pair's Robot process with that directory on its `--pythonpath`, which is how the
+rendered suite's `Resource resources/Dokimi.resource` resolves.
+
+## The keywords
+
+`DokimiLibrary` is a dynamic library, and all it does is translate arguments and call
+`dokimi`:
+
+| Keyword | What it calls |
+| --- | --- |
+| `Run Network Test` | `dokimi.execution.run_network_test`: deploy the pair, pass the readiness gate, start, and wait for completion |
+| The criterion keywords, such as `Throughput Should Be` | `dokimi.validation.evaluate`. Evaluating criteria arrives with M1-13: until then each one **fails**, naming the criterion it could not check, and continues, so that every criterion appears in `log.html` |
+
+The criterion keywords come from the same table the Robot format's parser reads
+(`criterion_keyword_names()`), so a suite the parser accepts never calls a keyword this library
+lacks. Each Robot process learns its run from the environment phase 6 starts it with:
+`DOKIMI_RUN_ID`, `DOKIMI_NAMESPACE`, `DOKIMI_TEST_ID` and the image variables.
 
 ## A gotcha worth knowing
 

@@ -1,11 +1,15 @@
-# Only what the image builds need: pyproject.toml, uv.lock, README.md, LICENSE and src/
-# for the orchestrator, and the client and server scripts for the iperf2 workload image.
+# Only what the image builds need: pyproject.toml, uv.lock, README.md, LICENSE, src/ and
+# the Robot resources and library adapter for the orchestrator, and the client and server
+# scripts for the iperf2 workload image.
 *
 !LICENSE
 !README.md
 !pyproject.toml
 !uv.lock
 !src
+!robot/resources
+!robot/libraries
 !images/iperf2/dokimi-iperf2-client.sh
 !images/iperf2/dokimi-iperf2-server.sh
 src/**/__pycache__
+robot/**/__pycache__

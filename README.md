@@ -204,7 +204,7 @@ canonical, in-memory test definition model, and the orchestration library consum
 A YAML-authored test is never executed by interpreting the YAML. It is parsed to the canonical
 model (phase 2), rendered to a `.robot` suite (phase 5), and that suite is what Robot's runner
 executes — the same path a Robot-authored test takes once parsed and re-rendered. The renderer used
-in phase 5 is the same function the user-facing conversion command calls; there is never a second,
+in phase 5 is the same function the user-facing conversion command, `dokimi convert`, calls; there is never a second,
 drifting renderer.
 
 ### YAML
@@ -758,15 +758,9 @@ Cross-cluster discovery, connectivity, identity, security, matrices and result c
 
 Recorded here so they are not mistaken for oversights:
 
-- **Granularity of the Robot process.** One Robot run per submitted Job, covering the whole matrix
-  in one suite and one `log.html`, or one Robot run per test pair with N reports merged afterwards.
-  This determines what a single `log.html` contains, and it interacts with the concurrency strategy,
-  because Robot has an execution model of its own.
 - **Result-status mapping.** The exact mapping between Robot Framework's own result statuses and the
   outcome categories above. It covers phases 6 to 8 only — phase 4's run-level category and phase
   10's anomaly finding have no Robot status to map from.
-- **Retention of the rendered suite.** Whether phase 5's `.robot` output is kept on disk after the
-  run or discarded once execution completes.
 - **Whether direct library invocation is a first-class mode**, with a documented flag, or purely an
   internal and testing convenience with no user-facing guarantee.
 - **Configuration source precedence.** Which source wins when several disagree, whether conflicts

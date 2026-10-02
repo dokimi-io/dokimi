@@ -6,6 +6,7 @@ back. Everything after that happens in the cluster (ADR-01-06).
 
 ```console
 $ dokimi validate test.yaml          # parse and check, no cluster involved
+$ dokimi convert test.yaml           # print the Robot suite a run executes
 $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi attach <run-id>             # resume streaming a run already going
@@ -14,6 +15,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [What a run does today](#what-a-run-does-today)
 - [Before the first run](#before-the-first-run)
 - [validate](#validate)
+- [convert](#convert)
 - [submit](#submit)
 - [attach](#attach)
 - [image](#image)
@@ -27,24 +29,45 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 ## What a run does today
 
 Milestone-01 is not finished. A submitted run parses its definition, resolves its two
-nodes against the cluster, plans the pair, and stops:
+nodes against the cluster, plans the pair, claims the cluster, and then **runs the test
+through Robot Framework**: it renders the suite, deploys the pair's pods, waits until both
+are Ready, starts the measurement and waits for it to finish. Then it stops:
 
 ```
-run 20260925-083457-9e7c31
+run 20261002-120000-a1b2c3
 phase 2 (ingestion): definition parsed
 ...
 phase 3 (planning): 1 test, sequential
   pair-001  worker-01 -> worker-02
-phases 4 to 11 are not implemented in this build: preflight (#42), execution (#46),
-validation (#48), results (#49), cleanup and outcome (#51). The run stops here without
-a verdict.
+phase 4 (preflight): cluster claimed for this run until 2026-10-02T12:20:30Z
+phase 4 (preflight): the cluster checks are not implemented in this build (M1-07, #42); the run continues without them
+
+phase 5 (suite rendering): /work/artifacts/20261002-120000-a1b2c3/suite.robot
+phase 6 (execution): pair-001  worker-01 -> worker-02, one Robot Framework process
+...
+phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../report.html
+
+the rest of phases 7 to 11 is not implemented in this build: measurement (#47),
+validation (#48), results (#49), cleanup and outcome (#51). The run stops here without a
+verdict; Robot's report says which steps ran.
 ```
 
 It exits `5`, not `0`. A run that stops early must not look like a run that passed. A
 node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`.
 
-Everything else on this page — validation, dry-run rendering, node resolution,
-submission, streaming, reattachment, exit-code propagation — works now.
+Three things to know about a run today:
+
+- **Every pass criterion fails, and says it was not checked.** Evaluating criteria
+  arrives with M1-13, so `Throughput Should Be At Least 950 megabits per second` fails with
+  "was not checked" rather than passing, or being skipped, without anything compared.
+- **Robot's report is written inside the Job**, in `/work/artifacts/<run-id>/`, next to the
+  suite that ran. Getting it back to you arrives next (ADR-05-15).
+- **The pair's pods stay until their deadline.** Cleanup arrives with M1-16; each pod stops
+  on its own once its `activeDeadlineSeconds` has passed. `kubectl delete pod -n
+  dokimi-iperf2 -l dokimi.io/run-id=<run-id>` removes them earlier.
+
+Everything else on this page — validation, conversion, dry-run rendering, node
+resolution, submission, streaming, reattachment, exit-code propagation — works now.
 
 ## Before the first run
 
@@ -177,6 +200,19 @@ use letters, digits, single spaces and a little punctuation.
 A malformed definition is a `config_error` and exits `3`. The summary is worth reading
 even when it passes: it shows the *parsed* values, so `1G` coming back as `1G` and not
 `1073741824` confirms the decimal-prefix rule was applied as intended.
+
+## convert
+
+Prints a test definition in the other format, and touches nothing:
+
+```console
+$ dokimi convert test.yaml             # the Robot suite
+$ dokimi convert suite.robot --to yaml # the YAML document
+```
+
+`--to robot`, the default, prints exactly the suite a run executes: phase 5 of every run
+calls the same function (ADR-01-08), so what you see here is byte for byte what Robot
+Framework runs in the cluster.
 
 ## submit
 

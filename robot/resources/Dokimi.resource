@@ -5,6 +5,8 @@ Documentation       Shared keywords for dokimi suites.
 ...                 library. No PromQL and no Kubernetes objects appear in the suite
 ...                 itself (ADR-01-03, kept by ADR-04-05 as the Robot format's design).
 ...
-...                 Scaffolding only - the keyword vocabulary arrives with M1-11 (#46).
+...                 The library provides ``Run Network Test`` and the criterion keywords,
+...                 such as ``Throughput Should Be``. Evaluating criteria arrives with
+...                 M1-13: until then every criterion keyword fails and says so.
 
 Library             ../libraries/DokimiLibrary.py

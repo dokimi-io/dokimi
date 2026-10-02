@@ -82,6 +82,17 @@ def test_the_image_runs_as_a_non_root_user() -> None:
     assert user_lines[-1] == "USER 65532:65532"
 
 
+@pytest.mark.parametrize("part", ["resources", "libraries"])
+def test_the_image_carries_what_the_rendered_suite_imports(part: str) -> None:
+    # The suite imports resources/Dokimi.resource, which imports the library adapter.
+    # Without both in the image, every pair's Robot process fails before its first keyword.
+    ignore = (REPOSITORY_ROOT / ".dockerignore").read_text().splitlines()
+
+    assert f"!robot/{part}" in ignore
+    assert f"COPY --chown=root:root robot/{part} /opt/dokimi/robot/{part}" in _instructions()
+    assert "DOKIMI_ROBOT_DIR=/opt/dokimi/robot" in DOCKERFILE.read_text()
+
+
 def test_the_checked_in_digest_is_unset() -> None:
     # A source checkout is not a release. If this ever lands set, some build is shipping
     # a digest it did not produce.

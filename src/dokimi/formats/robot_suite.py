@@ -28,6 +28,7 @@ ignored") applied to the other format.
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -48,7 +49,13 @@ from dokimi.model import (
     Unit,
 )
 
-__all__ = ["parse_robot", "render_robot"]
+__all__ = [
+    "RUN_NETWORK_TEST",
+    "criterion_from_keyword",
+    "criterion_keyword_names",
+    "parse_robot",
+    "render_robot",
+]
 
 RESOURCE_IMPORT = "resources/Dokimi.resource"
 
@@ -68,7 +75,9 @@ _OPTIONAL_VARIABLES = ("MONITORING_MODE", "RESULTS_DIRECTORY")
 #: The arguments ``Run Network Test`` is rendered with. They reference the variables and
 #: nothing else, because the variables are what the parser reads: a literal like
 #: ``source=worker-09`` here would be silently overridden by ``${SOURCE_NODE}``.
-_RUN_NETWORK_TEST = "Run Network Test"
+#: The keyword a test case calls to run its pair. The Robot adapter implements it.
+RUN_NETWORK_TEST = "Run Network Test"
+_RUN_NETWORK_TEST = RUN_NETWORK_TEST
 _RUN_NETWORK_TEST_ARGUMENTS = frozenset(
     {
         "type=${TEST_TYPE}",
@@ -299,15 +308,48 @@ def _test_statement(statement: Any, suite: _Suite) -> None:
     suite.criteria.append(_criterion(statement, keyword, subject, arguments))
 
 
+def criterion_keyword_names() -> tuple[str, ...]:
+    """Every criterion keyword, spelled canonically: the vocabulary a suite may use.
+
+    The parser reads exactly these, and the Robot adapter implements exactly these, from
+    this one table, so the two cannot disagree about what a criterion keyword is.
+    """
+    return tuple(_CRITERION_NAMES)
+
+
+def criterion_from_keyword(keyword: str, arguments: Sequence[str], *, where: str = "") -> Criterion:
+    """The criterion a call to *keyword* with *arguments* states.
+
+    *where* prefixes the error messages, such as a line number.
+
+    Raises:
+        ConfigError: if *keyword* is not a criterion keyword, or its arguments do not
+            make a criterion the model accepts.
+    """
+    subject = _CRITERION_KEYWORDS.get(_normalise(keyword))
+    if subject is None:
+        raise ConfigError(f"{where}{keyword!r} is not a criterion keyword")
+    return _criterion_of(where, keyword, subject, list(arguments))
+
+
 def _criterion(
     statement: Any,
     keyword: str,
     subject: tuple[Statistic | None, Metric],
     arguments: list[str],
 ) -> Criterion:
+    return _criterion_of(f"line {statement.lineno}: ", keyword, subject, arguments)
+
+
+def _criterion_of(
+    where: str,
+    keyword: str,
+    subject: tuple[Statistic | None, Metric],
+    arguments: list[str],
+) -> Criterion:
     if len(arguments) < 3:
         raise ConfigError(
-            f"line {statement.lineno}: criterion {keyword!r} needs a comparison, a value "
+            f"{where}criterion {keyword!r} needs a comparison, a value "
             f"and a unit, got {len(arguments)} argument(s)"
         )
     statistic, metric = subject
@@ -342,23 +384,25 @@ def _criterion_phrases() -> list[str]:
     return phrases
 
 
-def _criterion_table() -> dict[str, tuple[Statistic | None, Metric]]:
-    """Normalised keyword name -> (statistic, metric), for every combination.
+def _criterion_spellings() -> dict[str, tuple[Statistic | None, Metric]]:
+    """Canonical keyword name -> (statistic, metric), for every combination.
 
     Including combinations the model rejects — ``Min Throughput Should Be``, a bare
     ``Latency Should Be`` — so they reach :class:`Criterion`, which says precisely why,
     instead of being reported as an unknown keyword.
     """
-    table: dict[str, tuple[Statistic | None, Metric]] = {}
+    spellings: dict[str, tuple[Statistic | None, Metric]] = {}
     for metric in Metric:
-        table[_normalise(f"{metric.robot_phrasing} Should Be")] = (None, metric)
+        spellings[f"{metric.robot_phrasing} Should Be"] = (None, metric)
         for statistic in Statistic:
             phrase = f"{statistic.robot_phrasing} {metric.robot_phrasing} Should Be"
-            table[_normalise(phrase)] = (statistic, metric)
-    return table
+            spellings[phrase] = (statistic, metric)
+    return spellings
 
 
-_CRITERION_KEYWORDS = _criterion_table()
+_CRITERION_NAMES = _criterion_spellings()
+#: Normalised keyword name -> (statistic, metric), matched the way Robot matches names.
+_CRITERION_KEYWORDS = {_normalise(name): subject for name, subject in _CRITERION_NAMES.items()}
 
 
 def _body(node: Any) -> list[Any]:
