@@ -669,6 +669,10 @@ loses Robot's runner as its driver while keeping every keyword's underlying Pyth
 preflight, the readiness gate, the validation verdict, the result artifact, the diagnostic snapshot
 and cleanup. What it does not get is `output.xml`, `log.html` and `report.html`.
 
+**Contributing.** [CONTRIBUTING.md](CONTRIBUTING.md) covers how decisions are made, the standards
+every change is held to (code, tests and documentation), how pull requests work, and how we use AI
+coding assistants: to draft, never to decide, with every change reviewed by a maintainer.
+
 ## Milestones
 
 ### Milestone-01 — First end-to-end MVP
