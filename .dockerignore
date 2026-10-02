@@ -1,5 +1,5 @@
 # Only what the image builds need: pyproject.toml, uv.lock, README.md, LICENSE and src/
-# for the orchestrator, and the client script for the iperf2 workload image.
+# for the orchestrator, and the client and server scripts for the iperf2 workload image.
 *
 !LICENSE
 !README.md
@@ -7,4 +7,5 @@
 !uv.lock
 !src
 !images/iperf2/dokimi-iperf2-client.sh
+!images/iperf2/dokimi-iperf2-server.sh
 src/**/__pycache__

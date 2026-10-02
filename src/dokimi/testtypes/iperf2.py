@@ -20,6 +20,12 @@ the measurement with ``-y C``, writes the final CSV summary line — the complet
 to the container's termination message, and exits with ``iperf``'s own status.
 :meth:`Iperf2.is_complete` reads that from the pod's status, again without ``exec``.
 
+**Each pod writes its own view** ([ADR-02-02]). The server is the one that sees packet
+loss and jitter, so it writes an ``iperf -y C`` line per connection to its results
+directory too. The warm-up and the measurement send from two fixed source ports, and
+both pods record the measurement's in an ``iperf2.meta`` file next to their output, so
+the exporter picks the measured connection by its port rather than by its position.
+
 **The warm-up pass runs by default** ([ADR-04-04]): same path, same parameters, output
 discarded, for :data:`~dokimi.k8s.deadlines.DEFAULT_WARMUP_SECONDS`. It is never silent —
 ``warmup_duration_seconds`` is in the workload's run metadata, ``0`` when disabled — and
@@ -41,6 +47,7 @@ from dokimi.k8s.resources import POD, Manifest, NotFoundError
 from dokimi.model import Bandwidth, ConfigError, Duration, Protocol
 from dokimi.testtypes.images import resolve_workload_image
 from dokimi.testtypes.interface import (
+    ADDRESS_FAMILY,
     Capability,
     ClusterFacts,
     DeployedWorkload,
@@ -59,10 +66,13 @@ __all__ = [
     "CONTAINER_NAME",
     "IMAGE_NAME",
     "IPERF_PORT",
+    "MEASUREMENT_SOURCE_PORT",
     "TRIGGER_PORT",
+    "WARMUP_SOURCE_PORT",
     "Completion",
     "Iperf2",
     "Trigger",
+    "UnexpectedTargetError",
     "tcp_trigger",
 ]
 
@@ -73,6 +83,12 @@ CONTAINER_NAME = "iperf2"
 IPERF_PORT = 5001
 #: Where the idle client listens for :meth:`Iperf2.start`.
 TRIGGER_PORT = 5101
+#: The client's source port for the measurement, which the server's report names.
+MEASUREMENT_SOURCE_PORT = 5102
+#: The client's source port for the discarded warm-up pass.
+WARMUP_SOURCE_PORT = 5103
+#: Present once the client has been started; its readiness probe passes on it from then.
+_STARTED_MARKER = "/tmp/dokimi-started"
 #: The tool writes its native output here, and the exporter parses it from here.
 RESULTS_DIRECTORY = "/results"
 #: The uid the image runs as, shared with the orchestrator image ([ADR-05-04]).
@@ -127,6 +143,15 @@ _SCHEMA = ParameterSchema(
 )
 
 
+class UnexpectedTargetError(RuntimeError):
+    """The client measured against an address other than the server pod's.
+
+    The trigger port accepts one connection from whoever reaches it first, and the client
+    measures against whatever that connection sent. A summary naming another destination
+    is a result about some other path, and must not be read as this pair's.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Completion:
     """How the client finished: ``iperf``'s exit status and its final summary line."""
@@ -139,7 +164,18 @@ class Completion:
 
     @property
     def succeeded(self) -> bool:
-        return self.exit_code == 0
+        # iperf2 exits 0 when it never connected at all. The script turns that into a
+        # non-zero exit; this holds without relying on it: no summary is never a success.
+        return self.exit_code == 0 and bool(self.summary)
+
+    @property
+    def destination(self) -> str | None:
+        """The address the summary says was measured against, or ``None`` without one.
+
+        A ``-y C`` line starts ``timestamp,source_ip,source_port,destination_ip,...``.
+        """
+        fields = self.summary.split(",")
+        return fields[3] if len(fields) > 3 else None
 
 
 class Iperf2:
@@ -187,7 +223,7 @@ class Iperf2:
         warmup = params.get("warmup", Duration)
         pods = {
             Role.SERVER: self._pod(
-                placement, Role.SERVER, images.server.reference, self._server(protocol)
+                placement, Role.SERVER, images.server.reference, self._server(protocol, warmup)
             ),
             Role.CLIENT: self._pod(
                 placement,
@@ -213,20 +249,32 @@ class Iperf2:
                 "duration": params.written["duration"],
                 # ADR-04-04's field name. Never absent: 0 is how a disabled pass shows.
                 "warmup_duration_seconds": _plain(warmup.seconds),
-                # ADR-05-03: the mechanism, recorded with the result from the first run.
+                # ADR-05-03: the mechanism and the address family, recorded with the result
+                # from the first run. The family is the one DeployedWorkload.pod_ip() picks.
                 "connectivity_mode": "podNetwork",
+                "address_family": ADDRESS_FAMILY,
                 "workload_image": image.reference,
                 "workload_image_digest": image.digest or "",
                 "workload_image_source": image.source.value,
             },
         )
 
-    def _server(self, protocol: Protocol) -> dict[str, Any]:
-        command = ["iperf", "-s", "-p", str(IPERF_PORT)]
-        if protocol is Protocol.UDP:
-            command.append("-u")
+    def _server(self, protocol: Protocol, warmup: Duration) -> dict[str, Any]:
         return {
-            "command": command,
+            # The script ships in the image (images/iperf2/dokimi-iperf2-server.sh).
+            "command": ["dokimi-iperf2-server"],
+            "args": [
+                "--protocol",
+                protocol.value,
+                "--port",
+                str(IPERF_PORT),
+                "--source-port",
+                str(MEASUREMENT_SOURCE_PORT),
+                "--warmup",
+                _plain(warmup.seconds),
+                "--results",
+                RESULTS_DIRECTORY,
+            ],
             "ports": [
                 {"name": "iperf", "containerPort": IPERF_PORT, "protocol": protocol.name},
             ],
@@ -246,6 +294,10 @@ class Iperf2:
                 str(IPERF_PORT),
                 "--trigger-port",
                 str(TRIGGER_PORT),
+                "--source-port",
+                str(MEASUREMENT_SOURCE_PORT),
+                "--warmup-source-port",
+                str(WARMUP_SOURCE_PORT),
                 "--bandwidth",
                 _plain(bandwidth.bits_per_second),
                 "--duration",
@@ -256,8 +308,9 @@ class Iperf2:
                 RESULTS_DIRECTORY,
             ],
             "ports": [{"name": "trigger", "containerPort": TRIGGER_PORT, "protocol": "TCP"}],
-            # Ready means "listening for start()", which is exactly what the gate asks.
-            "readinessProbe": _listening(TRIGGER_PORT),
+            # Ready means "listening for start()", which is exactly what the gate asks, and
+            # from then on "started": a client that is measuring is not an unwell one.
+            "readinessProbe": _listening(TRIGGER_PORT, or_exists=_STARTED_MARKER),
             # The completion marker, readable from the pod's status without exec.
             "terminationMessagePath": "/dev/termination-log",
             "terminationMessagePolicy": "File",
@@ -333,8 +386,9 @@ class Iperf2:
     # -- execution --------------------------------------------------------------------------
 
     def start(self, deployed: DeployedWorkload) -> None:
-        # A hard precondition, checked here as well as by the gate: start() is the call
-        # that sends traffic, so it is the one that must refuse ([ADR-05-07]).
+        # A hard precondition ([ADR-05-07]). The gate establishes it, and this reads the
+        # snapshot the gate returned, so the two cannot disagree. It guards against a
+        # DeployedWorkload built some other way: start() sends traffic, so it must refuse.
         for role in (Role.SERVER, Role.CLIENT):
             if not pod_is_ready(deployed.pods[role]):
                 raise NotReadyError(
@@ -362,11 +416,19 @@ class Iperf2:
             terminated = (status.get("state") or {}).get("terminated")
             if terminated is None:
                 return None
-            return Completion(
+            completion = Completion(
                 exit_code=int(terminated.get("exitCode", -1)),
                 summary=(terminated.get("message") or "").strip(),
                 reason=terminated.get("reason") or "",
             )
+            server = deployed.pod_ip(Role.SERVER)
+            if completion.summary and completion.destination != server:
+                raise UnexpectedTargetError(
+                    f"{deployed.spec.test_id}: the client measured against "
+                    f"{completion.destination}, not the server pod at {server}. Something "
+                    f"other than start() reached its trigger port {TRIGGER_PORT} first"
+                )
+            return completion
         return None
 
     def cleanup(self, deployed: DeployedWorkload) -> None:
@@ -401,14 +463,17 @@ def tcp_trigger(
     raise ConnectionError(f"could not start the client at {host}:{port}: {last}")
 
 
-def _listening(port: int) -> dict[str, Any]:
-    """A readiness probe: something is listening on *port*.
+def _listening(port: int, *, or_exists: str | None = None) -> dict[str, Any]:
+    """A readiness probe: something listens on *port*, or the file *or_exists* exists.
 
     ``netstat`` rather than a ``tcpSocket`` probe, because a probe that connected to the
     client's trigger port would *be* a trigger. UDP has no connect-probe at all.
     """
+    check = f"netstat -ln | grep -q ':{port} '"
+    if or_exists is not None:
+        check += f" || test -e {or_exists}"
     return {
-        "exec": {"command": ["sh", "-c", f"netstat -ln | grep -q ':{port} '"]},
+        "exec": {"command": ["sh", "-c", check]},
         "periodSeconds": 2,
         "failureThreshold": 1,
     }

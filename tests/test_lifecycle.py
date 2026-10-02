@@ -20,12 +20,19 @@ from dokimi.k8s.ownership import (
 )
 from dokimi.k8s.resources import POD, Manifest
 from dokimi.run_identity import RunId
-from dokimi.testtypes.interface import DeployedWorkload, Placement, Role, WorkloadSpec
+from dokimi.testtypes.interface import (
+    DeployedWorkload,
+    NoIPv4AddressError,
+    Placement,
+    Role,
+    WorkloadSpec,
+)
 from dokimi.testtypes.iperf2 import Iperf2
 from dokimi.testtypes.lifecycle import (
     DEFAULT_READINESS_TIMEOUT_SECONDS,
     CompletionTimeoutError,
-    SchedulingError,
+    ErrorCategory,
+    ReadinessGateError,
     await_ready,
     deploy,
     pod_is_ready,
@@ -164,6 +171,36 @@ def test_the_gate_passes_when_both_pods_are_ready(
     assert deployed.pod_ip(Role.CLIENT) == "10.0.1.5"
 
 
+def dual_stack(*ips: str) -> Manifest:
+    return running(ips[0]) | {"podIPs": [{"ip": ip} for ip in ips]}
+
+
+def test_a_dual_stack_pod_is_addressed_over_ipv4_even_when_ipv6_is_primary(
+    cluster: FakeResources, spec: WorkloadSpec
+) -> None:
+    # ADR-05-03: IPv4 when both families are available. On an IPv6-primary cluster
+    # status.podIP is the IPv6 address, and the client script refuses it.
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, dual_stack("fd00:10:244::7", "10.0.2.7"))
+    set_status(cluster, spec, Role.CLIENT, dual_stack("fd00:10:244::5", "10.0.1.5"))
+
+    deployed = gate(cluster, spec)
+
+    assert deployed.pod_ip(Role.SERVER) == "10.0.2.7"
+    assert deployed.pod_ip(Role.CLIENT) == "10.0.1.5"
+
+
+def test_an_ipv6_only_pod_is_refused_by_name(cluster: FakeResources, spec: WorkloadSpec) -> None:
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, dual_stack("fd00:10:244::7"))
+    set_status(cluster, spec, Role.CLIENT, running("10.0.1.5"))
+
+    deployed = gate(cluster, spec)
+
+    with pytest.raises(NoIPv4AddressError, match=r"server pod .* only fd00:10:244::7"):
+        deployed.pod_ip(Role.SERVER)
+
+
 def test_a_pod_that_never_becomes_ready_is_a_scheduling_error_naming_why(
     cluster: FakeResources, spec: WorkloadSpec
 ) -> None:
@@ -171,11 +208,12 @@ def test_a_pod_that_never_becomes_ready_is_a_scheduling_error_naming_why(
     set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
     set_status(cluster, spec, Role.CLIENT, unschedulable())
 
-    with pytest.raises(SchedulingError, match="untolerated taint") as raised:
+    with pytest.raises(ReadinessGateError, match="untolerated taint") as raised:
         gate(cluster, spec)
 
     assert raised.value.test_id == "pair-001"
     assert set(raised.value.reasons) == {Role.CLIENT}
+    assert raised.value.category is ErrorCategory.SCHEDULING
 
 
 def test_the_gate_waits_its_whole_timeout_and_no_longer(
@@ -184,7 +222,7 @@ def test_the_gate_waits_its_whole_timeout_and_no_longer(
     deployed_to(cluster, spec)
     clock = Clock()
 
-    with pytest.raises(SchedulingError):
+    with pytest.raises(ReadinessGateError):
         await_ready(cluster, spec, timeout=10, poll_interval=2, clock=clock, sleep=clock.sleep)
 
     assert clock.now == 10
@@ -205,26 +243,50 @@ def test_a_pod_that_becomes_ready_later_passes(cluster: FakeResources, spec: Wor
     assert clock.slept == [2.0]
 
 
-def test_an_image_pull_failure_names_the_image_problem(
-    cluster: FakeResources, spec: WorkloadSpec
+def pulling_failed(reason: str) -> Manifest:
+    return {
+        "phase": "Pending",
+        "containerStatuses": [{"name": "iperf2", "state": {"waiting": {"reason": reason}}}],
+    }
+
+
+@pytest.mark.parametrize(
+    "reason", ["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]
+)
+def test_an_image_pull_failure_is_its_own_category(
+    cluster: FakeResources, spec: WorkloadSpec, reason: str
 ) -> None:
-    # "Can't be placed" and "can't fetch its image" point at different fixes.
+    # "Can't be placed" and "can't fetch its image" point at different fixes, and
+    # ADR-05-05 gives the second its own category. ADR-05-07's preflight reuses this gate
+    # and must tell them apart from the category, not from the text.
     deployed_to(cluster, spec)
     set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
-    set_status(
-        cluster,
-        spec,
-        Role.CLIENT,
-        {
-            "phase": "Pending",
-            "containerStatuses": [
-                {"name": "iperf2", "state": {"waiting": {"reason": "ImagePullBackOff"}}}
-            ],
-        },
-    )
+    set_status(cluster, spec, Role.CLIENT, pulling_failed(reason))
 
-    with pytest.raises(SchedulingError, match="ImagePullBackOff"):
+    with pytest.raises(ReadinessGateError, match=reason) as raised:
         gate(cluster, spec)
+
+    assert raised.value.category is ErrorCategory.IMAGE_PULL
+    assert raised.value.categories == {Role.CLIENT: ErrorCategory.IMAGE_PULL}
+    assert "could not pull its image" in str(raised.value)
+
+
+def test_a_pull_failure_outweighs_an_unschedulable_pod(
+    cluster: FakeResources, spec: WorkloadSpec
+) -> None:
+    # The unschedulable pod has not tried to pull yet; the pull failure is certain.
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, unschedulable())
+    set_status(cluster, spec, Role.CLIENT, pulling_failed("ErrImagePull"))
+
+    with pytest.raises(ReadinessGateError) as raised:
+        gate(cluster, spec)
+
+    assert raised.value.categories == {
+        Role.SERVER: ErrorCategory.SCHEDULING,
+        Role.CLIENT: ErrorCategory.IMAGE_PULL,
+    }
+    assert raised.value.category is ErrorCategory.IMAGE_PULL
 
 
 def test_a_pod_that_ended_before_it_was_ready_fails_the_gate_at_once(
@@ -234,14 +296,14 @@ def test_a_pod_that_ended_before_it_was_ready_fails_the_gate_at_once(
     set_status(cluster, spec, Role.SERVER, {"phase": "Failed"})
     clock = Clock()
 
-    with pytest.raises(SchedulingError, match="ended"):
+    with pytest.raises(ReadinessGateError, match="ended"):
         await_ready(cluster, spec, timeout=10, clock=clock, sleep=clock.sleep)
 
     assert clock.slept == []  # it can never become Ready, so there is nothing to wait for
 
 
 def test_a_pod_that_was_deleted_fails_the_gate(cluster: FakeResources, spec: WorkloadSpec) -> None:
-    with pytest.raises(SchedulingError, match="no longer exists"):
+    with pytest.raises(ReadinessGateError, match="no longer exists"):
         gate(cluster, spec)
 
 
@@ -273,7 +335,7 @@ def test_start_is_never_called_when_a_pod_is_not_ready(
     plugin = Recorder()
     clock = Clock()
 
-    with pytest.raises(SchedulingError):
+    with pytest.raises(ReadinessGateError):
         start_when_ready(plugin, cluster, spec, timeout=10, clock=clock, sleep=clock.sleep)
 
     assert plugin.started == []

@@ -20,11 +20,12 @@ ARG IPERF_VERSION=2.2.1-r0
 
 LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
       org.opencontainers.image.description="dokimi: iperf2 test workload" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 RUN apk add --no-cache "iperf=${IPERF_VERSION}"
 
 COPY --chmod=0755 images/iperf2/dokimi-iperf2-client.sh /usr/local/bin/dokimi-iperf2-client
+COPY --chmod=0755 images/iperf2/dokimi-iperf2-server.sh /usr/local/bin/dokimi-iperf2-server
 
 # Non-root (ADR-05-04). Pod network only in Milestone-01 (ADR-05-03), so nothing here
 # needs a privileged port, raw sockets or host networking. The same uid as the

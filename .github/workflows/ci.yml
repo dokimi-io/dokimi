@@ -157,14 +157,18 @@ jobs:
 
       # The whole pod contract, without a cluster: the server listens, both readiness
       # probes pass with the exact commands the pod specs use, a trigger starts the idle
-      # client, and the client exits 0 having printed a CSV summary line.
+      # client, the client exits 0 having printed a CSV summary line, and the server's
+      # results hold the measured connection, told apart from the warm-up by its port.
       - name: A client and a server measure over UDP
         run: |
           set -eu
           docker network create dokimi-ci
-          docker run -d --name server --network dokimi-ci iperf2:ci iperf -s -p 5001 -u
+          docker run -d --name server --network dokimi-ci iperf2:ci \
+            dokimi-iperf2-server --protocol udp --port 5001 --source-port 5102 \
+            --warmup 1 --results /tmp
           docker run -d --name client --network dokimi-ci iperf2:ci \
             dokimi-iperf2-client --protocol udp --port 5001 --trigger-port 5101 \
+            --source-port 5102 --warmup-source-port 5103 \
             --bandwidth 10000000 --duration 2 --warmup 1 --results /tmp
 
           probe() {
@@ -190,3 +194,12 @@ jobs:
           output="$(docker logs client 2>/dev/null)"
           printf '%s\n' "$output" | grep -Eq '^[0-9]{14}(\.[0-9]+)?,' \
             || { echo "no iperf -y C summary line in the client output"; exit 1; }
+
+          reports="$(docker exec server cat /tmp/iperf2.csv)"
+          printf '%s\n' "$reports"
+          docker exec server grep -qx 'measurement_source_port=5102' /tmp/iperf2.meta \
+            || { echo "the server's meta file does not name the measurement's port"; exit 1; }
+          printf '%s\n' "$reports" | grep -Eq '^[0-9]{14}(\.[0-9]+)?,[0-9.]+,5102,' \
+            || { echo "no server report for the measurement's source port 5102"; exit 1; }
+          printf '%s\n' "$reports" | grep -Eq '^[0-9]{14}(\.[0-9]+)?,[0-9.]+,5103,' \
+            || { echo "no server report for the warm-up's source port 5103"; exit 1; }

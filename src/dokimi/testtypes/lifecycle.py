@@ -8,19 +8,24 @@ this module is where every test type is held to the same order:
    by construction, since it is the only path that creates them;
 2. :func:`await_ready` is the **per-test readiness gate** ([ADR-05-07]): both pods
    ``Ready`` via the Kubernetes API, within an explicit timeout, or a
-   :class:`SchedulingError` for that test;
+   :class:`ReadinessGateError` for that test;
 3. :func:`start_when_ready` calls ``start()`` only with what the gate returned, so
    there is no path on which ``start()`` sees a pod that did not pass it;
 4. :func:`wait_for_completion` polls ``is_complete()``.
 
-A pod that never becomes ``Ready`` is a ``scheduling`` error for that test
-([ADR-05-05]) — not absent data, and not a network failure. The error carries what the
-pod's status said, because "Unschedulable: node(s) had untolerated taint" and
-"ImagePullBackOff" point at different fixes.
+A pod that never becomes ``Ready`` is an error for that test — not absent data, and not
+a network failure. Which error is a machine-readable :class:`ErrorCategory`, not only
+text: a pod whose image cannot be pulled is ``image_pull``, ADR-05-05's own category,
+and anything else is ``scheduling``. "Unschedulable: node(s) had untolerated taint" and
+"ImagePullBackOff" point at different fixes, and ADR-05-07's preflight, which reuses
+this gate for the first pair, must keep them apart. ADR-05-07's per-test clause calls
+every pod that never becomes ``Ready`` a ``scheduling`` error; OQ-139 records the
+conflict, and settling it either way is a change to :data:`_IMAGE_PULL_REASONS`.
 """
 
 from __future__ import annotations
 
+import enum
 import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol
@@ -37,8 +42,9 @@ __all__ = [
     "DEFAULT_READINESS_TIMEOUT_SECONDS",
     "Completes",
     "CompletionTimeoutError",
+    "ErrorCategory",
     "NotReadyError",
-    "SchedulingError",
+    "ReadinessGateError",
     "Starts",
     "WorkloadLostError",
     "await_ready",
@@ -58,6 +64,23 @@ DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 
 _TERMINAL_PHASES = ("Succeeded", "Failed")
 
+#: The kubelet's container-waiting reasons for an image it could not get. Each one is
+#: about the image reference, the registry or its credentials, never about placement.
+_IMAGE_PULL_REASONS = frozenset(
+    {"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"}
+)
+
+
+class ErrorCategory(enum.Enum):
+    """The two of ADR-05-05's error categories the readiness gate can produce.
+
+    The whole taxonomy, and how it maps onto exit codes, is M1-16's; these are its values,
+    spelled as ADR-05-05 spells them.
+    """
+
+    SCHEDULING = "scheduling"
+    IMAGE_PULL = "image_pull"
+
 
 class Starts(Protocol):
     """The part of :class:`~dokimi.testtypes.interface.TestTypePlugin` the gate calls."""
@@ -71,14 +94,36 @@ class Completes(Protocol):
     def is_complete(self, deployed: DeployedWorkload) -> bool: ...
 
 
-class SchedulingError(RuntimeError):
-    """A pod of this test never became ``Ready``: ADR-05-05's ``scheduling`` category."""
+class ReadinessGateError(RuntimeError):
+    """A pod of this test never became ``Ready``, and why, per pod and as a category."""
 
-    def __init__(self, test_id: str, reasons: Mapping[Role, str]) -> None:
+    def __init__(
+        self,
+        test_id: str,
+        reasons: Mapping[Role, str],
+        categories: Mapping[Role, ErrorCategory],
+    ) -> None:
         self.test_id = test_id
         self.reasons = dict(reasons)
+        self.categories = dict(categories)
         detail = "; ".join(f"{role.value}: {reason}" for role, reason in self.reasons.items())
-        super().__init__(f"{test_id} could not be scheduled: {detail}")
+        super().__init__(f"{test_id} {self._summary()}: {detail}")
+
+    @property
+    def category(self) -> ErrorCategory:
+        """The test's category: ``image_pull`` if any pod could not get its image.
+
+        A pod that cannot be placed has not tried to pull yet, so a pull failure next to
+        it is the one finding that is certain, and both roles usually share the image.
+        """
+        if ErrorCategory.IMAGE_PULL in self.categories.values():
+            return ErrorCategory.IMAGE_PULL
+        return ErrorCategory.SCHEDULING
+
+    def _summary(self) -> str:
+        if self.category is ErrorCategory.IMAGE_PULL:
+            return "could not pull its image"
+        return "could not be scheduled"
 
 
 class NotReadyError(RuntimeError):
@@ -129,7 +174,7 @@ def await_ready(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> DeployedWorkload:
-    """The per-test readiness gate: both pods ``Ready``, or :class:`SchedulingError`.
+    """The per-test readiness gate: both pods ``Ready``, or :class:`ReadinessGateError`.
 
     Fails early, rather than at the timeout, for a pod that can no longer become
     ``Ready`` — one that has terminated or been deleted.
@@ -139,28 +184,36 @@ def await_ready(
         pods: dict[Role, Manifest] = {}
         blocked: dict[Role, str] = {}
         waiting: dict[Role, str] = {}
+        categories: dict[Role, ErrorCategory] = {}
         for role in (Role.SERVER, Role.CLIENT):
             name = spec.pod_name(role)
             try:
                 pod = cluster.get(POD, spec.namespace, name)
             except NotFoundError:
                 blocked[role] = f"pod {name} no longer exists"
+                categories[role] = ErrorCategory.SCHEDULING
                 continue
             pods[role] = pod
             if pod_is_ready(pod):
                 continue
+            reason, why = _why(pod)
+            categories[role] = (
+                ErrorCategory.IMAGE_PULL
+                if reason in _IMAGE_PULL_REASONS
+                else ErrorCategory.SCHEDULING
+            )
             phase = (pod.get("status") or {}).get("phase")
             if phase in _TERMINAL_PHASES:
-                blocked[role] = f"pod {name} ended ({phase}) before it was Ready: {_why(pod)}"
+                blocked[role] = f"pod {name} ended ({phase}) before it was Ready: {why}"
             else:
-                waiting[role] = f"pod {name} not Ready after {timeout:g}s: {_why(pod)}"
+                waiting[role] = f"pod {name} not Ready after {timeout:g}s: {why}"
 
         if blocked:
-            raise SchedulingError(spec.test_id, blocked)
+            raise ReadinessGateError(spec.test_id, blocked, _only(categories, blocked))
         if not waiting:
             return DeployedWorkload(spec=spec, pods=pods, cluster=cluster)
         if clock() >= deadline:
-            raise SchedulingError(spec.test_id, waiting)
+            raise ReadinessGateError(spec.test_id, waiting, _only(categories, waiting))
         sleep(poll_interval)
 
 
@@ -201,18 +254,31 @@ def wait_for_completion(
         sleep(poll_interval)
 
 
-def _why(pod: Manifest) -> str:
-    """The most specific reason a pod's status gives for not being Ready."""
+def _only(
+    categories: Mapping[Role, ErrorCategory], roles: Mapping[Role, str]
+) -> dict[Role, ErrorCategory]:
+    """*categories* for the pods the error is about, not the one that was merely waiting."""
+    return {role: categories[role] for role in roles}
+
+
+def _why(pod: Manifest) -> tuple[str, str]:
+    """The most specific reason a pod's status gives for not being Ready.
+
+    Returns the bare reason, which classifies the failure, and the text a person reads.
+    """
     status: dict[str, Any] = pod.get("status") or {}
     for container in status.get("containerStatuses") or []:
         state = container.get("state") or {}
         for key in ("waiting", "terminated"):
             detail = state.get(key)
             if detail and detail.get("reason"):
-                message = detail.get("message")
-                return f"{detail['reason']}" + (f" ({message})" if message else "")
+                return detail["reason"], _described(detail["reason"], detail.get("message"))
     for condition in status.get("conditions") or []:
         if condition.get("status") != "True" and condition.get("reason"):
-            message = condition.get("message")
-            return f"{condition['reason']}" + (f" ({message})" if message else "")
-    return f"phase {status.get('phase') or 'unknown'}"
+            reason = condition["reason"]
+            return reason, _described(reason, condition.get("message"))
+    return "", f"phase {status.get('phase') or 'unknown'}"
+
+
+def _described(reason: str, message: str | None) -> str:
+    return reason + (f" ({message})" if message else "")

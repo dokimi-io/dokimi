@@ -22,6 +22,7 @@ test and created without a conversion layer in between.
 from __future__ import annotations
 
 import enum
+import ipaddress
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -33,12 +34,14 @@ if TYPE_CHECKING:
     from dokimi.k8s.resources import Manifest, ResourceClient
 
 __all__ = [
+    "ADDRESS_FAMILY",
     "Capability",
     "ClusterFacts",
     "DeployedWorkload",
     "ExporterSpec",
     "ImagePair",
     "ImageSource",
+    "NoIPv4AddressError",
     "Parameter",
     "ParameterSchema",
     "Placement",
@@ -50,6 +53,18 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+
+#: The address family test traffic uses. [ADR-05-03]: IPv4 in Milestone-01 when both
+#: families are available, and the family used is recorded with the result.
+ADDRESS_FAMILY = "IPv4"
+
+
+class NoIPv4AddressError(RuntimeError):
+    """A pod that passed the gate has no IPv4 address: an IPv6-only pod network.
+
+    Milestone-01 measures over IPv4 only ([ADR-05-03]). Sending an IPv6 address on
+    instead would fail later, inside the pod, with a less useful message.
+    """
 
 
 class Capability(enum.Enum):
@@ -277,11 +292,27 @@ class DeployedWorkload:
         return self.spec.namespace
 
     def pod_ip(self, role: Role) -> str:
-        """The pod's IP, which [ADR-05-03]'s direct pod addressing sends traffic to."""
-        ip: str | None = (self.pods[role].get("status") or {}).get("podIP")
-        if not ip:
+        """The pod's IPv4 address, which [ADR-05-03]'s direct pod addressing sends to.
+
+        From ``status.podIPs``, not ``status.podIP``: on a dual-stack cluster whose primary
+        family is IPv6, ``podIP`` is the IPv6 address, and ADR-05-03 chooses IPv4 whenever
+        both families are available. ``podIP`` is read only when ``podIPs`` is absent.
+        """
+        status = self.pods[role].get("status") or {}
+        candidates = [entry.get("ip") for entry in status.get("podIPs") or []] or [
+            status.get("podIP")
+        ]
+        addresses = [address for address in candidates if address]
+        if not addresses:
             raise RuntimeError(f"the {role.value} pod has no IP although it passed the gate")
-        return ip
+        for address in addresses:
+            if isinstance(ipaddress.ip_address(address), ipaddress.IPv4Address):
+                return str(address)
+        raise NoIPv4AddressError(
+            f"the {role.value} pod {self.spec.pod_name(role)} has no IPv4 address, only "
+            f"{', '.join(addresses)}. Milestone-01 measures over IPv4 (ADR-05-03), so it "
+            "needs an IPv4 or dual-stack pod network"
+        )
 
 
 @dataclass(frozen=True, slots=True)

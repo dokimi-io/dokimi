@@ -15,6 +15,8 @@ from __future__ import annotations
 import pathlib
 import re
 
+import pytest
+
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCKERFILE = REPOSITORY_ROOT / "images" / "orchestrator" / "Dockerfile"
 IPERF2_DOCKERFILE = REPOSITORY_ROOT / "images" / "iperf2" / "Dockerfile"
@@ -142,19 +144,28 @@ def test_the_iperf2_image_runs_as_a_non_root_user() -> None:
     assert user_lines and user_lines[-1] == "USER 65532:65532"
 
 
-def test_the_iperf2_client_script_is_in_the_build_context() -> None:
+IPERF2_SCRIPTS = ("dokimi-iperf2-client", "dokimi-iperf2-server")
+
+
+@pytest.mark.parametrize("command", IPERF2_SCRIPTS)
+def test_each_iperf2_script_is_in_the_build_context(command: str) -> None:
     # .dockerignore excludes everything by default; a script it drops fails the COPY.
-    script = "images/iperf2/dokimi-iperf2-client.sh"
+    script = f"images/iperf2/{command}.sh"
     ignore = (REPOSITORY_ROOT / ".dockerignore").read_text().splitlines()
 
     assert f"!{script}" in ignore
-    assert f"COPY --chmod=0755 {script} /usr/local/bin/dokimi-iperf2-client" in (
-        _iperf2_instructions()
-    )
+    assert f"COPY --chmod=0755 {script} /usr/local/bin/{command}" in _iperf2_instructions()
 
 
-def test_the_iperf2_client_script_has_unix_line_endings() -> None:
+@pytest.mark.parametrize("command", IPERF2_SCRIPTS)
+def test_each_iperf2_script_has_unix_line_endings(command: str) -> None:
     # A CRLF breaks a shell script outright; .gitattributes keeps *.sh as LF.
-    script = REPOSITORY_ROOT / "images" / "iperf2" / "dokimi-iperf2-client.sh"
+    script = REPOSITORY_ROOT / "images" / "iperf2" / f"{command}.sh"
 
     assert b"\r\n" not in script.read_bytes()
+
+
+@pytest.mark.parametrize("dockerfile", [DOCKERFILE, IPERF2_DOCKERFILE])
+def test_each_image_is_labelled_with_the_project_license(dockerfile: pathlib.Path) -> None:
+    assert (REPOSITORY_ROOT / "LICENSE").read_text().startswith("MIT License")
+    assert 'org.opencontainers.image.licenses="MIT"' in dockerfile.read_text()

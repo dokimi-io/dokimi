@@ -12,6 +12,15 @@ absent" stay distinguishable.
 The first exporter, for `iperf2`, arrives with M1-10 (adrs#45). M1-09 already fixed where
 it plugs in, in `Iperf2.exporter()`: a sidecar container named `exporter`, serving
 `/metrics` on port 9101, reading the tool's output from the `results` volume at
-`/results`, which both pods already mount. The client writes `iperf2.csv` there (`iperf -y
-C`) and `iperf2.stderr` next to it. The warm-up pass writes elsewhere, so the exporter never
-sees a number that was meant to be discarded.
+`/results`, which both pods already mount. Each pod writes its own view there:
+
+- **`iperf2.csv`**: `iperf -y C` lines. The client's is its summary of the measurement;
+  the client's warm-up pass writes elsewhere. The server's has one line per connection it
+  received, the warm-up's included, plus a sum line over all of them (connection id `-1`).
+  Only the server's lines carry packet loss and jitter: a UDP client's own summary has
+  `nan` jitter and `-1` datagrams.
+- **`iperf2.meta`**: `role`, `warmup_seconds` and `measurement_source_port`. The client
+  sends the warm-up and the measurement from two fixed source ports, so on the server the
+  measured connection is the line whose source port (the third field) is
+  `measurement_source_port`. The warm-up's line and the sum line are not results.
+- **`iperf2.stderr`**: the client's diagnostics, next to its CSV.

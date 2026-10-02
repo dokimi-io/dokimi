@@ -32,9 +32,12 @@ from dokimi.testtypes.interface import (
 from dokimi.testtypes.iperf2 import (
     CONTAINER_NAME,
     IPERF_PORT,
+    MEASUREMENT_SOURCE_PORT,
     TRIGGER_PORT,
+    WARMUP_SOURCE_PORT,
     Completion,
     Iperf2,
+    UnexpectedTargetError,
     tcp_trigger,
 )
 from dokimi.testtypes.lifecycle import NotReadyError, WorkloadLostError
@@ -49,9 +52,9 @@ PLACEMENT = Placement(
     source_node="worker-01",
     target_node="worker-02",
 )
-CLIENT_SCRIPT = (
-    pathlib.Path(__file__).resolve().parent.parent / "images" / "iperf2" / "dokimi-iperf2-client.sh"
-)
+SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "images" / "iperf2"
+CLIENT_SCRIPT = SCRIPTS / "dokimi-iperf2-client.sh"
+SERVER_SCRIPT = SCRIPTS / "dokimi-iperf2-server.sh"
 DNS_1123_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -67,11 +70,19 @@ def container(pod: Manifest) -> dict[str, Any]:
     return result
 
 
-def client_args(**overrides: str) -> dict[str, str]:
-    args = container(
-        Iperf2(image=IMAGE).workload(params(**overrides), PLACEMENT).pods[Role.CLIENT]
-    )["args"]
+def role_args(role: Role, **overrides: str) -> dict[str, str]:
+    args = container(Iperf2(image=IMAGE).workload(params(**overrides), PLACEMENT).pods[role])[
+        "args"
+    ]
     return dict(zip(args[::2], args[1::2], strict=True))
+
+
+def client_args(**overrides: str) -> dict[str, str]:
+    return role_args(Role.CLIENT, **overrides)
+
+
+def server_args(**overrides: str) -> dict[str, str]:
+    return role_args(Role.SERVER, **overrides)
 
 
 # -- capabilities ------------------------------------------------------------------------
@@ -187,6 +198,7 @@ def test_the_run_metadata_attributes_the_result() -> None:
     assert metadata["workload_image_digest"] == DIGEST
     assert metadata["workload_image_source"] == "override"
     assert metadata["connectivity_mode"] == "podNetwork"
+    assert metadata["address_family"] == "IPv4"
     assert metadata["protocol"] == "udp"
 
 
@@ -247,16 +259,38 @@ def test_the_client_measures_in_base_units() -> None:
     assert args["--protocol"] == "udp"
 
 
-@pytest.mark.parametrize(("protocol", "flag"), [("udp", True), ("tcp", False)])
-def test_the_server_listens_on_the_measured_protocol(protocol: str, flag: bool) -> None:
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+def test_the_server_listens_on_the_measured_protocol(protocol: str) -> None:
     server = container(
         Iperf2(image=IMAGE).workload(params(protocol=protocol), PLACEMENT).pods[Role.SERVER]
     )
 
-    assert ("-u" in server["command"]) is flag
+    assert server_args(protocol=protocol)["--protocol"] == protocol
     assert server["ports"] == [
         {"name": "iperf", "containerPort": IPERF_PORT, "protocol": protocol.upper()}
     ]
+
+
+def test_the_server_writes_its_reports_where_the_exporter_reads_them() -> None:
+    # The server is the pod that sees loss and jitter (ADR-02-02): its reports must reach
+    # the results volume, not only its log.
+    assert server_args()["--results"] == Iperf2().exporter().results_directory
+    assert client_args()["--results"] == Iperf2().exporter().results_directory
+
+
+def test_both_pods_name_the_measurement_by_the_same_source_port() -> None:
+    # The server receives the warm-up too. The exporter tells the two apart by the
+    # client's source port, so both pods must agree on it, and the warm-up must differ.
+    client, server = client_args(), server_args()
+
+    assert client["--source-port"] == server["--source-port"] == str(MEASUREMENT_SOURCE_PORT)
+    assert client["--warmup-source-port"] == str(WARMUP_SOURCE_PORT)
+    assert WARMUP_SOURCE_PORT != MEASUREMENT_SOURCE_PORT
+
+
+def test_the_server_is_told_the_warm_up_the_client_runs() -> None:
+    assert server_args(warmup="5s")["--warmup"] == client_args(warmup="5s")["--warmup"] == "5"
+    assert server_args(warmup="0s")["--warmup"] == "0"
 
 
 def test_no_readiness_probe_connects_to_the_trigger_port() -> None:
@@ -275,13 +309,28 @@ def test_each_probe_checks_the_port_its_container_serves() -> None:
         assert f":{port['containerPort']} " in " ".join(spec["readinessProbe"]["exec"]["command"])
 
 
-def test_the_client_script_accepts_exactly_the_flags_the_plugin_passes() -> None:
-    # The script is the contract between the orchestrator and the pod, and it lives in
+@pytest.mark.parametrize(
+    ("script", "role"), [(CLIENT_SCRIPT, Role.CLIENT), (SERVER_SCRIPT, Role.SERVER)]
+)
+def test_each_script_accepts_exactly_the_flags_the_plugin_passes(
+    script: pathlib.Path, role: Role
+) -> None:
+    # The scripts are the contract between the orchestrator and the pod, and they live in
     # the image. Nothing else would notice the two drifting apart until a real run.
-    script = CLIENT_SCRIPT.read_text()
-    accepted = set(re.findall(r"^\s+(--[a-z-]+)\)", script, re.MULTILINE))
+    accepted = set(re.findall(r"^\s+(--[a-z-]+)\)", script.read_text(), re.MULTILINE))
 
-    assert accepted == set(client_args())
+    assert accepted == set(role_args(role))
+
+
+def test_a_started_client_stays_ready() -> None:
+    # Once triggered the client stops listening. Without the marker it would be NotReady
+    # for its whole measurement, and skipped by anything that selects Ready endpoints.
+    client = container(Iperf2(image=IMAGE).workload(params(), PLACEMENT).pods[Role.CLIENT])
+    (_, _, check) = client["readinessProbe"]["exec"]["command"]
+    marker = check.rpartition("test -e ")[2]
+
+    assert marker.startswith("/tmp/")  # the one writable path besides /results
+    assert f": >{marker}" in CLIENT_SCRIPT.read_text()
 
 
 # -- start, completion, cleanup ----------------------------------------------------------
@@ -367,6 +416,32 @@ def test_a_failed_client_is_complete_and_says_so() -> None:
     assert completion is not None
     assert not completion.succeeded
     assert completion.summary == ""
+
+
+def test_an_exit_without_a_summary_line_is_not_a_success() -> None:
+    # iperf2 exits 0 when it never connected at all.
+    cluster = FakeResources()
+    workload = _client_status(cluster, {"terminated": {"exitCode": 0, "reason": "Completed"}})
+
+    completion = Iperf2().completion(workload)
+
+    assert completion is not None
+    assert not completion.succeeded
+
+
+def test_a_summary_from_another_destination_is_refused() -> None:
+    # Whoever reaches the trigger port first chooses the target. start() notices, but
+    # the client still measures; its summary must not pass as this pair's result.
+    cluster = FakeResources()
+    summary = "20260924143100,10.0.1.5,5102,10.9.9.9,5001,1,0.0-30.0,3750000000,1000000000"
+    workload = _client_status(
+        cluster, {"terminated": {"exitCode": 0, "reason": "Completed", "message": summary}}
+    )
+
+    with pytest.raises(
+        UnexpectedTargetError, match=r"10\.9\.9\.9, not the server pod at 10\.0\.2\.7"
+    ):
+        Iperf2().completion(workload)
 
 
 def test_a_client_that_disappeared_is_lost_not_incomplete() -> None:
