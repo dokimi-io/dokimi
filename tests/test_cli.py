@@ -742,6 +742,91 @@ def test_convert_touches_no_cluster(no_cluster: None) -> None:
     assert main(["convert", str(EXAMPLE)]) == ExitCode.PASS
 
 
+# -- the run's artifacts, back through its log (ADR-05-15, provisional) ---------------
+
+
+def artifact_lines(tmp_path: Path, run_id: str) -> list[str]:
+    """What a finished Job's log ends with: its artifact directory, as one block."""
+    from dokimi.artifact_stream import write_artifacts  # noqa: PLC0415
+
+    directory = tmp_path / "job" / run_id
+    directory.mkdir(parents=True)
+    (directory / "log.html").write_text("<html>the run's log</html>", encoding="utf-8")
+    lines: list[str] = []
+    write_artifacts(directory, run_id, lines.append)
+    return lines
+
+
+def test_execute_ends_its_log_with_its_artifacts(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+    out = capsys.readouterr().out.splitlines()
+
+    begins = [line for line in out if line.startswith("::dokimi-artifacts begin")]
+    assert len(begins) == 1
+    assert out[-1] == f"::dokimi-artifacts end run={RUN_ID}::"
+
+
+def test_submit_extracts_the_artifacts_into_the_documents_results_directory(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster.log_lines = ["run started", *artifact_lines(tmp_path, RUN_ID), "run finished"]
+    monkeypatch.chdir(tmp_path)
+
+    main(["submit", str(EXAMPLE), "--run-id", RUN_ID])
+    captured = capsys.readouterr()
+
+    # The example says results.directory: ./results.
+    assert (tmp_path / "results" / RUN_ID / "log.html").read_text() == "<html>the run's log</html>"
+    assert "::dokimi-artifacts" not in captured.out
+    assert captured.out.splitlines() == ["run started", "run finished"]
+    assert f"artifacts: results/{RUN_ID}" in captured.err
+
+
+def test_attach_finds_the_results_directory_in_the_runs_own_definition(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = EXAMPLE.read_text(encoding="utf-8").replace("./results", "./elsewhere")
+    cluster.store.put(
+        CONFIG_MAP,
+        "dokimi-iperf2",
+        {
+            "metadata": {"name": resource_name(RUN_ID, "-definition")},
+            "data": {"definition.yaml": source},
+        },
+    )
+    cluster.log_lines = artifact_lines(tmp_path, RUN_ID)
+    monkeypatch.chdir(tmp_path)
+
+    main(["attach", RUN_ID])
+
+    assert (tmp_path / "elsewhere" / RUN_ID / "log.html").is_file()
+
+
+def test_a_damaged_block_is_reported_and_does_not_change_the_verdict(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lines = artifact_lines(tmp_path, RUN_ID)
+    lines[1] = "!" * len(lines[1])
+    cluster.log_lines = lines
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["submit", str(EXAMPLE), "--run-id", RUN_ID])
+
+    assert code == ExitCode.PASS
+    assert "artifacts were not extracted" in capsys.readouterr().err
+    assert not (tmp_path / "results").exists()
+
+
 # -- phase 11 starts: the run's test pods go before the claim does (ADR-05-13) ---------
 
 
@@ -771,8 +856,12 @@ def test_execute_removes_the_test_pods_then_releases_the_cluster(
 
     main(EXECUTE)
 
+    out = capsys.readouterr().out.splitlines()
+
     assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
-    assert "phase 11 (cleanup): removed 2 test pod(s)" in capsys.readouterr().out
+    assert "phase 11 (cleanup): removed 2 test pod(s)" in out
+    # The artifacts stay last in the log, after the removal.
+    assert out[-1] == f"::dokimi-artifacts end run={RUN_ID}::"
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
     # Only pods: the definition and the owner stay, for attach and for cleanup.

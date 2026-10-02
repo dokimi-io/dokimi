@@ -15,6 +15,7 @@ from typing import Any, TextIO
 
 import yaml
 
+from dokimi.artifact_stream import ArtifactReceiver, write_artifacts
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.execution import (
     ARTIFACTS_ROOT,
@@ -26,11 +27,11 @@ from dokimi.execution import (
     merge_reports,
     render_suite,
 )
-from dokimi.formats import parse_file, render_robot, render_yaml
+from dokimi.formats import SUFFIXES, parse, parse_file, render_robot, render_yaml
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
-from dokimi.k8s.manifests import job_deadline_seconds
+from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
     delete_run_owned,
@@ -38,9 +39,9 @@ from dokimi.k8s.ownership import (
     format_timestamp,
     owner_name,
 )
-from dokimi.k8s.resources import POD, ResourceClient
+from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
-from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
+from dokimi.model import DEFAULT_RESULTS_DIRECTORY, ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
 from dokimi.run_identity import RunId
 from dokimi.run_images import (
@@ -150,7 +151,13 @@ def submit_run(
         console.warn(f"not following. Reattach with: dokimi attach {submission.run_id}")
         return ExitCode.PASS
 
-    return _follow(console, cluster, submission.namespace, submission.run_id)
+    return _follow(
+        console,
+        cluster,
+        submission.namespace,
+        submission.run_id,
+        Path(definition.results_directory),
+    )
 
 
 def attach(
@@ -169,7 +176,8 @@ def attach(
     # becomes the way to say which one.
     resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
     cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
-    return _follow(console, cluster, resolved_namespace, resolved_run_id)
+    results = _results_directory_of(console, cluster, resolved_namespace, resolved_run_id)
+    return _follow(console, cluster, resolved_namespace, resolved_run_id, results)
 
 
 def execute(
@@ -241,6 +249,7 @@ def execute(
     claim_run(
         resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
     )
+    artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
     try:
         console.say(
             "phase 4 (preflight): cluster claimed for this run until "
@@ -254,7 +263,6 @@ def execute(
         )
         console.say()
 
-        artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
         suite = render_suite(definition, artifacts)
         console.say(f"phase 5 (suite rendering): {suite}")
         executions = execute_pairs(
@@ -284,9 +292,10 @@ def execute(
         # sending traffic. A test aborted mid-measurement leaves a client that keeps
         # sending, so its pods go first, on every path, and the claim is released only
         # once they are gone. If they cannot be removed, the claim stays until it expires.
-        if _remove_test_pods(console, resources, resolved_run_id, resolved_namespace):
-            _finish(console, resources, resolved_run_id, resolved_namespace, now)
-        else:
+        # The artifacts go last in the log, so they come after the pods' removal, and the
+        # claim is released after both.
+        removed = _remove_test_pods(console, resources, resolved_run_id, resolved_namespace)
+        if not removed:
             # Removing the pods alone frees nothing: only a finished or expired claim does
             # (ADR-05-13). So the way out names both steps, the second one being the
             # recovery the refusal of a later run prints too.
@@ -300,6 +309,9 @@ def execute(
                 f"kubectl delete configmap -n {resolved_namespace} "
                 f"{owner_name(resolved_run_id)}"
             )
+        _return_artifacts(console, artifacts)
+        if removed:
+            _finish(console, resources, resolved_run_id, resolved_namespace, now)
 
 
 #: A test's pods, by their component label. Only these are removed before the claim is
@@ -373,6 +385,22 @@ def _finish(
         )
 
 
+def _return_artifacts(console: Console, artifacts: RunArtifacts) -> None:
+    """Write the run's artifact directory into the log, last, for the CLI to extract.
+
+    Also after a failed run: whatever was written is worth having. Never at the cost of
+    the run's own outcome (ADR-05-15, provisional).
+    """
+    if not artifacts.directory.is_dir():
+        return
+    try:
+        size = write_artifacts(artifacts.directory, artifacts.run_id, console.say)
+    except OSError as error:
+        console.warn(f"could not return the run's artifacts in its log: {error}")
+        return
+    console.warn(f"artifacts: {size} bytes in the log above, for submit and attach to extract")
+
+
 def show_image(
     console: Console, *, image_override: str | None = None, images: Sequence[str] = ()
 ) -> int:
@@ -397,9 +425,23 @@ def show_image(
     return ExitCode.PASS
 
 
-def _follow(console: Console, cluster: ClusterClient, namespace: str, run_id: str) -> int:
+def _follow(
+    console: Console, cluster: ClusterClient, namespace: str, run_id: str, results: Path
+) -> int:
+    """Stream the run, keep its artifacts out of what is printed, and extract them.
+
+    Extracting never changes the run's exit code: the artifacts are reported, the
+    verdict is the Job's.
+    """
+    receiver = ArtifactReceiver(run_id)
+
+    def write(line: str) -> None:
+        printed = receiver.feed(line)
+        if printed is not None:
+            console.say(printed)
+
     try:
-        return follow(cluster, namespace=namespace, run_id=run_id, write=console.say)
+        return follow(cluster, namespace=namespace, run_id=run_id, write=write)
     except KeyboardInterrupt:
         # ADR-01-06: the Job is a server-side resource. Leaving is not stopping.
         console.warn("")
@@ -408,6 +450,48 @@ def _follow(console: Console, cluster: ClusterClient, namespace: str, run_id: st
             f"cluster; resume with: dokimi attach {run_id}"
         )
         return ExitCode.INTERRUPTED
+    finally:
+        _store_artifacts(console, receiver, results / run_id)
+
+
+def _store_artifacts(console: Console, receiver: ArtifactReceiver, destination: Path) -> None:
+    if receiver.received:
+        try:
+            receiver.extract(destination)
+        except OSError as error:
+            console.warn(f"could not write the run's artifacts to {destination}: {error}")
+            return
+        console.warn(f"artifacts: {destination}")
+    elif receiver.error is not None:
+        console.warn(f"the run's artifacts were not extracted: {receiver.error}")
+    elif receiver.incomplete:
+        console.warn(
+            "the run's artifacts were cut off before the end of its log. Reattach while "
+            f"the run's pod still exists to fetch them: dokimi attach {receiver.run_id}"
+        )
+
+
+def _results_directory_of(
+    console: Console, cluster: ClusterClient, namespace: str, run_id: str
+) -> Path:
+    """The run's ``results.directory``, read from the definition it was submitted with.
+
+    ``attach`` never saw the document, but the run carries it in a ConfigMap. If that
+    cannot be read, the default it would have had.
+    """
+    try:
+        config_map = cluster.resources().get(
+            CONFIG_MAP, namespace, resource_name(run_id, "-definition")
+        )
+        (name, source), *_ = (config_map.get("data") or {}).items()
+        definition = parse(source, SUFFIXES[Path(name).suffix])
+    except (NotFoundError, ClusterError, ConfigError, KeyError, ValueError) as error:
+        console.warn(
+            f"could not read run {run_id}'s results directory ({error}); "
+            f"using {DEFAULT_RESULTS_DIRECTORY}"
+        )
+        return Path(DEFAULT_RESULTS_DIRECTORY)
+    return Path(definition.results_directory)
 
 
 def _render(
