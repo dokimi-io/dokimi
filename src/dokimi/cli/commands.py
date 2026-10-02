@@ -240,7 +240,9 @@ def execute(
             "phase 4 (preflight): cluster claimed for this run until "
             f"{format_timestamp(expires_at)}"
         )
-        console.warn(
+        # A phase line, so on the same stream as the others: stdout and stderr reach the
+        # Job's log through separate pipes, and lines microseconds apart can swap.
+        console.say(
             "phase 4 (preflight): the cluster checks are not implemented in this build "
             "(M1-07, #42); the run continues without them"
         )
