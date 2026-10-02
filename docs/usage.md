@@ -21,6 +21,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [How nodes are resolved](#how-nodes-are-resolved)
 - [What a submission creates](#what-a-submission-creates)
 - [Choosing the orchestrator image](#choosing-the-orchestrator-image)
+- [Choosing the images a run deploys](#choosing-the-images-a-run-deploys)
 - [Cleaning up](#cleaning-up)
 
 ## What a run does today
@@ -302,13 +303,18 @@ run is somewhere else.
 
 ```console
 $ dokimi image
-ghcr.io/dokimi-io/orchestrator@sha256:ab...
+orchestrator  ghcr.io/dokimi-io/orchestrator@sha256:ab...
   source: release-default
   digest: sha256:ab...
+iperf2        ghcr.io/dokimi-io/iperf2@sha256:cd...
+  source: release-default
+  digest: sha256:cd...
 ```
 
-Shows which image a run would submit and where that reference came from. See
-[Choosing the orchestrator image](#choosing-the-orchestrator-image).
+Shows which images a run would submit and deploy, and where each reference came from.
+`--orchestrator-image` and `--image <component>=<reference>` work here as on `submit`. See
+[Choosing the orchestrator image](#choosing-the-orchestrator-image) and
+[Choosing the images a run deploys](#choosing-the-images-a-run-deploys).
 
 ## Exit codes
 
