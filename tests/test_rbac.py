@@ -107,18 +107,35 @@ def test_the_lock_grant_is_confined_to_leases_in_the_lock_namespace(
     ]
 
 
-def test_the_run_namespace_grant_only_updates_config_maps_and_reads_jobs(
+def test_the_run_namespace_grant_is_the_claim_and_the_pair_pods(
     objects: dict[Key, dict[str, Any]],
 ) -> None:
     # Claiming and marking finished write annotations onto the run's own owner, and the
-    # claim's expiry is read from the Job's start time; nothing is created or deleted
-    # (ADR-05-13).
+    # claim's expiry is read from the Job's start time (ADR-05-13). Phase 6 creates the
+    # pair's pods and reads them for the readiness gate and completion (ADR-05-07).
+    # Nothing is deleted yet: that is cleanup, M1-16.
     role = objects[("Role", "dokimi", RUN_NAMESPACE)]
 
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "update"]},
         {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get"]},
     ]
+
+
+def test_the_job_cannot_exec_into_pods(objects: dict[Key, dict[str, Any]]) -> None:
+    # iperf2 starts over a trigger port and reports completion through the pod's status
+    # precisely so that the Job never needs a shell in every pod of the namespace.
+    resources = {
+        resource
+        for (kind, _, _), doc in objects.items()
+        if kind in ("Role", "ClusterRole")
+        for rule in doc["rules"]
+        for resource in rule["resources"]
+    }
+
+    assert "pods/exec" not in resources
+    assert "pods/attach" not in resources
 
 
 def test_the_error_message_names_the_service_account_this_file_creates(

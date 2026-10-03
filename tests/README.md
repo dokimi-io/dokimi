@@ -1,6 +1,6 @@
 # The test suite
 
-474 tests, none of which need a cluster, a network or a container runtime. Everything runs
+566 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -27,17 +27,20 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_exclusivity.py`](test_exclusivity.py) | 66 | One run at a time: the run-start lease, the claim lifecycle and its expiry, and two racing submissions through `submit` |
 | [`test_deadlines.py`](test_deadlines.py) | 14 | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
+| [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
+| [`test_iperf2.py`](test_iperf2.py) | 41 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
+| [`test_lifecycle.py`](test_lifecycle.py) | 21 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_manifests.py`](test_manifests.py) | 18 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
 | [`test_cli.py`](test_cli.py) | 44 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
-| [`test_image_build.py`](test_image_build.py) | 7 | The Dockerfile and the release wiring keep their promises |
+| [`test_image_build.py`](test_image_build.py) | 18 | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
-| [`test_rbac.py`](test_rbac.py) | 9 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
-| [`test_package_layout.py`](test_package_layout.py) | 20 | The prescribed package layout exists and imports |
+| [`test_rbac.py`](test_rbac.py) | 10 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
+| [`test_package_layout.py`](test_package_layout.py) | 24 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
 
 ## How the cluster-facing tests work without a cluster
@@ -88,9 +91,12 @@ working while being wrong:
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
   base image, the lockfile-only install and the non-root user. CI catches a build that
   breaks; only this catches a build that still works while having changed its mind. It
-  also checks that the regex the release workflow rewrites still matches the generated
-  digest file — reformatting that file would otherwise break a release without breaking
-  anything a test run would notice.
+  also checks that the regexes the release workflow rewrites still match the generated
+  digest file, and that every digest in it is rewritten — reformatting that file, or adding
+  an image the release forgets, would otherwise break a release without breaking anything a
+  test run would notice. The iperf2 image gets the same treatment: Alpine pinned by digest,
+  the `iperf` package pinned by version, non-root, and both its role scripts in the build
+  context. Both images are labelled with the project's MIT license.
 - [`test_robot_strictness.py`](test_robot_strictness.py) guards against a false PASS. The
   suite that executes is re-rendered from the parsed model, so a criterion the parser
   skips is one that is never checked — and the run passes. Every way that was possible

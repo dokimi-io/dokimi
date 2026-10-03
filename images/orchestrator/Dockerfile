@@ -52,7 +52,7 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
       org.opencontainers.image.description="dokimi: one-shot in-cluster orchestrator Job" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 # Non-root, as ADR-05-04 requires of every image this project publishes. The orchestrator
 # talks to the API server and reads exporter endpoints; it has no reason to be root, and

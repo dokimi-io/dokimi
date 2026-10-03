@@ -1,16 +1,17 @@
 """Generated at release time — do not edit by hand.
 
 ADR-05-08 requires the CLI to ship with the digest of the orchestrator image built from
-its own commit. The release workflow (``.github/workflows/release.yml``) builds and
-pushes the image, rewrites this file with the digest the registry returned, and only
-then builds the distribution — so a released CLI and its image always come from one
-commit and one ``uv.lock``.
+its own commit, and ADR-05-04 pins every test-workload image by digest the same way. The
+release workflow (``.github/workflows/release.yml``) builds and pushes the images,
+rewrites this file with the digests the registry returned, and only then builds the
+distribution — so a released CLI and the images it runs always come from one commit.
 
-In a source checkout the value is ``None``: this build was never published, there is no
-digest to submit, and :mod:`dokimi.images` says so rather than inventing a
-tag that might resolve to something else tomorrow.
+In a source checkout every value is ``None``: this build was never published, there is
+no digest to run, and :mod:`dokimi.images` and :mod:`dokimi.testtypes.images` say so
+rather than inventing a tag that might resolve to something else tomorrow.
 """
 
 from __future__ import annotations
 
 ORCHESTRATOR_IMAGE_DIGEST: str | None = None
+IPERF2_IMAGE_DIGEST: str | None = None

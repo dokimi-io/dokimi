@@ -54,8 +54,8 @@ DEFAULT_SAFETY_MARGIN_SECONDS = 30.0
 # tight: these bounds exist to stop an orphaned run, not to enforce a schedule.
 #: Scheduling, image pull on a cold node and the readiness gate.
 DEFAULT_STARTUP_SECONDS = 300.0
-#: The discarded warm-up pass ([ADR-04-04]). Its exact default is ADR-04-04 follow-up
-#: work and the model does not carry it yet, so the budget reserves this much.
+#: The discarded warm-up pass ([ADR-04-04]): ``iperf2``'s default ``warmup`` parameter
+#: (:mod:`dokimi.testtypes.iperf2`), and what a budget reserves when not told otherwise.
 DEFAULT_WARMUP_SECONDS = 10.0
 DEFAULT_DIRECT_READ_SECONDS = 30.0
 #: A few scrape intervals at the common 15 to 30 s ([ADR-03-01]).
@@ -147,12 +147,18 @@ class JobBudget:
         return math.ceil(self.total)
 
 
-def workload_budget_for(definition: TestDefinition) -> DeadlineBudget:
-    """The workload budget for *definition*'s pair, from its duration and the defaults."""
+def workload_budget_for(
+    definition: TestDefinition, *, warmup_seconds: float = DEFAULT_WARMUP_SECONDS
+) -> DeadlineBudget:
+    """The workload budget for *definition*'s pair, from its duration and the defaults.
+
+    *warmup_seconds* is the pass the workload actually runs — ``0`` when it is disabled —
+    so a workload is never budgeted for a warm-up it does not do, nor denied one it does.
+    """
     return DeadlineBudget(
         test_duration=float(definition.duration.seconds),
         startup=DEFAULT_STARTUP_SECONDS,
-        warmup=DEFAULT_WARMUP_SECONDS,
+        warmup=warmup_seconds,
         direct_read=DEFAULT_DIRECT_READ_SECONDS,
         scrape_confirmation=DEFAULT_SCRAPE_CONFIRMATION_SECONDS,
     )

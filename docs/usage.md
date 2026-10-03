@@ -58,7 +58,8 @@ $ kubectl apply -f deploy/rbac.yaml
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
 `list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
-`dokimi-iperf2` `get` and `update` on ConfigMaps and `get` on Jobs. Then submit with that service account:
+`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create` and `get` on
+Pods for each pair's client and server. Then submit with that service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -74,6 +75,17 @@ dokimi.
 ```
 
 The grant widens as later phases land, one commented rule per phase.
+
+A test also needs two network paths inside `dokimi-iperf2`. If a NetworkPolicy applies
+there, it has to allow both (ADR-05-03):
+
+- **the Job to each client pod on 5101/TCP.** That is how a test is started: the Job
+  connects and sends the server's address, instead of running a command inside the pod;
+- **the client pod to the server pod on 5001,** over the test's protocol, UDP or TCP.
+
+Test traffic uses the pod network and IPv4, so a pod network without IPv4 cannot run a
+test. Both paths and the address family are what a test needs once a run deploys its test
+pods. No run does that yet.
 
 The service account exists only in `dokimi-iperf2`, the namespace
 `deploy/rbac.yaml` creates. A run never creates a namespace, so one submitted with
