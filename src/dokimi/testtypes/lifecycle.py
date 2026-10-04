@@ -67,7 +67,15 @@ _TERMINAL_PHASES = ("Succeeded", "Failed")
 #: The kubelet's container-waiting reasons for an image it could not get. Each one is
 #: about the image reference, the registry or its credentials, never about placement.
 _IMAGE_PULL_REASONS = frozenset(
-    {"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"}
+    {
+        "ErrImagePull",
+        "ImagePullBackOff",
+        "InvalidImageName",
+        "ErrImageNeverPull",
+        "ImageInspectError",
+        "RegistryUnavailable",
+        "SignatureValidationFailed",
+    }
 )
 
 
