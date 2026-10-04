@@ -67,8 +67,9 @@ Three things to know about a run today:
   pod still sending must keep the cluster claimed (ADR-05-13). That takes the pods of a
   failed run too, so for now a failure keeps its report but not its pods; what a failed run
   keeps is M1-16's. If the pods cannot be removed, the run says so and keeps its claim until
-  it expires. `kubectl delete pod -n dokimi-iperf2 -l dokimi.io/run-id=<run-id>` frees it
-  earlier.
+  it expires. It prints the command that frees it earlier, which selects the test's
+  client and server pods only: `kubectl delete pod -n dokimi-iperf2 -l
+  'dokimi.io/run-id=<run-id>,app.kubernetes.io/component in (client,server)'`.
 
 Everything else on this page — validation, conversion, dry-run rendering, node
 resolution, submission, streaming, reattachment, exit-code propagation — works now.

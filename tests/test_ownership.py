@@ -246,6 +246,17 @@ def test_cleanup_never_deletes_the_orchestrator_itself(cluster: FakeResources) -
     assert cluster.exists(POD, NAMESPACE, "orchestrator")
 
 
+def test_cleanup_can_be_scoped_to_components(cluster: FakeResources) -> None:
+    ownership = RunOwnership(cluster, RUN)
+    ownership.create(POD, pod("client"), component="client")
+    ownership.create(POD, pod("exporter"), component="node-exporter")
+
+    report = delete_run_owned(cluster, RUN, kinds=(POD,), components={"client", "server"})
+
+    assert [obj.name for obj in report.deleted] == ["client"]
+    assert cluster.exists(POD, NAMESPACE, "exporter")
+
+
 def test_dependents_are_deleted_before_owners(
     cluster: FakeResources, ownership: RunOwnership
 ) -> None:

@@ -45,7 +45,7 @@ from dokimi.run_images import (
     resolve_component,
     resolve_run_images,
 )
-from dokimi.testtypes.interface import WorkloadImage
+from dokimi.testtypes.interface import Role, WorkloadImage
 
 __all__ = ["Console", "attach", "convert", "execute", "show_image", "submit_run", "validate"]
 
@@ -286,9 +286,15 @@ def execute(
                 f"run {resolved_run_id} keeps its claim on the cluster until "
                 f"{format_timestamp(expires_at)}, because its test pods may still be sending "
                 "traffic. Remove them to free it earlier: kubectl delete pod -n "
-                f"{resolved_namespace} -l dokimi.io/run-id={resolved_run_id}"
+                f"{resolved_namespace} -l 'dokimi.io/run-id={resolved_run_id},"
+                "app.kubernetes.io/component in (client,server)'"
             )
 
+
+#: A test's pods, by their component label. Only these are removed before the claim is
+#: released: a run's other pods, such as its kept Prometheus or a DaemonSet's, are not test
+#: traffic, and a controller would only recreate them.
+TEST_POD_COMPONENTS = frozenset(role.value for role in Role)
 
 #: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
 #: the API server's and the kubelet's reaction time.
@@ -307,13 +313,16 @@ def _remove_test_pods(
 ) -> bool:
     """Delete the run's test pods, and wait until they are gone. True if they are.
 
-    Only Pods: the owner and the definition stay for ``attach`` and for cleanup
-    (M1-16), and the Job's own pod is never selected. Waiting matters, because a deleted
-    pod keeps running through its grace period, and so can its traffic.
+    Only the test's client and server pods: the owner and the definition stay for
+    ``attach`` and for cleanup (M1-16), and the Job's own pod is never selected. Waiting
+    matters, because a deleted pod keeps running through its grace period, and so can its
+    traffic.
     """
     limit = POD_REMOVAL_TIMEOUT_SECONDS if timeout is None else timeout
     try:
-        report = delete_run_owned(resources, run_id, namespace=namespace, kinds=(POD,))
+        report = delete_run_owned(
+            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
+        )
         if report.failed:
             console.warn(
                 f"could not delete run {run_id}'s test pods: "
@@ -321,7 +330,9 @@ def _remove_test_pods(
             )
             return False
         deadline = clock() + limit
-        while find_run_owned(resources, run_id, namespace=namespace, kinds=(POD,)):
+        while find_run_owned(
+            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
+        ):
             if clock() >= deadline:
                 console.warn(f"run {run_id}'s test pods were still there after {limit:g}s")
                 return False

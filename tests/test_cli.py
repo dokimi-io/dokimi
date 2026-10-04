@@ -779,6 +779,29 @@ def test_execute_removes_the_test_pods_then_releases_the_cluster(
     assert job_cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
 
 
+def test_only_the_test_pods_are_removed_before_the_claim_is_released(
+    job_cluster: FakeCluster,
+) -> None:
+    # A kept Prometheus's pod or a DaemonSet's carries the run's labels too. Neither is test
+    # traffic: deleting one loses the history it is kept for, or is undone by its controller,
+    # and waiting for it to go would hold the cluster until the claim expires.
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+    left_pod(job_cluster, f"run-{RUN_ID}-prometheus-abc12", component="prometheus")
+    left_pod(job_cluster, f"run-{RUN_ID}-node-exporter-x7k2p", component="node-exporter")
+
+    main(EXECUTE)
+
+    remaining = job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2")
+    assert sorted(pod["metadata"]["name"] for pod in remaining) == [
+        f"run-{RUN_ID}-node-exporter-x7k2p",
+        f"run-{RUN_ID}-prometheus-abc12",
+    ]
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
 def test_pods_that_cannot_be_deleted_keep_the_cluster_claimed(
     job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -792,7 +815,10 @@ def test_pods_that_cannot_be_deleted_keep_the_cluster_claimed(
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
     assert "keeps its claim on the cluster until" in err
-    assert f"kubectl delete pod -n dokimi-iperf2 -l dokimi.io/run-id={RUN_ID}" in err
+    assert (
+        f"kubectl delete pod -n dokimi-iperf2 -l 'dokimi.io/run-id={RUN_ID},"
+        "app.kubernetes.io/component in (client,server)'" in err
+    )
 
 
 def test_pods_that_never_go_away_keep_the_cluster_claimed(

@@ -1,6 +1,6 @@
 # The test suite
 
-647 tests, none of which need a cluster, a network or a container runtime. Everything runs
+649 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -23,7 +23,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_planning.py`](test_planning.py) | 24 | Discovery, explicit node resolution, and the plan |
 | [`test_identity.py`](test_identity.py) | 19 | Run ids and ownership labels |
 | [`test_run_identity.py`](test_run_identity.py) | 18 | The `RunId` type ownership and exclusivity are written against |
-| [`test_ownership.py`](test_ownership.py) | 18 | Run-owned object creation, owner references, and label-scoped deletion |
+| [`test_ownership.py`](test_ownership.py) | 19 | Run-owned object creation, owner references, and label-scoped deletion |
 | [`test_exclusivity.py`](test_exclusivity.py) | 66 | One run at a time: the run-start lease, the claim lifecycle and its expiry, and two racing submissions through `submit` |
 | [`test_deadlines.py`](test_deadlines.py) | 14 | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
@@ -36,7 +36,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 63 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 64 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 15 | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | 22 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 21 | Both Dockerfiles and the release wiring keep their promises |
