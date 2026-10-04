@@ -69,6 +69,9 @@ class SubprocessRobotRunner:
     def run(
         self, suite: Path, *, output: Path, environment: Mapping[str, str], pythonpath: Path
     ) -> None:
+        # Never read a stale file as this run's results: a process that dies before writing
+        # must show up as "wrote nothing".
+        output.unlink(missing_ok=True)
         # The per-pair process writes only output.xml; the run's one log.html is rebot's.
         self._call(
             "robot",
@@ -111,6 +114,8 @@ class SubprocessRobotRunner:
             command, env={**os.environ, **environment}, check=False
         )
         code = completed.returncode
+        if code < 0:
+            raise RobotRunError(f"`python -m {module}` was killed by signal {-code}")
         # 0 to 250 count failed tests, which the results say better. Above is Robot itself.
         if code > 250:
             meaning = _ROBOT_CANNOT_RUN.get(code, "an exit code Robot Framework does not document")

@@ -253,6 +253,7 @@ class Iperf2:
             namespace=placement.namespace,
             test_id=placement.test_id,
             pods=pods,
+            warmup_seconds=float(warmup.seconds),
             run_metadata={
                 "test_type": IMAGE_NAME,
                 "protocol": protocol.value,

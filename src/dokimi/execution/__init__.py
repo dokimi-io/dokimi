@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from dokimi.execution.artifacts import ARTIFACTS_ROOT, RunArtifacts
 from dokimi.execution.context import RunContext
-from dokimi.execution.network_test import NetworkTestResult, ToolFailedError, run_network_test
+from dokimi.execution.network_test import (
+    NetworkTestResult,
+    PairMismatchError,
+    ToolFailedError,
+    run_network_test,
+)
 from dokimi.execution.phases import PairExecution, execute_pairs, merge_reports, render_suite
 from dokimi.execution.runner import (
     RobotRunError,
@@ -29,6 +34,7 @@ __all__ = [
     "ARTIFACTS_ROOT",
     "NetworkTestResult",
     "PairExecution",
+    "PairMismatchError",
     "RobotRunError",
     "RobotRunner",
     "RunArtifacts",

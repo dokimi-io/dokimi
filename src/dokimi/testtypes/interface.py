@@ -265,6 +265,9 @@ class WorkloadSpec:
     #: What a result from this workload cannot be interpreted without: images and their
     #: digests, the warm-up pass, the connectivity mode ([ADR-05-03], [ADR-04-04]).
     run_metadata: Mapping[str, str] = field(default_factory=dict)
+    #: The discarded warm-up pass the workload runs before measuring, ``0`` if none
+    #: ([ADR-04-04]). Typed, because the pods' deadline is budgeted from it.
+    warmup_seconds: float = 0.0
 
     def pod_name(self, role: Role) -> str:
         name: str = self.pods[role]["metadata"]["name"]

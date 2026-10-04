@@ -26,6 +26,15 @@ __all__ = ["RUN_ID_VARIABLE", "RunContext"]
 RUN_ID_VARIABLE = "DOKIMI_RUN_ID"
 _NAMESPACE_VARIABLE = "DOKIMI_NAMESPACE"
 _TEST_ID_VARIABLE = "DOKIMI_TEST_ID"
+_SOURCE_VARIABLE = "DOKIMI_SOURCE_NODE"
+_TARGET_VARIABLE = "DOKIMI_TARGET_NODE"
+_REQUIRED = (
+    RUN_ID_VARIABLE,
+    _NAMESPACE_VARIABLE,
+    _TEST_ID_VARIABLE,
+    _SOURCE_VARIABLE,
+    _TARGET_VARIABLE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +44,10 @@ class RunContext:
     run_id: str
     namespace: str
     test_id: str
+    #: The pair's nodes as phase 3 planned them. The suite carries nodes too; with more
+    #: than one pair it cannot name each process's own, so the plan's are authoritative.
+    source_node: str
+    target_node: str
     images: Mapping[str, WorkloadImage] = field(default_factory=dict)
 
     def environment(self) -> dict[str, str]:
@@ -43,6 +56,8 @@ class RunContext:
             RUN_ID_VARIABLE: self.run_id,
             _NAMESPACE_VARIABLE: self.namespace,
             _TEST_ID_VARIABLE: self.test_id,
+            _SOURCE_VARIABLE: self.source_node,
+            _TARGET_VARIABLE: self.target_node,
         }
         for entry in job_environment(self.images):
             variables[entry["name"]] = entry["value"]
@@ -57,11 +72,7 @@ class RunContext:
                 hand without the Job's environment, and the message says which.
         """
         environment = os.environ if env is None else env
-        missing = [
-            name
-            for name in (RUN_ID_VARIABLE, _NAMESPACE_VARIABLE, _TEST_ID_VARIABLE)
-            if not (environment.get(name) or "").strip()
-        ]
+        missing = [name for name in _REQUIRED if not (environment.get(name) or "").strip()]
         if missing:
             raise ConfigError(
                 "this Robot process was started without the run it belongs to: "
@@ -72,5 +83,7 @@ class RunContext:
             run_id=environment[RUN_ID_VARIABLE].strip(),
             namespace=environment[_NAMESPACE_VARIABLE].strip(),
             test_id=environment[_TEST_ID_VARIABLE].strip(),
+            source_node=environment[_SOURCE_VARIABLE].strip(),
+            target_node=environment[_TARGET_VARIABLE].strip(),
             images=images_from_job_environment(environment),
         )

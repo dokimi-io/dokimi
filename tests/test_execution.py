@@ -16,6 +16,7 @@ import pytest
 
 from dokimi.execution import (
     PairExecution,
+    PairMismatchError,
     RobotRunError,
     RunArtifacts,
     RunContext,
@@ -38,7 +39,12 @@ from dokimi.planning import NodeFacts, Plan, PlannedPair
 from dokimi.run_identity import RunId
 from dokimi.testtypes.interface import Role, WorkloadImage
 from dokimi.testtypes.iperf2 import CONTAINER_NAME, Iperf2, UnexpectedTargetError
-from dokimi.testtypes.lifecycle import ErrorCategory, ReadinessGateError
+from dokimi.testtypes.lifecycle import (
+    CompletionTimeoutError,
+    ErrorCategory,
+    ReadinessGateError,
+    WorkloadLostError,
+)
 from tests.fake_resources import FakeResources
 from tests.fake_robot import FakeRobotRunner
 
@@ -56,13 +62,16 @@ SERVER_IP, CLIENT_IP = "10.244.1.5", "10.244.2.7"
 
 
 def test_a_robot_process_reads_back_the_context_it_was_started_with() -> None:
-    context = RunContext(RUN_ID, NAMESPACE, "pair-001", IMAGES)
+    context = RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", IMAGES)
 
     assert RunContext.from_environment(context.environment()) == context
 
 
 def test_a_robot_process_started_by_hand_says_what_is_missing() -> None:
-    with pytest.raises(ConfigError, match="DOKIMI_NAMESPACE, DOKIMI_TEST_ID not set"):
+    with pytest.raises(
+        ConfigError,
+        match="DOKIMI_NAMESPACE, DOKIMI_TEST_ID, DOKIMI_SOURCE_NODE, DOKIMI_TARGET_NODE not set",
+    ):
         RunContext.from_environment({"DOKIMI_RUN_ID": RUN_ID})
 
 
@@ -211,6 +220,31 @@ def test_the_robot_directory_is_configurable_and_defaults_to_the_repository(
     assert default_robot_directory() == Path("/opt/dokimi/robot")
 
 
+def test_a_robot_killed_by_a_signal_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(subprocess, "run", Recorded(-9))
+
+    with pytest.raises(RobotRunError, match="killed by signal 9"):
+        SubprocessRobotRunner().run(
+            tmp_path / "s.robot", output=tmp_path / "o.xml", environment={}, pythonpath=tmp_path
+        )
+
+
+def test_an_output_left_from_an_earlier_attempt_is_never_read_as_this_ones(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stale = tmp_path / "o.xml"
+    stale.write_text("<robot/>")
+    monkeypatch.setattr(subprocess, "run", Recorded())
+
+    SubprocessRobotRunner().run(
+        tmp_path / "s.robot", output=stale, environment={}, pythonpath=tmp_path
+    )
+
+    assert not stale.exists()
+
+
 # -- Run Network Test -------------------------------------------------------------------
 
 
@@ -293,7 +327,14 @@ class Clock:
         self.now += seconds
 
 
-def run(kubelet: Kubelet, trigger: Any, **overrides: str) -> Any:
+def run(
+    kubelet: Kubelet,
+    trigger: Any,
+    *,
+    context: RunContext | None = None,
+    plugin: Any = None,
+    **overrides: str,
+) -> Any:
     clock = Clock()
     arguments = {
         "test_type": "iperf2",
@@ -304,9 +345,9 @@ def run(kubelet: Kubelet, trigger: Any, **overrides: str) -> Any:
         "duration": "5s",
     } | overrides
     return run_network_test(
-        RunContext(RUN_ID, NAMESPACE, "pair-001", IMAGES),
+        context or RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", IMAGES),
         cluster=kubelet,
-        plugin=Iperf2(image=IMAGES["iperf2"], trigger=trigger),
+        plugin=plugin or Iperf2(image=IMAGES["iperf2"], trigger=trigger),
         clock=clock,
         sleep=clock.sleep,
         **arguments,
@@ -371,3 +412,64 @@ def test_a_parameter_the_test_type_refuses_creates_nothing() -> None:
         run(kubelet, client_finishes(kubelet), protocol="sctp")
 
     assert kubelet.list(POD, f"{RUN_ID_LABEL}={RUN_ID}", NAMESPACE) == []
+
+
+def test_a_suite_cannot_run_another_pair_than_the_planned_one() -> None:
+    kubelet = owned(Kubelet())
+
+    with pytest.raises(PairMismatchError, match="runs the planned pair worker-01 -> worker-02"):
+        run(kubelet, client_finishes(kubelet), target="worker-03")
+
+    assert kubelet.list(POD, f"{RUN_ID_LABEL}={RUN_ID}", NAMESPACE) == []
+
+
+def test_a_run_without_an_image_for_its_test_type_resolves_none_of_its_own() -> None:
+    # submit resolves every image (ADR-04-08); a default chosen here nobody would have seen.
+    kubelet = owned(Kubelet())
+    context = RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", {})
+
+    with pytest.raises(ConfigError, match="this run has no image for iperf2"):
+        run_network_test(
+            context,
+            test_type="iperf2",
+            protocol="udp",
+            source="worker-01",
+            target="worker-02",
+            bandwidth="50M",
+            duration="5s",
+            cluster=kubelet,
+        )
+
+    assert kubelet.list(POD, f"{RUN_ID_LABEL}={RUN_ID}", NAMESPACE) == []
+
+
+class Silent:
+    """A plugin that cannot say how its test finished: it has no ``completion()``."""
+
+
+def test_a_plugin_that_cannot_report_completion_fails_closed() -> None:
+    kubelet = owned(Kubelet())
+
+    with pytest.raises(TypeError, match="cannot report how its test finished"):
+        run(kubelet, client_finishes(kubelet), plugin=Silent())
+
+    assert kubelet.list(POD, f"{RUN_ID_LABEL}={RUN_ID}", NAMESPACE) == []
+
+
+def test_a_test_that_never_finishes_times_out_within_its_budget() -> None:
+    kubelet = owned(Kubelet())
+
+    with pytest.raises(CompletionTimeoutError):
+        run(kubelet, lambda host, port, payload: None)
+
+
+def test_a_client_pod_that_disappears_loses_the_test() -> None:
+    kubelet = owned(Kubelet())
+
+    def trigger(host: str, port: int, payload: bytes) -> None:
+        name = f"run-{RUN_ID}-pair-001-client"
+        pod = kubelet.get(POD, NAMESPACE, name)
+        kubelet.delete(POD, NAMESPACE, name, uid=pod["metadata"]["uid"])
+
+    with pytest.raises(WorkloadLostError, match="disappeared before it finished"):
+        run(kubelet, trigger)

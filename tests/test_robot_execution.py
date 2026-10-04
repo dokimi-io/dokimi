@@ -58,7 +58,9 @@ IMAGES = {
 @pytest.fixture
 def run_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """What phase 6 starts each Robot process with."""
-    context = execution.RunContext(RUN_ID, "dokimi-iperf2", "pair-001", IMAGES)
+    context = execution.RunContext(
+        RUN_ID, "dokimi-iperf2", "pair-001", "worker-01", "worker-02", IMAGES
+    )
     for name, value in context.environment().items():
         monkeypatch.setenv(name, value)
 

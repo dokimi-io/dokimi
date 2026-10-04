@@ -1,6 +1,6 @@
 # The test suite
 
-633 tests, none of which need a cluster, a network or a container runtime. Everything runs
+647 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -28,15 +28,15 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_deadlines.py`](test_deadlines.py) | 14 | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
 | [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
-| [`test_iperf2.py`](test_iperf2.py) | 41 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
-| [`test_lifecycle.py`](test_lifecycle.py) | 21 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
-| [`test_execution.py`](test_execution.py) | 20 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
+| [`test_iperf2.py`](test_iperf2.py) | 42 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
+| [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
+| [`test_execution.py`](test_execution.py) | 27 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
 | [`test_robot_execution.py`](test_robot_execution.py) | 4 | What Robot Framework does with the rendered suite: YAML and Robot run identically, every criterion says it was not evaluated, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
 | [`test_manifests.py`](test_manifests.py) | 19 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 60 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 63 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 15 | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | 22 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 21 | Both Dockerfiles and the release wiring keep their promises |

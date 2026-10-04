@@ -119,7 +119,7 @@ def test_the_run_namespace_grant_is_the_claim_and_the_pair_pods(
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "update"]},
         {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
-        {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "delete"]},
     ]
 
 

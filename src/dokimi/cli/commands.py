@@ -6,6 +6,7 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,8 +32,8 @@ from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds
 from dokimi.k8s.namespaces import namespace_for
-from dokimi.k8s.ownership import format_timestamp
-from dokimi.k8s.resources import ResourceClient
+from dokimi.k8s.ownership import delete_run_owned, find_run_owned, format_timestamp
+from dokimi.k8s.resources import POD, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
@@ -274,7 +275,63 @@ def execute(
         )
         return ExitCode.INTERNAL
     finally:
-        _finish(console, resources, resolved_run_id, resolved_namespace, now)
+        # ADR-05-13: a run stops blocking the cluster only once nothing of it can still be
+        # sending traffic. A test aborted mid-measurement leaves a client that keeps
+        # sending, so its pods go first, on every path, and the claim is released only
+        # once they are gone. If they cannot be removed, the claim stays until it expires.
+        if _remove_test_pods(console, resources, resolved_run_id, resolved_namespace):
+            _finish(console, resources, resolved_run_id, resolved_namespace, now)
+        else:
+            console.warn(
+                f"run {resolved_run_id} keeps its claim on the cluster until "
+                f"{format_timestamp(expires_at)}, because its test pods may still be sending "
+                "traffic. Remove them to free it earlier: kubectl delete pod -n "
+                f"{resolved_namespace} -l dokimi.io/run-id={resolved_run_id}"
+            )
+
+
+#: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
+#: the API server's and the kubelet's reaction time.
+POD_REMOVAL_TIMEOUT_SECONDS = 60.0
+
+
+def _remove_test_pods(
+    console: Console,
+    resources: ResourceClient,
+    run_id: RunId,
+    namespace: str,
+    *,
+    timeout: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Delete the run's test pods, and wait until they are gone. True if they are.
+
+    Only Pods: the owner and the definition stay for ``attach`` and for cleanup
+    (M1-16), and the Job's own pod is never selected. Waiting matters, because a deleted
+    pod keeps running through its grace period, and so can its traffic.
+    """
+    limit = POD_REMOVAL_TIMEOUT_SECONDS if timeout is None else timeout
+    try:
+        report = delete_run_owned(resources, run_id, namespace=namespace, kinds=(POD,))
+        if report.failed:
+            console.warn(
+                f"could not delete run {run_id}'s test pods: "
+                + "; ".join(f"{obj.name}: {error}" for obj, error in report.failed)
+            )
+            return False
+        deadline = clock() + limit
+        while find_run_owned(resources, run_id, namespace=namespace, kinds=(POD,)):
+            if clock() >= deadline:
+                console.warn(f"run {run_id}'s test pods were still there after {limit:g}s")
+                return False
+            sleep(2.0)
+    except ClusterError as error:
+        console.warn(f"could not remove run {run_id}'s test pods: {error}")
+        return False
+    if report.deleted:
+        console.say(f"phase 11 (cleanup): removed {len(report.deleted)} test pod(s)")
+    return True
 
 
 def _finish(

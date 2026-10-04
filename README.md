@@ -479,15 +479,17 @@ Further rules:
   the cluster, regardless of test type or namespace — two concurrent runs would contend for the same
   nodes' network capacity. The Job claims the cluster as the first step of phase 4, by writing
   a claim onto its run's owner, and refuses to start (exit `4`, `run_already_active`) if another
-  owner in any namespace holds a claim that is neither finished nor expired. A run marks itself
-  finished before cleanup, and a crashed run's claim expires with its Job's deadline, so neither
-  retained evidence nor a crash blocks later runs indefinitely. Two submissions racing to start
+  owner in any namespace holds a claim that is neither finished nor expired. A run removes its
+  test pods, waits until they are gone, and marks itself finished before any other cleanup, and a
+  crashed run's claim expires with its Job's deadline, so neither retained evidence nor a crash
+  blocks later runs indefinitely, and no test still sends once the cluster is free. Two submissions racing to start
   are serialised by a `Lease` named `dokimi-run-lock` in the `dokimi` namespace, which
   `deploy/rbac.yaml` creates; exactly one of them starts.
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
   inspection; flags force either. It runs **after** the post-run diagnostic snapshot, which needs
   the run's pods and placement to still exist, and is bounded by its own timeout so a stuck snapshot
-  cannot delay cleanup indefinitely.
+  cannot delay cleanup indefinitely. Until M1-16 builds it, the test pods are the exception: they are removed
+  on failure too, before the claim is released, and the run's report is what it keeps.
 
 ### Preflight and readiness
 

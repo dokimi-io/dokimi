@@ -12,8 +12,8 @@ everything else, so a caller of the library without Robot runs exactly the same 
    ``iperf2`` that is the only place a spoofed trigger shows (``UnexpectedTargetError``);
 6. a tool that ran but measured nothing fails the test here, rather than look complete.
 
-Measuring the result is phase 7 (M1-12), and evaluating it phase 8 (M1-13). The pods are
-left for cleanup (M1-16), and stop on their own at their deadline.
+Measuring the result is phase 7 (M1-12), and evaluating it phase 8 (M1-13). The pods stay
+until the run ends: ``dokimi execute`` removes them before it frees the cluster.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from dokimi.k8s.deadlines import DeadlineBudget, workload_budget
+from dokimi.k8s.deadlines import workload_budget
 from dokimi.k8s.ownership import RunOwnership
 from dokimi.k8s.resources import KubernetesResources, ResourceClient
-from dokimi.model import Duration, TestType
+from dokimi.model import ConfigError, Duration, TestType
 from dokimi.run_identity import RunId
 from dokimi.testtypes import plugin_for
 from dokimi.testtypes.interface import DeployedWorkload, Placement, Role, TestTypePlugin
@@ -35,7 +35,7 @@ from dokimi.testtypes.lifecycle import deploy, start_when_ready, wait_for_comple
 if TYPE_CHECKING:
     from dokimi.execution.context import RunContext
 
-__all__ = ["NetworkTestResult", "ToolFailedError", "run_network_test"]
+__all__ = ["NetworkTestResult", "PairMismatchError", "ToolFailedError", "run_network_test"]
 
 #: Beyond the measurement and its warm-up, how long completion may take to show in the
 #: pod's status: the client's exit, the kubelet's report, our next poll.
@@ -44,6 +44,10 @@ _COMPLETION_GRACE_SECONDS = 60.0
 
 class ToolFailedError(RuntimeError):
     """The test ran to completion, and its tool reported that it measured nothing."""
+
+
+class PairMismatchError(RuntimeError):
+    """The suite names other nodes than the pair this Robot process was started for."""
 
 
 @runtime_checkable
@@ -99,15 +103,35 @@ def run_network_test(
         ToolFailedError: it finished, and measured nothing.
         UnexpectedTargetError: for ``iperf2``, it measured another address than the server's.
     """
+    if (source, target) != (context.source_node, context.target_node):
+        raise PairMismatchError(
+            f"{context.test_id}: the suite asks for {source} -> {target}, but this process "
+            f"runs the planned pair {context.source_node} -> {context.target_node}"
+        )
     kind = TestType.parse(test_type)
-    plugin = plugin or plugin_for(kind, image=context.images.get(kind.value))
+    if plugin is None:
+        # submit resolves every image and the Job passes it on (ADR-04-08). Resolving a
+        # default here instead would run an image nobody chose or saw.
+        image = context.images.get(kind.value)
+        if image is None:
+            raise ConfigError(
+                f"this run has no image for {kind.value}; submit resolves it, so submit the "
+                "run again with this version of dokimi"
+            )
+        plugin = plugin_for(kind, image=image)
+    if not isinstance(plugin, _ReportsCompletion):
+        # Fail closed: without completion() nothing can tell a test that measured from one
+        # that measured nothing. ADR-02-01's interface gains it before a second test type.
+        raise TypeError(f"the {kind.value} plugin cannot report how its test finished")
     params = plugin.parameter_schema().validate(
         {"protocol": protocol, "targetBandwidth": bandwidth, "duration": duration}
     )
     spec = plugin.workload(
         params, Placement(context.namespace, context.run_id, context.test_id, source, target)
     )
-    budget = _budget(duration, spec.run_metadata)
+    budget = workload_budget(
+        float(Duration.parse(duration).seconds), warmup_seconds=spec.warmup_seconds
+    )
 
     resources = cluster if cluster is not None else KubernetesResources.from_environment()
     # deploy() is the one path that creates a test's pods, bounded and run-owned by
@@ -122,26 +146,17 @@ def run_network_test(
         sleep=sleep,
     )
 
-    summary = ""
-    if isinstance(plugin, _ReportsCompletion):
-        completion = plugin.completion(deployed)
-        if completion is not None:
-            if not completion.succeeded:
-                raise ToolFailedError(
-                    f"{context.test_id}: {kind.value} exited {completion.exit_code}"
-                    + ("" if completion.summary else " without a summary line")
-                    + ", so it measured nothing"
-                )
-            summary = completion.summary
+    completion = plugin.completion(deployed)
+    if completion is None or not completion.succeeded:
+        code = "no exit" if completion is None else f"exited {completion.exit_code}"
+        raise ToolFailedError(
+            f"{context.test_id}: {kind.value} {code}"
+            + ("" if completion is not None and completion.summary else " without a summary line")
+            + ", so it measured nothing"
+        )
     return NetworkTestResult(
         test_id=context.test_id,
         pods={role: spec.pod_name(role) for role in spec.pods},
         run_metadata=dict(spec.run_metadata),
-        summary=summary,
+        summary=completion.summary,
     )
-
-
-def _budget(duration: str, run_metadata: Mapping[str, str]) -> DeadlineBudget:
-    """The pods' deadline, from the duration and the warm-up pass they actually run."""
-    warmup = float(run_metadata.get("warmup_duration_seconds", "0") or 0)
-    return workload_budget(float(Duration.parse(duration).seconds), warmup_seconds=warmup)

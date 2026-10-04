@@ -69,7 +69,14 @@ def execute_pairs(
         for pair in wave:
             on_pair(pair)
             output = artifacts.pair_output(pair.test_id)
-            context = RunContext(artifacts.run_id, namespace, pair.test_id, images)
+            context = RunContext(
+                artifacts.run_id,
+                namespace,
+                pair.test_id,
+                pair.source.name,
+                pair.target.name,
+                images,
+            )
             runner.run(
                 suite,
                 output=output,

@@ -62,9 +62,13 @@ Three things to know about a run today:
   "was not checked" rather than passing, or being skipped, without anything compared.
 - **Robot's report is written inside the Job**, in `/work/artifacts/<run-id>/`, next to the
   suite that ran. Getting it back to you arrives next (ADR-05-15).
-- **The pair's pods stay until their deadline.** Cleanup arrives with M1-16; each pod stops
-  on its own once its `activeDeadlineSeconds` has passed. `kubectl delete pod -n
-  dokimi-iperf2 -l dokimi.io/run-id=<run-id>` removes them earlier.
+- **The run removes its test pods before it frees the cluster,** however it ended, and
+  waits until they are gone: a server pod would otherwise idle until its deadline, and a
+  pod still sending must keep the cluster claimed (ADR-05-13). That takes the pods of a
+  failed run too, so for now a failure keeps its report but not its pods; what a failed run
+  keeps is M1-16's. If the pods cannot be removed, the run says so and keeps its claim until
+  it expires. `kubectl delete pod -n dokimi-iperf2 -l dokimi.io/run-id=<run-id>` frees it
+  earlier.
 
 Everything else on this page — validation, conversion, dry-run rendering, node
 resolution, submission, streaming, reattachment, exit-code propagation — works now.
@@ -82,8 +86,9 @@ $ kubectl apply -f deploy/rbac.yaml
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
 `list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
-`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create` and `get` on
-Pods for each pair's client and server. Then submit with that service account:
+`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create`, `get`,
+`list` and `delete` on Pods: each pair's client and server, removed again when the run
+ends. Then submit with that service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -134,8 +139,9 @@ Wait for it to finish, or for its claim to expire. If it is stale, clear it by d
 
 Only a run that has claimed the cluster counts (ADR-05-13). A run stops counting:
 
-- **when it ends**, however it ends: it marks itself finished before cleanup, so a failed
-  run whose objects are kept as evidence does not hold the cluster;
+- **when it ends**, however it ends: once its test pods are gone it marks itself finished,
+  before any other cleanup, so a failed run whose objects are kept as evidence does not hold
+  the cluster;
 - **when its claim expires**, if it crashed: the claim expires with the Job's own deadline,
   its start time plus its `activeDeadlineSeconds`, by which time the cluster has stopped the
   Job and everything it ran. A claim with no readable expiry never counts.
