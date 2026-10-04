@@ -16,7 +16,6 @@ import yaml
 
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.formats import parse_file
-from dokimi.images import ImageResolutionError, resolve_image
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
@@ -29,8 +28,10 @@ from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
 from dokimi.run_identity import RunId
 from dokimi.run_images import (
+    COMPONENTS,
     images_from_job_environment,
     parse_image_options,
+    resolve_component,
     resolve_run_images,
 )
 from dokimi.testtypes.interface import WorkloadImage
@@ -86,13 +87,12 @@ def submit_run(
     stops with a config_error, rather than a Job that fails once it is running.
     """
     definition = parse_file(path)
-    image = _resolve_image(image_override)
-    run_images = resolve_run_images(parse_image_options(images))
+    run_images = resolve_run_images(parse_image_options(images, orchestrator_image=image_override))
     submission = plan_submission(
         definition,
         source=path.read_text(encoding="utf-8"),
         source_path=path,
-        image=image,
+        image=run_images["orchestrator"].reference,
         images=run_images,
         run_id=run_id,
         namespace=namespace,
@@ -239,13 +239,22 @@ def _finish(
 def show_image(
     console: Console, *, image_override: str | None = None, images: Sequence[str] = ()
 ) -> int:
-    """Show the images a run would submit and deploy, and where each one came from."""
-    image = resolve_image(image_override)
-    console.say(f"orchestrator  {image.reference}")
-    console.say(f"  source: {image.source}")
-    console.say(f"  digest: {image.digest or 'not pinned by digest'}")
-    for name, run_image in resolve_run_images(parse_image_options(images)).items():
-        console.say(f"{name:<13} {run_image.reference}")
+    """Show the images a run would submit and deploy, and where each one came from.
+
+    A diagnostic, so a component without an image is listed as such rather than stopping
+    the listing: ``submit`` is what refuses it.
+    """
+    overrides = parse_image_options(images, orchestrator_image=image_override)
+    width = max(len(name) for name in COMPONENTS) + 2
+    for component in COMPONENTS.values():
+        run_image = resolve_component(component, overrides.get(component.name))
+        if run_image is None:
+            console.say(f"{component.name:<{width}}no default in a development build")
+            console.say(
+                f"  choose one with --image {component.name}=<reference> or {component.env_var}"
+            )
+            continue
+        console.say(f"{component.name:<{width}}{run_image.reference}")
         console.say(f"  source: {run_image.source}")
         console.say(f"  digest: {run_image.digest or 'not pinned by digest'}")
     return ExitCode.PASS
@@ -262,15 +271,6 @@ def _follow(console: Console, cluster: ClusterClient, namespace: str, run_id: st
             f"cluster; resume with: dokimi attach {run_id}"
         )
         return ExitCode.INTERRUPTED
-
-
-def _resolve_image(override: str | None) -> str:
-    try:
-        return resolve_image(override).reference
-    except ImageResolutionError as error:
-        # Not having an image to submit is a problem with the request, not the cluster,
-        # and it is detected before anything is created — a config_error by ADR-05-05.
-        raise ConfigError(str(error)) from error
 
 
 def _render(
@@ -311,9 +311,10 @@ def _render(
     console.warn("")
     console.warn(f"Run id     {submission.run_id}")
     console.warn(f"Namespace  {submission.namespace}")
-    console.warn(f"Image      {submission.image}")
+    console.warn("Images")
+    width = max((len(name) for name in submission.images), default=0) + 2
     for name, run_image in sorted(submission.images.items()):
-        console.warn(f"  {name:<8} {run_image.reference} ({run_image.source})")
+        console.warn(f"  {name:<{width}}{run_image.reference} ({run_image.source})")
     console.warn(f"Deadline   {job_deadline_seconds(definition)}s")
     console.warn("")
 

@@ -30,7 +30,7 @@ from dokimi.cli.commands import (
     validate,
 )
 from dokimi.cli.exit_codes import ExitCode
-from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
+from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
 from dokimi.k8s.ownership import OwnershipError
@@ -142,10 +142,13 @@ def _add_image_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--orchestrator-image",
         dest="image_override",
-        help=f"image reference to submit, overriding ${IMAGE_OVERRIDE_ENV_VAR} and the default",
+        help="the same as --image orchestrator=REFERENCE, its earlier name",
     )
     components = ", ".join(sorted(COMPONENTS))
-    variables = ", ".join(f"${component.env_var}" for component in COMPONENTS.values())
+    variables = ", ".join(
+        "$" + " or $".join((component.env_var, *component.env_aliases))
+        for component in COMPONENTS.values()
+    )
     parser.add_argument(
         "--image",
         dest="images",

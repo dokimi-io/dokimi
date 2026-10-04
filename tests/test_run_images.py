@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from dokimi import _image_digest
+from dokimi import _image_digest, images
 from dokimi.images import ImageSource
 from dokimi.model import ConfigError
 from dokimi.run_images import (
@@ -18,15 +18,25 @@ from dokimi.testtypes.interface import WorkloadImage
 
 DIGEST = "sha256:" + "cd" * 32
 RELEASED = f"ghcr.io/dokimi-io/iperf2@{DIGEST}"
+RELEASED_ORCHESTRATOR = f"ghcr.io/dokimi-io/orchestrator@{DIGEST}"
+#: The orchestrator's image, for tests about another component in a source build.
+ORCHESTRATOR = {"DOKIMI_ORCHESTRATOR_IMAGE": "orchestrator:dev"}
+#: What submit writes for the orchestrator, for tests about reading another one back.
+ORCHESTRATOR_IN_JOB = {
+    "DOKIMI_ORCHESTRATOR_IMAGE": "orchestrator:dev",
+    "DOKIMI_ORCHESTRATOR_IMAGE_SOURCE": "run-override",
+}
 
 
 @pytest.fixture
 def released(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
     monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", DIGEST)
 
 
 @pytest.fixture
 def source_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", None)
     monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", None)
 
 
@@ -34,14 +44,18 @@ def source_build(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_every_component_is_named_and_has_an_environment_variable() -> None:
-    assert sorted(COMPONENTS) == ["iperf2"]
+    assert sorted(COMPONENTS) == ["iperf2", "orchestrator"]
     assert COMPONENTS["iperf2"].env_var == "DOKIMI_IPERF2_IMAGE"
     assert COMPONENTS["iperf2"].source_env_var == "DOKIMI_IPERF2_IMAGE_SOURCE"
+    # ADR-04-08: the orchestrator is a component like the others; its earlier name stays.
+    assert COMPONENTS["orchestrator"].env_var == "DOKIMI_ORCHESTRATOR_IMAGE"
+    assert COMPONENTS["orchestrator"].env_aliases == ("DOKIMI_IMAGE",)
 
 
 def test_a_released_build_runs_its_own_digest(released: None) -> None:
     assert resolve_run_images(env={}) == {
-        "iperf2": WorkloadImage(RELEASED, ImageSource.RELEASE_DEFAULT)
+        "orchestrator": WorkloadImage(RELEASED_ORCHESTRATOR, ImageSource.RELEASE_DEFAULT),
+        "iperf2": WorkloadImage(RELEASED, ImageSource.RELEASE_DEFAULT),
     }
 
 
@@ -70,11 +84,11 @@ def test_a_blank_installation_override_is_no_override(released: None) -> None:
 def test_a_source_build_without_an_override_is_refused_and_says_how(source_build: None) -> None:
     # Before anything is created, rather than a Job that fails once it is running.
     with pytest.raises(ConfigError, match=r"--image iperf2=<reference> or DOKIMI_IPERF2_IMAGE"):
-        resolve_run_images(env={})
+        resolve_run_images(env=ORCHESTRATOR)
 
 
 def test_a_source_build_runs_with_an_override(source_build: None) -> None:
-    images = resolve_run_images(env={"DOKIMI_IPERF2_IMAGE": "iperf2:dev"})
+    images = resolve_run_images(env={**ORCHESTRATOR, "DOKIMI_IPERF2_IMAGE": "iperf2:dev"})
 
     assert images["iperf2"] == WorkloadImage("iperf2:dev", ImageSource.INSTALLATION_OVERRIDE)
 
@@ -109,6 +123,20 @@ def test_a_component_given_twice_is_a_config_error() -> None:
         parse_image_options(["iperf2=a:1", "iperf2=b:2"])
 
 
+def test_the_orchestrator_flag_is_an_alias_of_its_component() -> None:
+    assert parse_image_options([], orchestrator_image="orchestrator:dev") == {
+        "orchestrator": "orchestrator:dev"
+    }
+    assert parse_image_options(
+        ["orchestrator=orchestrator:dev"], orchestrator_image="orchestrator:dev"
+    ) == {"orchestrator": "orchestrator:dev"}
+
+
+def test_the_orchestrator_flag_and_its_component_must_agree() -> None:
+    with pytest.raises(ConfigError, match="name different images"):
+        parse_image_options(["orchestrator=orchestrator:1"], orchestrator_image="orchestrator:2")
+
+
 def test_an_unknown_component_is_refused_when_resolving_too(released: None) -> None:
     with pytest.raises(ConfigError, match="no component 'trex'"):
         resolve_run_images({"trex": "trex:dev"}, env={})
@@ -128,7 +156,8 @@ def test_the_job_environment_carries_reference_and_source() -> None:
 
 def test_the_job_reads_back_exactly_what_submit_wrote() -> None:
     images = {
-        "iperf2": WorkloadImage("mirror.local/iperf2:2.2.1", ImageSource.INSTALLATION_OVERRIDE)
+        "orchestrator": WorkloadImage("orchestrator:dev", ImageSource.RUN_OVERRIDE),
+        "iperf2": WorkloadImage("mirror.local/iperf2:2.2.1", ImageSource.INSTALLATION_OVERRIDE),
     }
     environment = {entry["name"]: entry["value"] for entry in job_environment(images)}
 
@@ -139,11 +168,15 @@ def test_the_job_never_falls_back_to_a_default(released: None) -> None:
     # A Job without its images was not made by this CLI. Guessing a default inside the
     # cluster would run something the submitter never chose or saw.
     with pytest.raises(ConfigError, match="submitted without an image for iperf2"):
-        images_from_job_environment({})
+        images_from_job_environment(ORCHESTRATOR_IN_JOB)
 
 
 def test_the_job_refuses_a_source_it_does_not_know() -> None:
-    environment = {"DOKIMI_IPERF2_IMAGE": "iperf2:dev", "DOKIMI_IPERF2_IMAGE_SOURCE": "guess"}
+    environment = {
+        **ORCHESTRATOR_IN_JOB,
+        "DOKIMI_IPERF2_IMAGE": "iperf2:dev",
+        "DOKIMI_IPERF2_IMAGE_SOURCE": "guess",
+    }
 
     with pytest.raises(ConfigError, match="not an image source"):
         images_from_job_environment(environment)

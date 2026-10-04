@@ -1,6 +1,6 @@
 # The test suite
 
-594 tests, none of which need a cluster, a network or a container runtime. Everything runs
+599 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -34,9 +34,9 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 5 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 51 | Every command, and the exit code each produces |
-| [`test_images.py`](test_images.py) | 14 | Orchestrator image resolution and override precedence |
-| [`test_run_images.py`](test_run_images.py) | 20 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
+| [`test_cli.py`](test_cli.py) | 53 | Every command, and the exit code each produces |
+| [`test_images.py`](test_images.py) | 15 | Orchestrator image resolution and override precedence |
+| [`test_run_images.py`](test_run_images.py) | 22 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 18 | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |

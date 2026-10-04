@@ -636,8 +636,8 @@ later decision has to overturn.
 
 | Source | How | Scope |
 | --- | --- | --- |
-| Run override | `--orchestrator-image ghcr.io/example/orchestrator@sha256:…` | one run |
-| Installation override | `DOKIMI_IMAGE` | one installation |
+| Run override | `--image orchestrator=ghcr.io/example/orchestrator@sha256:…` | one run |
+| Installation override | `DOKIMI_ORCHESTRATOR_IMAGE` | one installation |
 | Release default | baked in at release time, by digest | the released build |
 
 ```console
@@ -650,8 +650,9 @@ iperf2        ghcr.io/dokimi-io/iperf2@sha256:…
   digest: sha256:…
 ```
 
-A source checkout has no default: it was never published, so there is no digest of *this* code to
-submit, and resolution says so rather than falling back to a tag. Pass an override to run from a
+`--orchestrator-image` and `DOKIMI_IMAGE` are its earlier names and still work; given together with
+the new name, both have to agree. A source checkout has no default: it was never published, so there
+is no digest of *this* code to submit, and resolution says so rather than falling back to a tag. Pass an override to run from a
 checkout. An override is used exactly as given — including a tag, which an air-gapped mirror may be
 all that offers — but the run metadata records whether what ran was actually pinned.
 

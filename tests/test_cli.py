@@ -15,7 +15,7 @@ from dokimi import _image_digest, images
 from dokimi.cli import commands
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import main
-from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, IMAGE_REPOSITORY
+from dokimi.images import IMAGE_REPOSITORY
 from dokimi.k8s.exclusivity import claim_run
 from dokimi.k8s.manifests import resource_name
 from dokimi.k8s.ownership import (
@@ -53,12 +53,11 @@ EXECUTE = [
 @pytest.fixture(autouse=True)
 def _released_build(monkeypatch: pytest.MonkeyPatch) -> None:
     """Most commands need images to submit and deploy; a checkout has none by design."""
-    monkeypatch.delenv(IMAGE_OVERRIDE_ENV_VAR, raising=False)
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
     monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", DIGEST)
     for component in COMPONENTS.values():
-        monkeypatch.delenv(component.env_var, raising=False)
-        monkeypatch.delenv(component.source_env_var, raising=False)
+        for name in (component.env_var, component.source_env_var, *component.env_aliases):
+            monkeypatch.delenv(name, raising=False)
 
 
 def given_images(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -446,19 +445,42 @@ def test_image_honours_the_run_override(capsys: pytest.CaptureFixture[str]) -> N
 def test_image_honours_the_installation_override(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv(IMAGE_OVERRIDE_ENV_VAR, f"registry.internal/orchestrator@{DIGEST}")
+    monkeypatch.setenv("DOKIMI_ORCHESTRATOR_IMAGE", f"registry.internal/orchestrator@{DIGEST}")
 
     assert main(["image"]) == ExitCode.PASS
     assert "source: installation-override" in capsys.readouterr().out
 
 
-def test_image_on_a_development_build_is_a_config_error(
+def test_image_honours_the_component_override(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["image", "--image", "orchestrator=registry.internal/orchestrator:1.2.3"]) == 0
+    assert "registry.internal/orchestrator:1.2.3" in capsys.readouterr().out
+
+
+def test_image_refuses_two_names_for_different_orchestrator_images() -> None:
+    code = main(
+        [
+            "image",
+            "--orchestrator-image",
+            "registry.internal/orchestrator:1.2.3",
+            "--image",
+            "orchestrator=registry.internal/orchestrator:1.2.4",
+        ]
+    )
+
+    assert code == ExitCode.CONFIG_ERROR
+
+
+def test_image_on_a_development_build_lists_every_component_anyway(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A diagnostic: it says what is missing for each component, and submit refuses.
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", None)
+    monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", None)
 
-    assert main(["image"]) == ExitCode.CONFIG_ERROR
-    assert "development build" in capsys.readouterr().err
+    assert main(["image"]) == ExitCode.PASS
+    out = capsys.readouterr().out
+    assert out.count("no default in a development build") == len(COMPONENTS)
+    assert "--image iperf2=<reference> or DOKIMI_IPERF2_IMAGE" in out
 
 
 def test_no_arguments_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -572,7 +594,8 @@ def test_a_dry_run_shows_the_images_the_run_deploys(
     assert main(["submit", str(EXAMPLE), "--dry-run", "--image", "iperf2=iperf2:dev"]) == 0
     captured = capsys.readouterr()
 
-    assert "iperf2   iperf2:dev (run-override)" in captured.err
+    assert "  iperf2        iperf2:dev (run-override)" in captured.err
+    assert f"  orchestrator  {IMAGE} (release-default)" in captured.err
     # They are part of the rendered Job, which is what submit would create.
     assert "name: DOKIMI_IPERF2_IMAGE\n" in captured.out
     assert "value: iperf2:dev\n" in captured.out
@@ -634,6 +657,6 @@ def test_execute_without_its_images_is_refused_before_it_claims(
     submitted(cluster, RUN_ID)
 
     assert main(EXECUTE) == ExitCode.CONFIG_ERROR
-    assert "submitted without an image for iperf2" in capsys.readouterr().err
+    assert "submitted without an image for orchestrator" in capsys.readouterr().err
     owner = cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
