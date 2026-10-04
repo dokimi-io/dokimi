@@ -15,7 +15,7 @@ from typing import Any, TextIO
 
 import yaml
 
-from dokimi.artifact_stream import ArtifactReceiver, write_artifacts
+from dokimi.artifact_stream import ArtifactReceiver, ArtifactStreamError, write_artifacts
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.execution import (
     ARTIFACTS_ROOT,
@@ -75,6 +75,10 @@ class Console:
 
     def fail(self, message: str) -> None:
         print(f"dokimi: {message}", file=self.err)
+
+    def flush(self) -> None:
+        self.out.flush()
+        self.err.flush()
 
 
 def convert(console: Console, *, path: Path, to: str) -> int:
@@ -167,16 +171,24 @@ def attach(
     namespace: str | None = None,
     kubeconfig: str | None = None,
     context: str | None = None,
+    results_directory: Path | None = None,
     connect_to: Callable[..., ClusterClient] | None = None,
 ) -> int:
-    """Resume streaming a run this process never submitted."""
+    """Resume streaming a run this process never submitted.
+
+    The artifacts land in *results_directory* if given, and otherwise in the
+    ``results.directory`` of the definition the run was submitted with, which takes
+    ``get`` on the run's ConfigMaps to read.
+    """
     resolved_run_id = validate_run_id(run_id)
     # Milestone-01 runs one test type, so its namespace is derivable. Once a run can be
     # of another type, the namespace stops being guessable from nothing and --namespace
     # becomes the way to say which one.
     resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
     cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
-    results = _results_directory_of(console, cluster, resolved_namespace, resolved_run_id)
+    results = results_directory or _results_directory_of(
+        console, cluster, resolved_namespace, resolved_run_id
+    )
     return _follow(console, cluster, resolved_namespace, resolved_run_id, results)
 
 
@@ -393,11 +405,17 @@ def _return_artifacts(console: Console, artifacts: RunArtifacts) -> None:
     """
     if not artifacts.directory.is_dir():
         return
+    # The block goes to stdout and the notes about it to stderr, and the CLI reads both
+    # from one log. Flushed on both sides, so neither lands inside the block, whatever
+    # the buffering of the process.
+    console.flush()
     try:
         size = write_artifacts(artifacts.directory, artifacts.run_id, console.say)
     except OSError as error:
+        console.flush()
         console.warn(f"could not return the run's artifacts in its log: {error}")
         return
+    console.flush()
     console.warn(f"artifacts: {size} bytes in the log above, for submit and attach to extract")
 
 
@@ -434,14 +452,16 @@ def _follow(
     verdict is the Job's.
     """
     receiver = ArtifactReceiver(run_id)
+    ended = False
 
     def write(line: str) -> None:
-        printed = receiver.feed(line)
-        if printed is not None:
+        for printed in receiver.feed(line):
             console.say(printed)
 
     try:
-        return follow(cluster, namespace=namespace, run_id=run_id, write=write)
+        code = follow(cluster, namespace=namespace, run_id=run_id, write=write)
+        ended = True
+        return code
     except KeyboardInterrupt:
         # ADR-01-06: the Job is a server-side resource. Leaving is not stopping.
         console.warn("")
@@ -451,13 +471,19 @@ def _follow(
         )
         return ExitCode.INTERRUPTED
     finally:
-        _store_artifacts(console, receiver, results / run_id)
+        _store_artifacts(console, receiver, results / run_id, ended=ended)
 
 
-def _store_artifacts(console: Console, receiver: ArtifactReceiver, destination: Path) -> None:
+def _store_artifacts(
+    console: Console, receiver: ArtifactReceiver, destination: Path, *, ended: bool
+) -> None:
+    """Extract what arrived, or say why nothing did. Never raises: the exit code is the run's."""
     if receiver.received:
         try:
             receiver.extract(destination)
+        except ArtifactStreamError as error:
+            console.warn(f"the run's artifacts were not extracted: {error}")
+            return
         except OSError as error:
             console.warn(f"could not write the run's artifacts to {destination}: {error}")
             return
@@ -468,6 +494,12 @@ def _store_artifacts(console: Console, receiver: ArtifactReceiver, destination: 
         console.warn(
             "the run's artifacts were cut off before the end of its log. Reattach while "
             f"the run's pod still exists to fetch them: dokimi attach {receiver.run_id}"
+        )
+    elif ended:
+        console.warn(
+            "the run's log carried no artifacts: it stopped before writing any, or its log "
+            "was rotated or cut. If the run got as far as its tests, reattach while its pod "
+            f"still exists: dokimi attach {receiver.run_id}"
         )
 
 

@@ -827,6 +827,59 @@ def test_a_damaged_block_is_reported_and_does_not_change_the_verdict(
     assert not (tmp_path / "results").exists()
 
 
+def test_an_unreadable_archive_is_reported_and_does_not_change_the_verdict(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A good checksum over a bad archive used to escape as a traceback, replacing the
+    # run's exit code.
+    import base64  # noqa: PLC0415
+    import hashlib  # noqa: PLC0415
+
+    data = b"\x1f\x8bnot a gzip stream"
+    cluster.log_lines = [
+        f"::dokimi-artifacts begin v=1 run={RUN_ID} bytes={len(data)} "
+        f"sha256={hashlib.sha256(data).hexdigest()}::",
+        base64.b64encode(data).decode(),
+        f"::dokimi-artifacts end run={RUN_ID}::",
+    ]
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["submit", str(EXAMPLE), "--run-id", RUN_ID])
+
+    assert code == ExitCode.PASS
+    assert "the artifact archive cannot be read" in capsys.readouterr().err
+
+
+def test_a_log_without_artifacts_says_so(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster.log_lines = ["run started", "run finished"]
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["submit", str(EXAMPLE), "--run-id", RUN_ID]) == ExitCode.PASS
+    assert "the run's log carried no artifacts" in capsys.readouterr().err
+
+
+def test_attach_can_be_told_where_the_artifacts_go(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without reading the run's definition, so without get on its ConfigMaps.
+    cluster.log_lines = artifact_lines(tmp_path, RUN_ID)
+    monkeypatch.chdir(tmp_path)
+
+    main(["attach", RUN_ID, "--results-directory", str(tmp_path / "chosen")])
+
+    assert (tmp_path / "chosen" / RUN_ID / "log.html").is_file()
+
+
 # -- phase 11 starts: the run's test pods go before the claim does (ADR-05-13) ---------
 
 

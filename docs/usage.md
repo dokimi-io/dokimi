@@ -350,6 +350,11 @@ finished.
 Milestone-01 runs one test type, so the namespace is derivable. Pass `--namespace` if the
 run is somewhere else.
 
+`attach` also extracts the run's reports, into the `results.directory` of the definition
+the run was submitted with (see [The run's reports](#the-runs-reports)). Reading that
+definition takes `get` on the run's ConfigMaps. `--results-directory <dir>` extracts there
+instead, and needs no such read.
+
 ## image
 
 ```console
@@ -385,9 +390,16 @@ results/20261002-120000-a1b2c3/
   pairs/         one output.xml per pair
 ```
 
-`attach` reads `results.directory` from the definition the run was submitted with, so it
-lands in the same place from any machine. A block that is truncated or fails its checksum
-is reported, and nothing is extracted.
+`attach` reads `results.directory` from the definition the run was submitted with. A
+relative directory, like the default `./results`, is relative to wherever `attach` runs,
+so it only lands in the same place from any machine when the definition gives an absolute
+one. `attach --results-directory <dir>` puts it somewhere else, and skips reading the
+definition.
+
+A block that is truncated, fails its checksum, or holds anything that would land outside
+that directory is reported, and nothing is extracted. A run whose log carries no block at
+all, because it stopped before writing one or because its log was rotated, says so. None
+of this changes the run's exit code.
 
 This is **provisional**: how artifacts leave the Job is ADR-05-15, still proposed, and this
 is what it recommends. Two consequences of it:

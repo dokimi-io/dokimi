@@ -112,6 +112,40 @@ def test_a_log_stream_that_drops_is_a_cluster_error_and_releases_its_connection(
     assert DroppingStream.released
 
 
+class ChunkedStream:
+    """What urllib3 hands back: HTTP chunks, which neither start nor end with lines."""
+
+    def __init__(self, *chunks: bytes) -> None:
+        self.chunks = chunks
+
+    def stream(self) -> Iterator[bytes]:
+        yield from self.chunks
+
+    def release_conn(self) -> None:
+        pass
+
+
+def test_a_log_stream_yields_lines_whatever_the_chunks() -> None:
+    # Merged lines, a line split across chunks, a character split across chunks, and a
+    # last line without its newline.
+    accented = "café\n".encode()
+    chunks = [b"phase 2\nphase 3\n", b"par", b"tial\n", accented[:4], accented[4:], b"end"]
+
+    class ChunkingApi(CoreApi):
+        def read_namespaced_pod_log(self, **_: Any) -> Any:
+            return ChunkedStream(*chunks)
+
+    core = ChunkingApi()
+
+    assert list(adapter(core).stream_logs("ns", "pod", "orchestrator")) == [
+        "phase 2",
+        "phase 3",
+        "partial",
+        "café",
+        "end",
+    ]
+
+
 # -- listing nodes (M1-06) ------------------------------------------------------
 
 

@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from dokimi.artifact_stream import ArtifactReceiver, ArtifactStreamError, write_artifacts
+from dokimi.artifact_stream import (
+    FORMAT_VERSION,
+    ArtifactReceiver,
+    ArtifactStreamError,
+    write_artifacts,
+)
 
 RUN_ID = "20261002-120000-a1b2c3"
 
@@ -52,7 +57,7 @@ def test_the_block_never_reaches_the_screen_and_the_rest_of_the_log_does(
     receiver = ArtifactReceiver(RUN_ID)
     log = ["phase 9a (reporting): ...", *streamed(directory), "run finished"]
 
-    printed = [line for line in log if receiver.feed(line) is not None]
+    printed = [shown for line in log for shown in receiver.feed(line)]
 
     assert printed == ["phase 9a (reporting): ...", "run finished"]
 
@@ -66,7 +71,7 @@ def test_another_runs_block_is_just_log_lines(directory: Path) -> None:
     receiver = ArtifactReceiver(RUN_ID)
     lines = streamed(directory, run_id="20261002-110000-zzzzzz")
 
-    assert [line for line in lines if receiver.feed(line) is not None] == lines
+    assert [shown for line in lines for shown in receiver.feed(line)] == lines
     assert not receiver.received
 
 
@@ -95,24 +100,89 @@ def test_a_stream_that_stops_inside_the_block_says_so(directory: Path) -> None:
     assert not receiver.received
 
 
-def test_an_archive_that_reaches_outside_its_directory_is_refused(tmp_path: Path) -> None:
-    # Checksummed by whoever made it, so the checksum is no protection: extraction is.
+def block(data: bytes, version: int = FORMAT_VERSION) -> list[str]:
+    """A block around *data*, checksummed as the Job would, whatever *data* holds."""
+    encoded = base64.b64encode(data).decode()
+    return [
+        f"::dokimi-artifacts begin v={version} run={RUN_ID} bytes={len(data)} "
+        f"sha256={hashlib.sha256(data).hexdigest()}::",
+        *(encoded[start : start + 76] for start in range(0, len(encoded), 76)),
+        f"::dokimi-artifacts end run={RUN_ID}::",
+    ]
+
+
+def archive_of(*members: tuple[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        member = tarfile.TarInfo("../escaped.txt")
-        member.size = 3
-        archive.addfile(member, io.BytesIO(b"bad"))
-    data = buffer.getvalue()
-    encoded = base64.b64encode(data).decode()
+        for name, content in members:
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+def received(lines: list[str]) -> ArtifactReceiver:
     receiver = ArtifactReceiver(RUN_ID)
-    for line in [
-        f"::dokimi-artifacts begin run={RUN_ID} bytes={len(data)} "
-        f"sha256={hashlib.sha256(data).hexdigest()}::",
-        encoded,
-        f"::dokimi-artifacts end run={RUN_ID}::",
-    ]:
+    for line in lines:
         receiver.feed(line)
+    return receiver
+
+
+def test_an_archive_that_reaches_outside_its_directory_is_refused(tmp_path: Path) -> None:
+    # Checksummed by whoever made it, so the checksum is no protection: extraction is.
+    receiver = received(block(archive_of(("../escaped.txt", b"bad"))))
 
     with pytest.raises(ArtifactStreamError, match="refusing to extract"):
         receiver.extract(tmp_path / "out")
     assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_nothing_is_extracted_when_any_member_is_refused(tmp_path: Path) -> None:
+    # extractall() filters member by member, so the good one would already be written.
+    receiver = received(block(archive_of(("log.html", b"<html/>"), ("../escaped.txt", b"bad"))))
+
+    with pytest.raises(ArtifactStreamError, match="refusing to extract"):
+        receiver.extract(tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_damaged_archive_with_a_good_checksum_is_an_artifact_error(tmp_path: Path) -> None:
+    # The checksum matches what was sent; what was sent is not a readable archive.
+    receiver = received(block(b"\x1f\x8b" + b"not a gzip stream at all"))
+
+    assert receiver.received
+    with pytest.raises(ArtifactStreamError, match="cannot be read"):
+        receiver.extract(tmp_path / "out")
+
+
+def test_a_framing_version_this_cli_does_not_read_is_reported(directory: Path) -> None:
+    lines = streamed(directory)
+    lines[0] = lines[0].replace(f"v={FORMAT_VERSION} ", "v=99 ")
+    receiver = received(lines)
+
+    assert not receiver.received
+    assert "framing version 99" in str(receiver.error)
+
+
+def test_a_marker_in_robots_output_does_not_swallow_the_log(directory: Path) -> None:
+    # The Job's log is also Robot's console output, so a begin marker can appear early.
+    fake = streamed(directory)[0]
+    receiver = ArtifactReceiver(RUN_ID)
+    log = [fake, "pair-001 | FAIL |", *streamed(directory), "run finished"]
+
+    printed = [shown for line in log for shown in receiver.feed(line)]
+
+    assert printed == [fake, "pair-001 | FAIL |", "run finished"]
+    assert receiver.received
+
+
+def test_a_second_begin_starts_over_and_the_last_block_counts(
+    directory: Path, tmp_path: Path
+) -> None:
+    lines = streamed(directory)
+    receiver = ArtifactReceiver(RUN_ID)
+
+    printed = [shown for line in [lines[0], lines[1], *lines] for shown in receiver.feed(line)]
+
+    assert printed == lines[:2]
+    assert (receiver.extract(tmp_path / "out") / "suite.robot").is_file()
