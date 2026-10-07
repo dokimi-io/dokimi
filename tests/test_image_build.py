@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import pathlib
 import re
+import textwrap
 
 import pytest
+
+from dokimi import _image_digest, images
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCKERFILE = REPOSITORY_ROOT / "images" / "orchestrator" / "Dockerfile"
@@ -109,6 +112,28 @@ def test_the_release_workflow_bakes_every_generated_digest() -> None:
 
     assert constants == {"ORCHESTRATOR_IMAGE_DIGEST", "IPERF2_IMAGE_DIGEST"}
     assert rewritten == constants
+
+
+def _release_verification() -> str:
+    """The Python the release runs once the digests are baked in, as the workflow holds it."""
+    workflow = RELEASE_WORKFLOW.read_text()
+    step = workflow[workflow.index("Verify the baked-in defaults") :]
+    script = re.search(r"python - <<'PY'\n(.*?)\n\s*PY\n", step, re.S)
+    assert script, "the release's verification step no longer runs an inline script"
+    return textwrap.dedent(script.group(1))
+
+
+def test_the_release_verification_runs_against_this_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    # It runs only in a release, after the images are pushed. An import it can no longer
+    # make shows up there first, as a release with published images and no CLI. It did
+    # once: dokimi.images.resolve_image went away with ADR-04-08.
+    digest, workload_digest = "sha256:" + "ab" * 32, "sha256:" + "cd" * 32
+    monkeypatch.setenv("DIGEST", digest)
+    monkeypatch.setenv("IPERF2_DIGEST", workload_digest)
+    monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", digest)
+    monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", workload_digest)
+
+    exec(compile(_release_verification(), str(RELEASE_WORKFLOW), "exec"), {"__name__": "__main__"})
 
 
 def test_the_checked_in_workload_digests_are_unset() -> None:
