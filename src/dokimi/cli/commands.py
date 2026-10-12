@@ -32,7 +32,12 @@ from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds
 from dokimi.k8s.namespaces import namespace_for
-from dokimi.k8s.ownership import delete_run_owned, find_run_owned, format_timestamp
+from dokimi.k8s.ownership import (
+    delete_run_owned,
+    find_run_owned,
+    format_timestamp,
+    owner_name,
+)
 from dokimi.k8s.resources import POD, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
@@ -282,12 +287,18 @@ def execute(
         if _remove_test_pods(console, resources, resolved_run_id, resolved_namespace):
             _finish(console, resources, resolved_run_id, resolved_namespace, now)
         else:
+            # Removing the pods alone frees nothing: only a finished or expired claim does
+            # (ADR-05-13). So the way out names both steps, the second one being the
+            # recovery the refusal of a later run prints too.
             console.warn(
                 f"run {resolved_run_id} keeps its claim on the cluster until "
                 f"{format_timestamp(expires_at)}, because its test pods may still be sending "
-                "traffic. Remove them to free it earlier: kubectl delete pod -n "
+                "traffic. To free it earlier, remove them: kubectl delete pod -n "
                 f"{resolved_namespace} -l 'dokimi.io/run-id={resolved_run_id},"
-                "app.kubernetes.io/component in (client,server)'"
+                "app.kubernetes.io/component in (client,server)'. Then clear the claim by "
+                "deleting the run's owner, which removes the rest of the run with it: "
+                f"kubectl delete configmap -n {resolved_namespace} "
+                f"{owner_name(resolved_run_id)}"
             )
 
 

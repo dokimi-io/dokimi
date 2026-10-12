@@ -819,6 +819,8 @@ def test_pods_that_cannot_be_deleted_keep_the_cluster_claimed(
         f"kubectl delete pod -n dokimi-iperf2 -l 'dokimi.io/run-id={RUN_ID},"
         "app.kubernetes.io/component in (client,server)'" in err
     )
+    # Removing the pods frees nothing by itself: the way out ends at the claim.
+    assert f"kubectl delete configmap -n dokimi-iperf2 run-{RUN_ID}-owner" in err
 
 
 def test_pods_that_never_go_away_keep_the_cluster_claimed(
