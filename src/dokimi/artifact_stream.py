@@ -21,10 +21,13 @@ no absolute paths, no ``..``, nothing that points outside the destination. A blo
 fails any check is reported and nothing is extracted. **The log is the transport, not the
 record:** the extracted directory is the artifact.
 
-The Job's log is also Robot's console output, so a line that only looks like a begin
-marker can come first. A block therefore ends at the first line that cannot belong to
-it, and a later begin marker starts over; either way, the lines taken so far are printed
-after all, and the last complete block is the one kept.
+Two things share the block's log. The container runtime reads the Job's stdout and
+stderr separately, so a line written to stderr before or after the block can arrive in
+the middle of it, whatever the process flushed; on kind, a note written just after the
+block landed 2,281 lines into it. And the log is also Robot's console output, so a line
+that only looks like a begin marker can come first. So a line inside a block that is not
+base64 is printed as it arrives and the block goes on, and a later begin marker starts
+over, printing the lines taken so far after all. The last complete block is the one kept.
 """
 
 from __future__ import annotations
@@ -83,9 +86,10 @@ class ArtifactReceiver:
     """Takes a run's artifact block out of its streamed log, and keeps it.
 
     Feed every line through :meth:`feed`. It returns the lines to print: none for a line
-    that belongs to the block, and the lines it had taken when what looked like a block
-    turns out not to be one. A block for another run is not this run's, and is passed
-    through as ordinary log lines.
+    that belongs to the block, the line itself for one that does not, even inside a block,
+    and the lines it had taken when a later begin marker shows that what looked like a
+    block was not one. A block for another run is not this run's, and is passed through
+    as ordinary log lines.
     """
 
     def __init__(self, run_id: str) -> None:
@@ -127,14 +131,10 @@ class ArtifactReceiver:
             self._finish("".join(entry.strip() for entry in raw[1:]))
             return []
         if not _DATA.match(stripped):
-            # Not base64, so not this block: give back everything it had taken. A later
-            # block can still arrive; if none does, this is why there are no artifacts.
-            taken, self._raw = [*self._raw, line], None
-            self.error = ArtifactStreamError(
-                "an artifact block began, but a line inside it was not part of one, so it "
-                "was printed as log instead"
-            )
-            return taken
+            # Not part of the block: a line from the other stream, interleaved by the
+            # container runtime, or ordinary log after a begin that was not one. Printed
+            # as it arrives; the block goes on, and its checksum still decides.
+            return [line]
         self._raw.append(line)
         return []
 

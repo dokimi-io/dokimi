@@ -1,6 +1,6 @@
 # The test suite
 
-669 tests, none of which need a cluster, a network or a container runtime. Everything runs
+670 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -32,7 +32,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_execution.py`](test_execution.py) | 27 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
 | [`test_robot_execution.py`](test_robot_execution.py) | 4 | What Robot Framework does with the rendered suite: YAML and Robot run identically, every criterion says it was not evaluated, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
-| [`test_artifact_stream.py`](test_artifact_stream.py) | 12 | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
+| [`test_artifact_stream.py`](test_artifact_stream.py) | 13 | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
 | [`test_manifests.py`](test_manifests.py) | 19 | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 6 | How the real Kubernetes adapter translates the client library's failures |

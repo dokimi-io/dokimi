@@ -172,8 +172,25 @@ def test_a_marker_in_robots_output_does_not_swallow_the_log(directory: Path) -> 
 
     printed = [shown for line in log for shown in receiver.feed(line)]
 
-    assert printed == [fake, "pair-001 | FAIL |", "run finished"]
+    # The ordinary line is printed at once; the false begin only when the real one shows.
+    assert printed == ["pair-001 | FAIL |", fake, "run finished"]
     assert receiver.received
+
+
+def test_a_line_from_the_other_stream_inside_the_block_is_printed_and_the_block_survives(
+    directory: Path, tmp_path: Path
+) -> None:
+    # Found on kind: stdout and stderr are read separately, so the Job's note about the
+    # block, written after it to stderr, arrived 2,281 lines into it.
+    lines = streamed(directory)
+    note = "artifacts: 148066 bytes in the log above, for submit and attach to extract"
+    receiver = ArtifactReceiver(RUN_ID)
+
+    log = [*lines[:5], note, *lines[5:]]
+    printed = [shown for line in log for shown in receiver.feed(line)]
+
+    assert printed == [note]
+    assert (receiver.extract(tmp_path / "out") / "suite.robot").is_file()
 
 
 def test_a_second_begin_starts_over_and_the_last_block_counts(
