@@ -195,6 +195,7 @@ Put two of those names in the definition's `placement`, then submit:
 
 ```console
 $ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
+$ export DOKIMI_CLUSTER=test-env  # the name every result is labelled with
 $ uv run dokimi submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
 $ uv run dokimi submit test.yaml --service-account dokimi
 ```

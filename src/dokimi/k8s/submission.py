@@ -88,6 +88,8 @@ class Submission:
     image: str
     #: The images the run deploys, by component (ADR-04-08).
     images: Mapping[str, WorkloadImage]
+    #: What the operator called the cluster, for every result's ``cluster`` label (ADR-02-07).
+    cluster: str
     manifests: tuple[dict[str, Any], ...]
 
     @property
@@ -102,6 +104,7 @@ def plan_submission(
     source_path: Path,
     image: str,
     images: Mapping[str, WorkloadImage],
+    cluster: str,
     run_id: str | None = None,
     namespace: str | None = None,
     service_account: str | None = None,
@@ -126,6 +129,7 @@ def plan_submission(
         image=image,
         namespace=resolved_namespace,
         images=images,
+        cluster=cluster,
         service_account=service_account,
     )
     return Submission(
@@ -133,6 +137,7 @@ def plan_submission(
         namespace=resolved_namespace,
         image=image,
         images=dict(images),
+        cluster=cluster,
         manifests=tuple(manifests),
     )
 

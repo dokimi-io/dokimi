@@ -25,6 +25,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [What a submission creates](#what-a-submission-creates)
 - [Choosing the orchestrator image](#choosing-the-orchestrator-image)
 - [Choosing the images a run deploys](#choosing-the-images-a-run-deploys)
+- [Naming the cluster](#naming-the-cluster)
 - [Cleaning up](#cleaning-up)
 
 ## What a run does today
@@ -249,6 +250,7 @@ own exit code.
 | `--no-follow` | submit and return, rather than streaming |
 | `--run-id` | use a specific run id instead of generating one |
 | `--namespace`, `-n` | override the test type's namespace |
+| `--cluster` | the cluster's name, which labels every result; required, see [Naming the cluster](#naming-the-cluster) |
 | `--image <component>=<reference>` | choose an image for this run, repeatable: `orchestrator`, the Job's own, or `iperf2` |
 | `--orchestrator-image` | the earlier name of `--image orchestrator=` |
 | `--service-account` | run the Job as a specific service account |
@@ -595,6 +597,34 @@ default to run. Choose one with --image iperf2=<reference> or DOKIMI_IPERF2_IMAG
 ```
 
 `dokimi image` shows every image a run would use and where each one came from.
+
+## Naming the cluster
+
+Every result is labelled with the cluster it was measured on, so that history from two
+clusters is never mixed up (ADR-02-07). dokimi does not guess that name: not from the
+kubeconfig context, not from anything in the cluster. You give it, and there is no default:
+
+| Source | How | Scope |
+| --- | --- | --- |
+| Run override | `--cluster lab-fra-1` | one run |
+| Installation override | `DOKIMI_CLUSTER=lab-fra-1`, on the machine that submits | one installation |
+
+Without either, `submit` refuses before creating anything, a dry run included:
+
+```console
+$ dokimi submit test.yaml
+dokimi: name the cluster this run executes against with --cluster <name> or DOKIMI_CLUSTER.
+It labels every result, and has no default, so that results from different clusters are
+never merged (ADR-02-07)
+```
+
+The name is a DNS label: lowercase letters, digits and hyphens, starting and ending with a
+letter or digit, at most 63 characters. Anything else is refused rather than rewritten, so
+`Prod-EU` never quietly becomes someone else's `prod-eu`. Like the images, `submit` writes
+it into the Job (`DOKIMI_CLUSTER`), and `--dry-run` shows it.
+
+It is what you called the cluster, not an identity dokimi checks: two people can name one
+cluster differently, and nothing notices. Pick one name per cluster and keep it.
 
 ## Cleaning up
 

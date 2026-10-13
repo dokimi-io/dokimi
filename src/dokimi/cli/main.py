@@ -31,6 +31,7 @@ from dokimi.cli.commands import (
     validate,
 )
 from dokimi.cli.exit_codes import ExitCode
+from dokimi.cluster_name import CLUSTER_ENV_VAR
 from dokimi.execution import RobotRunError
 from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
@@ -117,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
     submit_parser.add_argument(
         "--service-account",
         help="service account for the run's Job, if the cluster needs a specific one",
+    )
+    submit_parser.add_argument(
+        "--cluster",
+        dest="cluster_name",
+        help=f"the name results are labelled with, overriding ${CLUSTER_ENV_VAR}; required, "
+        "with no default: lowercase letters, digits and hyphens",
     )
     _add_cluster_arguments(submit_parser)
     _add_image_argument(submit_parser)
@@ -249,6 +256,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             run_id=args.run_id,
             image_override=args.image_override,
             images=args.images,
+            cluster_name=args.cluster_name,
             service_account=args.service_account,
             kubeconfig=args.kubeconfig,
             context=args.context,

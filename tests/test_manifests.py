@@ -79,6 +79,7 @@ def manifests(definition: TestDefinition) -> list[dict[str, Any]]:
         run_id=RUN_ID,
         image=IMAGE,
         images=RUN_IMAGES,
+        cluster="test-cluster",
         namespace="dokimi-iperf2",
     )
 
@@ -228,6 +229,7 @@ def test_a_robot_suite_stays_a_robot_suite(definition: TestDefinition) -> None:
         run_id=RUN_ID,
         image=IMAGE,
         images=RUN_IMAGES,
+        cluster="test-cluster",
         namespace="dokimi-iperf2",
     )
 
@@ -264,6 +266,13 @@ def test_the_job_is_given_the_images_the_run_deploys(manifests: list[dict[str, A
     assert env["DOKIMI_IPERF2_IMAGE_SOURCE"] == "release-default"
 
 
+def test_the_job_is_given_the_clusters_name(manifests: list[dict[str, Any]]) -> None:
+    # ADR-02-07: given at submission, and the Job uses exactly that.
+    env = {entry["name"]: entry["value"] for entry in _container(manifests)["env"]}
+
+    assert env["DOKIMI_CLUSTER"] == "test-cluster"
+
+
 def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition) -> None:
     without = render_manifests(
         definition,
@@ -272,6 +281,7 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
         run_id=RUN_ID,
         image=IMAGE,
         images=RUN_IMAGES,
+        cluster="test-cluster",
         namespace="ns",
     )
     with_account = render_manifests(
@@ -281,6 +291,7 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
         run_id=RUN_ID,
         image=IMAGE,
         images=RUN_IMAGES,
+        cluster="test-cluster",
         namespace="ns",
         service_account="runner",
     )

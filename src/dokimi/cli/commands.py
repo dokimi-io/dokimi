@@ -17,6 +17,7 @@ import yaml
 
 from dokimi.artifact_stream import ArtifactReceiver, ArtifactStreamError, write_artifacts
 from dokimi.cli.exit_codes import ExitCode
+from dokimi.cluster_name import cluster_from_job_environment, resolve_cluster
 from dokimi.execution import (
     ARTIFACTS_ROOT,
     RobotRunner,
@@ -134,6 +135,7 @@ def submit_run(
     run_id: str | None = None,
     image_override: str | None = None,
     images: Sequence[str] = (),
+    cluster_name: str | None = None,
     service_account: str | None = None,
     kubeconfig: str | None = None,
     context: str | None = None,
@@ -144,7 +146,8 @@ def submit_run(
 
     Every image is resolved here, before anything else happens: the orchestrator's, and
     the ones the run deploys (ADR-04-08). A source build given no override for one of them
-    stops with a config_error, rather than a Job that fails once it is running.
+    stops with a config_error, rather than a Job that fails once it is running. So does a
+    run without a cluster name, which has no default (ADR-02-07).
     """
     definition = parse_file(path)
     # Refused before anything is created, a dry run included: a run that could only
@@ -154,12 +157,14 @@ def submit_run(
         parse_image_options(images, orchestrator_image=image_override),
         monitoring=monitoring.deploys,
     )
+    resolved_cluster = resolve_cluster(cluster_name)
     submission = plan_submission(
         definition,
         source=path.read_text(encoding="utf-8"),
         source_path=path,
         image=run_images["orchestrator"].reference,
         images=run_images,
+        cluster=resolved_cluster,
         run_id=run_id,
         namespace=namespace,
         service_account=service_account,
@@ -268,9 +273,11 @@ def execute(
     # Resolved by submit, never here: the submitter's environment does not reach the Job
     # (ADR-04-08). What the Job was given is what it runs, and the log says so.
     run_images = images_from_job_environment(env, monitoring=monitoring.deploys)
+    run_cluster = cluster_from_job_environment(env)
     console.say("phase 2 (ingestion): definition parsed")
     console.say()
     _describe(console, definition)
+    console.say(f"  cluster     {run_cluster}")
     _describe_images(console, run_images)
     console.say()
 
@@ -661,6 +668,7 @@ def _render(
     console.warn("")
     console.warn(f"Run id     {submission.run_id}")
     console.warn(f"Namespace  {submission.namespace}")
+    console.warn(f"Cluster    {submission.cluster}")
     console.warn("Images")
     width = max((len(name) for name in submission.images), default=0) + 2
     for name, run_image in sorted(submission.images.items()):

@@ -156,6 +156,9 @@ $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi attach <run-id>             # resume streaming a run already going
 ```
 
+`submit` needs the cluster's name, `--cluster <name>` or `DOKIMI_CLUSTER`, which labels every
+result and has no default ([Naming the cluster](docs/usage.md#naming-the-cluster)).
+
 `submit` validates the definition locally first, so an invalid one never reaches the
 cluster. What it then creates is three objects: a ConfigMap that owns the run, a ConfigMap
 carrying the definition, and the Job that is the run. The definition travels with the run

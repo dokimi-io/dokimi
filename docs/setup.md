@@ -107,10 +107,12 @@ $ docker build -f images/iperf2/Dockerfile -t iperf2:dev .
 $ test-env/test-env.sh load orchestrator:dev
 $ test-env/test-env.sh load iperf2:dev
 $ export DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
+$ export DOKIMI_CLUSTER=test-env
 ```
 
 A source checkout has no default for either, so `submit` refuses without them
-([Usage](usage.md#choosing-the-images-a-run-deploys)).
+([Usage](usage.md#choosing-the-images-a-run-deploys)). The cluster's name has no default
+anywhere: it labels every result ([Usage](usage.md#naming-the-cluster)).
 
 Create the namespaces and grant the run's Job what it needs, once:
 
