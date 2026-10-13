@@ -96,7 +96,9 @@ jobs:
 
       # Tags exist for humans reading the registry. Nothing the CLI submits or deploys
       # resolves a tag: the reference baked into the release below is the digest this
-      # step returns.
+      # step returns. A rehearsal exports the same build as an OCI archive instead of
+      # pushing it: a build that is neither pushed nor exported has no digest at all, and
+      # the bake and the check below need one to rehearse anything.
       - name: Build and push
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -104,7 +106,7 @@ jobs:
           context: .
           file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
+          outputs: ${{ env.PUBLISH == 'true' && 'type=registry' || format('type=oci,dest={0}/image.tar', runner.temp) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
