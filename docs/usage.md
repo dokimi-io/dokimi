@@ -19,6 +19,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [submit](#submit)
 - [attach](#attach)
 - [image](#image)
+- [The run's reports](#the-runs-reports)
 - [Exit codes](#exit-codes)
 - [How nodes are resolved](#how-nodes-are-resolved)
 - [What a submission creates](#what-a-submission-creates)
@@ -60,8 +61,9 @@ Three things to know about a run today:
 - **Every pass criterion fails, and says it was not checked.** Evaluating criteria
   arrives with M1-13, so `Throughput Should Be At Least 950 megabits per second` fails with
   "was not checked" rather than passing, or being skipped, without anything compared.
-- **Robot's report is written inside the Job**, in `/work/artifacts/<run-id>/`, next to the
-  suite that ran. Getting it back to you arrives next (ADR-05-15).
+- **Robot's report comes back to you.** `submit` and `attach` extract it into
+  `<results.directory>/<run-id>/`: `log.html`, `report.html`, the merged `output.xml`, and
+  `suite.robot`, the exact suite that ran. See [The run's reports](#the-runs-reports).
 - **The run removes its test pods before it frees the cluster,** however it ended, and
   waits until they are gone: a server pod would otherwise idle until its deadline, and a
   pod still sending must keep the cluster claimed (ADR-05-13). That takes the pods of a
@@ -348,6 +350,11 @@ finished.
 Milestone-01 runs one test type, so the namespace is derivable. Pass `--namespace` if the
 run is somewhere else.
 
+`attach` also extracts the run's reports, into the `results.directory` of the definition
+the run was submitted with (see [The run's reports](#the-runs-reports)). Reading that
+definition takes `get` on the run's ConfigMaps. `--results-directory <dir>` extracts there
+instead, and needs no such read.
+
 ## image
 
 ```console
@@ -366,6 +373,41 @@ in a source checkout, is listed as such with how to choose one, and `dokimi imag
 exits `0`: it is a diagnostic, and `submit` is what refuses. See
 [Choosing the orchestrator image](#choosing-the-orchestrator-image) and
 [Choosing the images a run deploys](#choosing-the-images-a-run-deploys).
+
+## The run's reports
+
+A run writes its artifacts inside the Job, which disappears with its pod. So at the end, the
+Job writes them into its own log, as one checksummed block, and `submit` or `attach` takes
+that block out of what it prints and extracts it into the definition's `results.directory`,
+under the run id:
+
+```
+results/20261002-120000-a1b2c3/
+  log.html       Robot Framework's log of the run
+  report.html    its report
+  output.xml     every pair's results, merged by rebot
+  suite.robot    the suite that ran, byte for byte what dokimi convert prints
+  pairs/         one output.xml per pair
+```
+
+`attach` reads `results.directory` from the definition the run was submitted with. A
+relative directory, like the default `./results`, is relative to wherever `attach` runs,
+so it only lands in the same place from any machine when the definition gives an absolute
+one. `attach --results-directory <dir>` puts it somewhere else, and skips reading the
+definition.
+
+A block that is truncated, fails its checksum, or holds anything that would land outside
+that directory is reported, and nothing is extracted. A run whose log carries no block at
+all, because it stopped before writing one or because its log was rotated, says so. None
+of this changes the run's exit code.
+
+This is **provisional**: how artifacts leave the Job is ADR-05-15, still proposed, and this
+is what it recommends. Two consequences of it:
+
+- **The artifacts can be fetched for as long as the run's pod exists.** `submit --no-follow`
+  extracts nothing; `dokimi attach <run-id>` later does, until the pod is deleted.
+- **The Job's raw log ends with a block of base64.** `kubectl logs` shows it; `submit` and
+  `attach` never do.
 
 ## Exit codes
 

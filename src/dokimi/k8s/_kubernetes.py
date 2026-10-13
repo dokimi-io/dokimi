@@ -118,11 +118,15 @@ class KubernetesCluster:
         return self._to_dict(pod)
 
     def stream_logs(self, namespace: str, pod: str, container: str) -> Iterator[str]:
-        """Follow a container's log until it closes.
+        """Follow a container's log until it closes, one line at a time.
 
         ``_preload_content=False`` is the difference between streaming and waiting: with
         it the client hands back the raw response and lines arrive as the run produces
         them, without it the call blocks until the container has exited.
+
+        The response yields HTTP chunks, not lines: one chunk can hold many lines, and a
+        line, or a character inside it, can be split across two. So the bytes are
+        buffered and split on newlines before anything is decoded.
         """
         try:
             with _transport(f"streaming logs from {pod}"):
@@ -138,8 +142,13 @@ class KubernetesCluster:
         try:
             # The connection can drop mid-stream, long after the call above succeeded.
             with _transport(f"streaming logs from {pod}"):
-                for line in response.stream():
-                    yield line.decode("utf-8", errors="replace").rstrip("\n")
+                pending = b""
+                for chunk in response.stream():
+                    *lines, pending = (pending + chunk).split(b"\n")
+                    for line in lines:
+                        yield line.decode("utf-8", errors="replace")
+                if pending:
+                    yield pending.decode("utf-8", errors="replace")
         finally:
             response.release_conn()
 

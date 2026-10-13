@@ -125,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="reattach to a running run and resume streaming",
     )
     attach_parser.add_argument("run_id", metavar="run-id", help="the run to follow")
+    attach_parser.add_argument(
+        "--results-directory",
+        type=Path,
+        help="where to extract the run's artifacts, instead of its definition's",
+    )
     _add_cluster_arguments(attach_parser)
 
     image_parser = commands.add_parser(
@@ -254,6 +259,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             namespace=args.namespace,
             kubeconfig=args.kubeconfig,
             context=args.context,
+            results_directory=args.results_directory,
         )
     if args.command == "image":
         return show_image(console, image_override=args.image_override, images=args.images)
