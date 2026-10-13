@@ -43,7 +43,7 @@ from tests.fake_resources import FakeResources
 
 RUN = RunId("20260924-143012-k3f9x2")
 NAMESPACE = "dokimi-iperf2"
-PLACEMENT = Placement(NAMESPACE, str(RUN), "pair-001", "worker-01", "worker-02")
+PLACEMENT = Placement(NAMESPACE, str(RUN), "pair-001", "worker-01", "worker-02", "test-cluster")
 BUDGET = DeadlineBudget(
     test_duration=30, startup=300, warmup=10, direct_read=30, scrape_confirmation=120
 )

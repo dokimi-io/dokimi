@@ -69,6 +69,7 @@ __all__ = [
     "IMAGE_NAME",
     "IPERF_PORT",
     "MEASUREMENT_SOURCE_PORT",
+    "REPETITION",
     "TRIGGER_PORT",
     "WARMUP_SOURCE_PORT",
     "Completion",
@@ -79,7 +80,7 @@ __all__ = [
 ]
 
 IMAGE_NAME = "iperf2"
-#: The tool's container in both pods. The exporter sidecar (M1-10) sits next to it.
+#: The tool's container in both pods. The exporter (M1-10) runs next to it.
 CONTAINER_NAME = "iperf2"
 #: ``iperf``'s own default port.
 IPERF_PORT = 5001
@@ -95,6 +96,9 @@ _STARTED_MARKER = "/tmp/dokimi-started"
 RESULTS_DIRECTORY = "/results"
 #: The uid the image runs as, shared with the orchestrator image ([ADR-05-04]).
 _UID = 65532
+#: Milestone-01 runs each pair once. ``repetition`` is a required label already
+#: ([ADR-02-07]); repetitions themselves arrive with Phase 4.
+REPETITION = 1
 
 #: Sends *payload* to ``host:port``. Injected so tests need no network.
 Trigger = Callable[[str, int, bytes], None]
@@ -236,12 +240,17 @@ class Iperf2:
         warmup = params.get("warmup", Duration)
         pods = {
             Role.SERVER: self._pod(
-                placement, Role.SERVER, images.server.reference, self._server(protocol, warmup)
+                placement,
+                Role.SERVER,
+                images.server.reference,
+                protocol,
+                self._server(protocol, warmup),
             ),
             Role.CLIENT: self._pod(
                 placement,
                 Role.CLIENT,
                 images.client.reference,
+                protocol,
                 self._client(
                     protocol,
                     params.get("targetBandwidth", Bandwidth),
@@ -331,14 +340,19 @@ class Iperf2:
         }
 
     def _pod(
-        self, placement: Placement, role: Role, image: str, container: dict[str, Any]
+        self,
+        placement: Placement,
+        role: Role,
+        image: str,
+        protocol: Protocol,
+        container: dict[str, Any],
     ) -> Manifest:
         node = placement.node_for(role)
         return {
             "apiVersion": POD.api_version,
             "kind": POD.kind,
             "metadata": {
-                "name": f"run-{placement.run_id}-{placement.test_id}-{role.value}",
+                "name": _pod_name(placement, role),
                 "namespace": placement.namespace,
                 "labels": {"app.kubernetes.io/name": IMAGE_NAME},
             },
@@ -378,23 +392,74 @@ class Iperf2:
                         "name": CONTAINER_NAME,
                         "image": image,
                         **container,
-                        "securityContext": {
-                            "allowPrivilegeEscalation": False,
-                            "readOnlyRootFilesystem": True,
-                            "capabilities": {"drop": ["ALL"]},
-                        },
+                        "securityContext": _container_security(),
                         "volumeMounts": [
                             {"name": "results", "mountPath": RESULTS_DIRECTORY},
                             {"name": "tmp", "mountPath": "/tmp"},
                         ],
-                    }
+                    },
+                    self._exporter_container(placement, image, protocol),
                 ],
                 "volumes": [
-                    # Shared with the exporter sidecar M1-10 adds, which parses from here.
+                    # Shared with the exporter, which parses from here.
                     {"name": "results", "emptyDir": {}},
                     {"name": "tmp", "emptyDir": {}},
                 ],
             },
+        }
+
+    def _exporter_container(
+        self, placement: Placement, image: str, protocol: Protocol
+    ) -> dict[str, Any]:
+        """The exporter, next to the tool in every pod ([ADR-02-02]).
+
+        A regular container, not a native sidecar: Kubernetes stops a native sidecar once
+        the pod's other containers have exited, and the exporter has to keep serving the
+        completed result after iperf2 has ([ADR-03-01]). So a finished client's pod stays
+        ``Running`` until the run removes it. Completion is read from the ``iperf2``
+        container's own status, which this does not change.
+
+        Every required label but the two addresses is known now, and given in its
+        environment; the exporter refuses to start without them ([ADR-02-07]).
+        """
+        spec = self.exporter()
+        labels = {
+            "DOKIMI_CLUSTER": placement.cluster,
+            "DOKIMI_RUN_ID": placement.run_id,
+            "DOKIMI_TEST_ID": placement.test_id,
+            "DOKIMI_REPETITION": str(REPETITION),
+            "DOKIMI_TEST_TYPE": IMAGE_NAME,
+            "DOKIMI_SOURCE_NODE": placement.source_node,
+            "DOKIMI_TARGET_NODE": placement.target_node,
+            "DOKIMI_SOURCE_POD": _pod_name(placement, Role.CLIENT),
+            "DOKIMI_TARGET_POD": _pod_name(placement, Role.SERVER),
+            "DOKIMI_PROTOCOL": protocol.value,
+        }
+        return {
+            "name": spec.container_name,
+            "image": image,
+            # The exporter ships in the image (images/iperf2/dokimi_iperf2_exporter.py).
+            "command": ["dokimi-iperf2-exporter"],
+            "args": ["--results", spec.results_directory, "--port", str(spec.port)],
+            "env": [
+                *({"name": name, "value": value} for name, value in labels.items()),
+                # The pod's own address, before any traffic shows the pair's.
+                {"name": "DOKIMI_POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}},
+            ],
+            "ports": [{"name": spec.port_name, "containerPort": spec.port, "protocol": "TCP"}],
+            "readinessProbe": {
+                "httpGet": {"path": spec.path, "port": spec.port_name},
+                "periodSeconds": 2,
+            },
+            "resources": {
+                "requests": {"cpu": "10m", "memory": "32Mi"},
+                "limits": {"memory": "64Mi"},
+            },
+            "securityContext": _container_security(),
+            # It reads the tool's output and writes nothing.
+            "volumeMounts": [
+                {"name": "results", "mountPath": spec.results_directory, "readOnly": True}
+            ],
         }
 
     # -- execution --------------------------------------------------------------------------
@@ -447,6 +512,19 @@ class Iperf2:
 
     def cleanup(self, deployed: DeployedWorkload) -> None:
         """Nothing beyond generic pod deletion: iperf2 leaves no state outside its pods."""
+
+
+def _container_security() -> dict[str, Any]:
+    """Both containers of a pod: nothing to escalate to, nothing to write but volumes."""
+    return {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+
+def _pod_name(placement: Placement, role: Role) -> str:
+    return f"run-{placement.run_id}-{placement.test_id}-{role.value}"
 
 
 def tcp_trigger(

@@ -127,7 +127,10 @@ def run_network_test(
         {"protocol": protocol, "targetBandwidth": bandwidth, "duration": duration}
     )
     spec = plugin.workload(
-        params, Placement(context.namespace, context.run_id, context.test_id, source, target)
+        params,
+        Placement(
+            context.namespace, context.run_id, context.test_id, source, target, context.cluster
+        ),
     )
     budget = workload_budget(
         float(Duration.parse(duration).seconds), warmup_seconds=spec.warmup_seconds

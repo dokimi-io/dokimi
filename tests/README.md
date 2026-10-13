@@ -1,6 +1,6 @@
 # The test suite
 
-772 tests, none of which need a cluster, a network or a container runtime. Everything runs
+795 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -30,6 +30,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
 | [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
 | [`test_iperf2.py`](test_iperf2.py) | 42 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
+| [`test_iperf2_exporter.py`](test_iperf2_exporter.py) | 23 | The iperf2 exporter: each pod's own view, every required label, base units, served after the tool exited |
 | [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | 7 | The Prometheus client, and phase 4's query-access check |
 | [`test_managed_prometheus.py`](test_managed_prometheus.py) | 49 | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
@@ -98,11 +99,10 @@ working while being wrong:
 - [`test_image_build.py`](test_image_build.py) reads the Dockerfile as text and checks the
   base image, the lockfile-only install and the non-root user. CI catches a build that
   breaks; only this catches a build that still works while having changed its mind. It
-  also checks that every image in the release's matrix has a Dockerfile and a digest
-  constant, and runs the release's own bake and check scripts against this code —
-  reformatting the generated file, adding an image the release forgets, or an import the
-  check can no longer make would otherwise break a release without breaking anything a test
-  run would notice. The iperf2 image gets the same treatment: Alpine pinned by digest,
+  also checks that the regexes the release workflow rewrites still match the generated
+  digest file, and that every digest in it is rewritten — reformatting that file, or adding
+  an image the release forgets, would otherwise break a release without breaking anything a
+  test run would notice. The iperf2 image gets the same treatment: Alpine pinned by digest,
   the `iperf` package pinned by version, non-root, and both its role scripts in the build
   context. Both images are labelled with the project's MIT license.
 - [`test_robot_strictness.py`](test_robot_strictness.py) guards against a false PASS. The

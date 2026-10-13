@@ -16,6 +16,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from dokimi.cluster_name import CLUSTER_ENV_VAR, cluster_from_job_environment
 from dokimi.model import ConfigError
 from dokimi.run_images import images_from_job_environment, job_environment
 from dokimi.testtypes.interface import WorkloadImage
@@ -48,6 +49,8 @@ class RunContext:
     #: than one pair it cannot name each process's own, so the plan's are authoritative.
     source_node: str
     target_node: str
+    #: What the operator called the cluster, for every result's labels ([ADR-02-07]).
+    cluster: str
     images: Mapping[str, WorkloadImage] = field(default_factory=dict)
 
     def environment(self) -> dict[str, str]:
@@ -58,6 +61,7 @@ class RunContext:
             _TEST_ID_VARIABLE: self.test_id,
             _SOURCE_VARIABLE: self.source_node,
             _TARGET_VARIABLE: self.target_node,
+            CLUSTER_ENV_VAR: self.cluster,
         }
         for entry in job_environment(self.images):
             variables[entry["name"]] = entry["value"]
@@ -85,6 +89,7 @@ class RunContext:
             test_id=environment[_TEST_ID_VARIABLE].strip(),
             source_node=environment[_SOURCE_VARIABLE].strip(),
             target_node=environment[_TARGET_VARIABLE].strip(),
+            cluster=cluster_from_job_environment(environment),
             # A Robot process deploys the test's pods and nothing of the monitoring.
             images=images_from_job_environment(environment, monitoring=False),
         )
