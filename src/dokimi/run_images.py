@@ -35,6 +35,7 @@ import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import ModuleType
 
 from dokimi import _image_digest, images
 from dokimi.images import ImageSource
@@ -68,6 +69,9 @@ class Component:
     release_default: Callable[[], str | None]
     #: Earlier names for :attr:`env_var`, still read on the submitter's side.
     env_aliases: tuple[str, ...] = ()
+    #: Part of the run's own monitoring: resolved only when the run may deploy it, for
+    #: ``managed`` and ``auto`` and not for ``existing`` (ADR-04-08).
+    monitoring: bool = False
 
     @property
     def env_var(self) -> str:
@@ -80,8 +84,9 @@ class Component:
         return f"{self.env_var}_SOURCE"
 
 
-#: Every image a Milestone-01 run uses. The managed Prometheus and the node-exporter join
-#: this table with dokimi#36, resolved only when the run may deploy them (ADR-04-08).
+#: Every image a Milestone-01 run uses. The managed Prometheus and the node-exporter are
+#: upstream images, so their release default is a digest pinned in code rather than one
+#: the release workflow bakes in, and a source build has one too.
 COMPONENTS: Mapping[str, Component] = {
     component.name: component
     for component in (
@@ -96,8 +101,28 @@ COMPONENTS: Mapping[str, Component] = {
             description="the iperf2 test workload, both roles",
             release_default=lambda: default_reference("iperf2", _image_digest.IPERF2_IMAGE_DIGEST),
         ),
+        Component(
+            name="prometheus",
+            description="the run's managed Prometheus",
+            release_default=lambda: _managed().PROMETHEUS_IMAGE,
+            monitoring=True,
+        ),
+        Component(
+            name="node-exporter",
+            description="the node-exporter a run deploys when the cluster has none",
+            release_default=lambda: _managed().NODE_EXPORTER_IMAGE,
+            monitoring=True,
+        ),
     )
 }
+
+
+def _managed() -> ModuleType:
+    # Imported when a default is read, not at import: the managed Prometheus's module
+    # imports the cluster side, which this module does not need.
+    from dokimi.metrics import managed
+
+    return managed
 
 
 def parse_image_options(
@@ -140,8 +165,12 @@ def resolve_run_images(
     run_overrides: Mapping[str, str] | None = None,
     *,
     env: Mapping[str, str] | None = None,
+    monitoring: bool = True,
 ) -> dict[str, WorkloadImage]:
     """Every component's image for one run: run override, installation override, default.
+
+    *monitoring* is whether the run may deploy its own monitoring; without it the
+    Prometheus and the node-exporter are not resolved.
 
     Raises:
         ConfigError: if a component has none of the three, which is a source build that
@@ -152,6 +181,8 @@ def resolve_run_images(
         _component(name)
     resolved: dict[str, WorkloadImage] = {}
     for component in COMPONENTS.values():
+        if component.monitoring and not monitoring:
+            continue
         image = resolve_component(component, overrides.get(component.name), env=env)
         if image is None:
             raise ConfigError(
@@ -206,8 +237,13 @@ def job_environment(images: Mapping[str, WorkloadImage]) -> list[dict[str, str]]
     return entries
 
 
-def images_from_job_environment(env: Mapping[str, str] | None = None) -> dict[str, WorkloadImage]:
+def images_from_job_environment(
+    env: Mapping[str, str] | None = None, *, monitoring: bool = True
+) -> dict[str, WorkloadImage]:
     """The images ``submit`` resolved for this run, read inside the Job.
+
+    *monitoring* as for :func:`resolve_run_images`: without it, the Prometheus and the
+    node-exporter are neither expected nor read.
 
     Raises:
         ConfigError: if a component is missing, or its source is not one the CLI writes.
@@ -216,6 +252,8 @@ def images_from_job_environment(env: Mapping[str, str] | None = None) -> dict[st
     environment = os.environ if env is None else env
     images: dict[str, WorkloadImage] = {}
     for component in COMPONENTS.values():
+        if component.monitoring and not monitoring:
+            continue
         reference = (environment.get(component.env_var) or "").strip()
         source = (environment.get(component.source_env_var) or "").strip()
         if not reference or not source:

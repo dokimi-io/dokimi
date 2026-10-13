@@ -20,6 +20,8 @@ CORE_MODULES = [
     "dokimi.k8s.ownership",
     "dokimi.k8s.resources",
     "dokimi.metrics",
+    "dokimi.metrics.managed",
+    "dokimi.metrics.prometheus",
     "dokimi.model",
     "dokimi.planning",
     "dokimi.preflight",

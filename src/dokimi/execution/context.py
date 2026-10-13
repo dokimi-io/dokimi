@@ -85,5 +85,6 @@ class RunContext:
             test_id=environment[_TEST_ID_VARIABLE].strip(),
             source_node=environment[_SOURCE_VARIABLE].strip(),
             target_node=environment[_TARGET_VARIABLE].strip(),
-            images=images_from_job_environment(environment),
+            # A Robot process deploys the test's pods and nothing of the monitoring.
+            images=images_from_job_environment(environment, monitoring=False),
         )

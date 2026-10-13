@@ -34,6 +34,7 @@ from dokimi.k8s.identity import COMPONENT_LABEL, RUN_ID_LABEL, validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
+    RunOwnership,
     delete_run_owned,
     find_run_owned,
     format_timestamp,
@@ -41,6 +42,22 @@ from dokimi.k8s.ownership import (
 )
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
+from dokimi.metrics.managed import (
+    NodeExporter,
+    detect_supporting_exporters,
+    node_exporter_status,
+    port_forward_command,
+    provide_node_exporter,
+    provision_managed_prometheus,
+    removal_command,
+    remove_node_exporter,
+    select_monitoring,
+)
+from dokimi.metrics.prometheus import (
+    DEFAULT_QUERY_ACCESS_TIMEOUT_SECONDS,
+    PrometheusClient,
+    verify_query_access,
+)
 from dokimi.model import DEFAULT_RESULTS_DIRECTORY, ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
 from dokimi.run_identity import RunId
@@ -58,6 +75,10 @@ __all__ = ["Console", "attach", "convert", "execute", "show_image", "submit_run"
 #: How phase 6 runs Robot Framework. A module attribute so that a test can replace
 #: the subprocess with a fake without a real Robot or a real cluster.
 ROBOT_RUNNER: Callable[[], RobotRunner] = SubprocessRobotRunner
+
+#: How long phase 4 waits for the run's Prometheus to answer a query. Module-level so a
+#: test can shorten it without a real clock.
+QUERY_ACCESS_TIMEOUT_SECONDS = DEFAULT_QUERY_ACCESS_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +117,8 @@ def convert(console: Console, *, path: Path, to: str) -> int:
 def validate(console: Console, *, path: Path) -> int:
     """Parse a definition and report what it says. Never touches a cluster."""
     definition = parse_file(path)
+    # A mode this build cannot run is refused here too, not first by the run.
+    select_monitoring(definition.monitoring_mode)
     console.say(f"{path} is valid.")
     console.say()
     _describe(console, definition)
@@ -124,7 +147,13 @@ def submit_run(
     stops with a config_error, rather than a Job that fails once it is running.
     """
     definition = parse_file(path)
-    run_images = resolve_run_images(parse_image_options(images, orchestrator_image=image_override))
+    # Refused before anything is created, a dry run included: a run that could only
+    # fail in phase 2 should never be submitted (ADR-05-05's config_error).
+    monitoring = select_monitoring(definition.monitoring_mode)
+    run_images = resolve_run_images(
+        parse_image_options(images, orchestrator_image=image_override),
+        monitoring=monitoring.deploys,
+    )
     submission = plan_submission(
         definition,
         source=path.read_text(encoding="utf-8"),
@@ -212,9 +241,12 @@ def execute(
     and the run's id, and it owns phases 2 to 11.
 
     Phases 2 and 3 are implemented, and phase 4 begins with the run-exclusivity claim
-    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). Phases 5, 6 and 9a
-    render the suite, run it through Robot Framework once per pair, and merge the
-    reports into the run's artifact directory (ADR-01-08).
+    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). Phase 4 then provisions
+    the run's managed Prometheus, with a node-exporter when the cluster has none, and
+    verifies it answers queries (ADR-03-02), before any workload exists; a Prometheus
+    that cannot be queried exits 4 as well. Phases 5, 6 and 9a render the suite, run it
+    through Robot Framework once per pair, and merge the reports into the run's artifact
+    directory (ADR-01-08).
 
     Not built yet: preflight's checks (M1-07, #42), measurement (M1-12, #47), validation
     (M1-13, #48), the result artifact (M1-14, #49), and cleanup and the real exit code
@@ -231,9 +263,11 @@ def execute(
 
     console.say(f"run {run_id}")
     definition = parse_file(path)
+    # Decided before any cluster call: a mode this build cannot honour is a config_error.
+    monitoring = select_monitoring(definition.monitoring_mode)
     # Resolved by submit, never here: the submitter's environment does not reach the Job
     # (ADR-04-08). What the Job was given is what it runs, and the log says so.
-    run_images = images_from_job_environment(env)
+    run_images = images_from_job_environment(env, monitoring=monitoring.deploys)
     console.say("phase 2 (ingestion): definition parsed")
     console.say()
     _describe(console, definition)
@@ -262,11 +296,51 @@ def execute(
         resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
     )
     artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
+    node_exporter: NodeExporter | None = None
     try:
         console.say(
             "phase 4 (preflight): cluster claimed for this run until "
             f"{format_timestamp(expires_at)}"
         )
+
+        # ADR-03-02: deployed and verified before any workload, and said prominently,
+        # so the user always knows which Prometheus produced their results.
+        ownership = RunOwnership(resources, resolved_run_id)
+        supporting = detect_supporting_exporters(resources)
+        node_exporter = provide_node_exporter(
+            ownership,
+            resolved_namespace,
+            supporting,
+            image=run_images["node-exporter"].reference,
+        )
+        prometheus = provision_managed_prometheus(
+            ownership,
+            resolved_namespace,
+            supporting,
+            selection=monitoring,
+            node_exporter=node_exporter,
+            avoid_nodes=_tested_nodes(plan),
+            image=run_images["prometheus"].reference,
+        )
+        console.say(f"phase 4 (preflight): monitoring mode {monitoring.describe()}")
+        console.say(f"  Prometheus  {prometheus.endpoint}")
+        for key, value in prometheus.run_metadata().items():
+            if key.startswith("supporting_"):
+                console.say(f"  {key.removeprefix('supporting_'):<18}  {value or 'absent'}")
+        verify_query_access(
+            PrometheusClient(prometheus.endpoint), timeout=QUERY_ACCESS_TIMEOUT_SECONDS
+        )
+        console.say("phase 4 (preflight): Prometheus answers queries")
+        if node_exporter is not None:
+            # Read after the query check, which gives the DaemonSet time to place its pods.
+            running, summary = node_exporter_status(resources, node_exporter)
+            console.say(f"  node-exporter pods  {summary}")
+            if not running:
+                console.warn(f"node-exporter {node_exporter.name}: {summary}")
+        console.say(
+            "  kept after the run (ADR-03-02); remove it with: " + removal_command(prometheus)
+        )
+        console.say("  query it from your machine with: " + port_forward_command(prometheus))
         # A phase line, so on the same stream as the others: stdout and stderr reach the
         # Job's log through separate pipes, and lines microseconds apart can swap.
         console.say(
@@ -307,6 +381,10 @@ def execute(
         # The artifacts go last in the log, so they come after the pods' removal, and the
         # claim is released after both.
         removed = _remove_test_pods(console, resources, resolved_run_id, resolved_namespace)
+        if node_exporter is not None:
+            # The 2026-10-07 decision: a run removes the node-exporter it deployed, before
+            # it releases the cluster, and leaves one it found.
+            _remove_node_exporter(console, resources, node_exporter)
         if not removed:
             # Removing the pods alone frees nothing: only a finished or expired claim does
             # (ADR-05-13). So the way out names both steps, the second one being the
@@ -385,6 +463,18 @@ def _remove_test_pods(
     if report.deleted:
         console.say(f"phase 11 (cleanup): removed {len(report.deleted)} test pod(s)")
     return True
+
+
+def _remove_node_exporter(
+    console: Console, resources: ResourceClient, exporter: NodeExporter
+) -> None:
+    """Remove the node-exporter this run deployed. Never fails the run: it is not traffic."""
+    try:
+        if remove_node_exporter(resources, exporter):
+            console.say(f"phase 11 (cleanup): removed node-exporter {exporter.name}")
+    except ClusterError as error:
+        # A later run finds it and reuses it, so nothing clashes on the host port.
+        console.warn(f"could not remove node-exporter {exporter.name}: {error}")
 
 
 def _finish(
@@ -655,6 +745,10 @@ def _phrase(criterion: Criterion) -> str:
 def _plan_summary(plan: Plan) -> str:
     tests = "1 test" if len(plan.pairs) == 1 else f"{len(plan.pairs)} tests"
     return f"{tests}, {plan.concurrency.value}"
+
+
+def _tested_nodes(plan: Plan) -> list[str]:
+    return sorted({node.name for pair in plan.pairs for node in (pair.source, pair.target)})
 
 
 def _plan_lines(plan: Plan) -> list[str]:

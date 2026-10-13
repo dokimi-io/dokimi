@@ -6,12 +6,14 @@ import pytest
 
 from dokimi import _image_digest, images
 from dokimi.images import ImageSource
+from dokimi.metrics.managed import NODE_EXPORTER_IMAGE, PROMETHEUS_IMAGE
 from dokimi.model import ConfigError
 from dokimi.run_images import (
     COMPONENTS,
     images_from_job_environment,
     job_environment,
     parse_image_options,
+    resolve_component,
     resolve_run_images,
 )
 from dokimi.testtypes.interface import WorkloadImage
@@ -44,7 +46,7 @@ def source_build(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_every_component_is_named_and_has_an_environment_variable() -> None:
-    assert sorted(COMPONENTS) == ["iperf2", "orchestrator"]
+    assert sorted(COMPONENTS) == ["iperf2", "node-exporter", "orchestrator", "prometheus"]
     assert COMPONENTS["iperf2"].env_var == "DOKIMI_IPERF2_IMAGE"
     assert COMPONENTS["iperf2"].source_env_var == "DOKIMI_IPERF2_IMAGE_SOURCE"
     # ADR-04-08: the orchestrator is a component like the others; its earlier name stays.
@@ -56,7 +58,42 @@ def test_a_released_build_runs_its_own_digest(released: None) -> None:
     assert resolve_run_images(env={}) == {
         "orchestrator": WorkloadImage(RELEASED_ORCHESTRATOR, ImageSource.RELEASE_DEFAULT),
         "iperf2": WorkloadImage(RELEASED, ImageSource.RELEASE_DEFAULT),
+        "prometheus": WorkloadImage(PROMETHEUS_IMAGE, ImageSource.RELEASE_DEFAULT),
+        "node-exporter": WorkloadImage(NODE_EXPORTER_IMAGE, ImageSource.RELEASE_DEFAULT),
     }
+
+
+def test_the_monitoring_images_are_pinned_upstream_digests_even_in_a_source_build(
+    source_build: None,
+) -> None:
+    for name in ("prometheus", "node-exporter"):
+        image = resolve_component(COMPONENTS[name], env={})
+        assert image is not None
+        assert image.source is ImageSource.RELEASE_DEFAULT
+        assert image.reference.startswith("quay.io/prometheus/")
+        assert len(image.reference.partition("@sha256:")[2]) == 64
+
+
+def test_the_monitoring_images_are_resolved_only_when_the_run_may_deploy_them(
+    released: None,
+) -> None:
+    # ADR-04-08: existing deploys neither, so neither is resolved, written or expected.
+    images = resolve_run_images(env={}, monitoring=False)
+    assert sorted(images) == ["iperf2", "orchestrator"]
+    environment = {entry["name"]: entry["value"] for entry in job_environment(images)}
+    assert images_from_job_environment(environment, monitoring=False) == images
+    with pytest.raises(ConfigError, match="without an image for prometheus"):
+        images_from_job_environment(environment)
+
+
+def test_a_mirror_for_the_monitoring_images_is_an_installation_override(released: None) -> None:
+    images = resolve_run_images(
+        env={"DOKIMI_PROMETHEUS_IMAGE": "mirror.local/prometheus:v3.15.0"},
+    )
+    assert images["prometheus"] == WorkloadImage(
+        "mirror.local/prometheus:v3.15.0", ImageSource.INSTALLATION_OVERRIDE
+    )
+    assert COMPONENTS["node-exporter"].env_var == "DOKIMI_NODE_EXPORTER_IMAGE"
 
 
 def test_an_installation_override_beats_the_release_default(released: None) -> None:
@@ -158,6 +195,8 @@ def test_the_job_reads_back_exactly_what_submit_wrote() -> None:
     images = {
         "orchestrator": WorkloadImage("orchestrator:dev", ImageSource.RUN_OVERRIDE),
         "iperf2": WorkloadImage("mirror.local/iperf2:2.2.1", ImageSource.INSTALLATION_OVERRIDE),
+        "prometheus": WorkloadImage(PROMETHEUS_IMAGE, ImageSource.RELEASE_DEFAULT),
+        "node-exporter": WorkloadImage("node-exporter:dev", ImageSource.RUN_OVERRIDE),
     }
     environment = {entry["name"]: entry["value"] for entry in job_environment(images)}
 

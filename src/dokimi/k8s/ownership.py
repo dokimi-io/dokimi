@@ -22,6 +22,15 @@ reattach ([ADR-01-06]), but it carries ``app.kubernetes.io/component: orchestrat
 is excluded from deletion — it is the thing running the run, not a resource the run
 created, and a cleanup that deleted it would kill itself.
 
+**One documented exception: a kept managed Prometheus** ([ADR-03-02]). It is kept after
+the run by default, so it cannot be a child of an owner that cleanup deletes: it carries
+the ownership labels, so that it stays attributable to its run and removable by
+``run_id``, but no ownerReference, and :func:`delete_run_owned` leaves it alone unless
+asked to remove it. :meth:`RunOwnership.create_kept` is the one path that creates such an
+object. ADR-05-02 foresaw the exception ("deliberately outlives the run") and required it
+documented; this is where. It never blocks a later run: exclusivity reads owners only
+([ADR-05-13]).
+
 The owner also carries the run's **claim** ([ADR-05-13]): three annotations that say
 whether the run is active. :func:`claim_of` reads them and :meth:`Claim.is_active` is
 the one predicate the exclusivity scan applies. No other object is evidence of an active
@@ -65,6 +74,7 @@ __all__ = [
     "MANAGED_BY_VALUE",
     "ORCHESTRATOR_COMPONENT",
     "OWNER_COMPONENT",
+    "PROMETHEUS_COMPONENT",
     "RUN_ID_LABEL",
     "RUN_OWNED_KINDS",
     "TEST_ID_LABEL",
@@ -97,6 +107,10 @@ FINISHED_AT_ANNOTATION = "dokimi.io/finished-at"
 OWNER_COMPONENT = "run-owner"
 #: The orchestrator Job and its pod. Never deleted or counted by this module.
 ORCHESTRATOR_COMPONENT = "orchestrator"
+#: A managed Prometheus: run-owned, but kept after the run unless removal is asked for.
+PROMETHEUS_COMPONENT = "prometheus"
+#: Components :func:`delete_run_owned` keeps by default ([ADR-03-02]).
+_KEPT_COMPONENTS = frozenset({PROMETHEUS_COMPONENT})
 
 #: The kinds a run may create, and therefore the kinds label-scoped cleanup looks at. A
 #: later issue that creates a new kind adds it here, or its objects become invisible to
@@ -356,8 +370,9 @@ class RunOwnership:
         *,
         test_id: str | None = None,
         component: str | None = None,
+        owned: bool = True,
     ) -> Manifest:
-        """A copy of *manifest* carrying this run's labels and ownerReference.
+        """A copy of *manifest* carrying this run's labels and, if *owned*, ownerReference.
 
         The namespace must be explicit in ``metadata.namespace`` — an object placed by an
         implicit default namespace is one whose owner cannot be known in advance.
@@ -380,6 +395,8 @@ class RunOwnership:
                     f"carries {key}={labels[key]!r}, which conflicts with run {self.run_id}"
                 )
         labels.update(wanted)
+        if not owned:
+            return stamped
 
         reference = self.owner_reference(namespace)
         references = metadata.setdefault("ownerReferences", [])
@@ -410,6 +427,22 @@ class RunOwnership:
                 "activeDeadlineSeconds; run-owned workloads must stop on their own"
             )
         stamped = self.stamp(manifest, test_id=test_id, component=component)
+        return self.cluster.create(kind, stamped["metadata"]["namespace"], stamped)
+
+    def create_kept(self, kind: Kind, manifest: Manifest, *, component: str) -> Manifest:
+        """Create *manifest* run-labelled but unowned, to outlive the run ([ADR-03-02]).
+
+        Only for a component cleanup keeps by default — today, a managed Prometheus — and
+        never for a Pod or a Job: something kept must not be a workload that sends
+        traffic, and must be long-lived by design rather than bounded by a deadline.
+        """
+        if component not in _KEPT_COMPONENTS:
+            raise OwnershipError(
+                f"{component!r} is not a component cleanup keeps; create it with create()"
+            )
+        if kind in _SELF_LIMITING_KINDS:
+            raise OwnershipError(f"a {kind} cannot be kept after its run")
+        stamped = self.stamp(manifest, component=component, owned=False)
         return self.cluster.create(kind, stamped["metadata"]["namespace"], stamped)
 
 
@@ -478,6 +511,8 @@ class DeletionReport:
     run_id: str
     deleted: list[OwnedObject] = field(default_factory=list)
     already_gone: list[OwnedObject] = field(default_factory=list)
+    #: Kept on purpose, not deleted: a managed Prometheus without the removal flag.
+    kept: list[OwnedObject] = field(default_factory=list)
     failed: list[tuple[OwnedObject, str]] = field(default_factory=list)
 
     @property
@@ -492,6 +527,7 @@ def delete_run_owned(
     namespace: str | None = None,
     kinds: Sequence[Kind] = RUN_OWNED_KINDS,
     components: Collection[str] | None = None,
+    remove_kept: bool = False,
 ) -> DeletionReport:
     """Delete everything *run_id* owns, in *namespace* or everywhere, of *components*.
 
@@ -499,11 +535,18 @@ def delete_run_owned(
     operation that belongs to the cleanup phase and needs its own guard. Dependents are
     deleted before owners, so each one is deleted and reported by us rather than raced
     by the garbage collector cascading from its owner.
+
+    A kept component — a managed Prometheus — is listed in the report's ``kept`` and left
+    alone, unless *remove_kept* is set: ADR-03-02 keeps it by default and removes it only
+    on an explicit flag.
     """
     report = DeletionReport(run_id=str(run_id))
     objects = find_run_owned(
         cluster, run_id, namespace=namespace, kinds=kinds, components=components
     )
+    if not remove_kept:
+        report.kept = [obj for obj in objects if obj.component in _KEPT_COMPONENTS]
+        objects = [obj for obj in objects if obj.component not in _KEPT_COMPONENTS]
     for obj in _dependents_first(objects):
         try:
             cluster.delete(obj.kind, obj.namespace, obj.name, uid=obj.uid)

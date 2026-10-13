@@ -92,9 +92,13 @@ $ kubectl apply -f deploy/rbac.yaml
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
 `list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
-`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create`, `get`,
-`list` and `delete` on Pods: each pair's client and server, removed again when the run
-ends. Then submit with that service account:
+`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, `create` on ConfigMaps,
+Services and Deployments for the run's managed Prometheus, `create`, `get`, `list` and `delete`
+on DaemonSets for the node-exporter a run deploys when the cluster has none and removes when it
+ends, and `create`, `get`, `list` and `delete` on Pods: each pair's client and server, removed
+again when the run ends. It also creates the `dokimi-prometheus` service account that Prometheus
+runs as, which can read pods, services and endpoint slices for discovery. Then submit with that
+service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -560,8 +564,9 @@ came from.
 
 ## Choosing the images a run deploys
 
-A run also deploys images of its own: today the `iperf2` test workload. Each one is chosen
-the same way as the orchestrator's, per component (ADR-04-08):
+A run also deploys images of its own: the `iperf2` test workload, its managed `prometheus`,
+and a `node-exporter` when the cluster has none. Each one is chosen the same way as the
+orchestrator's, per component (ADR-04-08):
 
 | Source | How | Scope |
 | --- | --- | --- |
@@ -576,8 +581,11 @@ with its source, into the Job's environment (`DOKIMI_IPERF2_IMAGE` and
 `DOKIMI_IPERF2_IMAGE_SOURCE`), so `--dry-run` shows exactly what will run. The Job uses what
 it was given and never reads the submitter's environment, which does not reach it anyway.
 
-A source checkout has no default for the images dokimi publishes itself, the orchestrator
-and `iperf2`, since nothing of this code was published. `submit` refuses before creating
+`prometheus` and `node-exporter` are upstream images, so their default is a digest pinned in
+the code, also in a source checkout. They are resolved only when the run may deploy them, for
+the `managed` and `auto` monitoring modes. A source checkout has no default for the images
+dokimi publishes itself, the orchestrator and `iperf2`, since nothing of this code was
+published. `submit` refuses before creating
 anything:
 
 ```console
@@ -598,12 +606,29 @@ takes the rest with it — the cluster's own garbage collector cascades through 
 $ kubectl delete configmap run-20260924-200229-ca532a-owner -n dokimi-iperf2
 ```
 
-Or by label, across everything a run created:
+A node-exporter the run deployed is gone already: the run deletes it when it ends, and
+leaves one it found. Or by label, across everything a run created except its Prometheus:
 
 ```console
-$ kubectl delete job,configmap -n dokimi-iperf2 \
-    -l dokimi.io/run-id=20260924-200229-ca532a
+$ kubectl delete job,configmap,daemonset -n dokimi-iperf2 \
+    -l 'dokimi.io/run-id=20260924-200229-ca532a,app.kubernetes.io/component!=prometheus'
 ```
 
 The run id reads the same in the object name and the label, so either command can be
 built from the id `submit` printed.
+
+**Every run leaves its Prometheus behind**, on purpose: the run's history outlives the
+run (ADR-03-02). It has no owner reference, so neither command above removes it, and
+the label command must exclude it as shown, or it deletes the Prometheus's ConfigMap
+and leaves a Prometheus that cannot restart. Phase 4 prints the command that removes
+one run's Prometheus, and the one that reaches it from your machine:
+
+```console
+$ kubectl port-forward -n dokimi-iperf2 service/run-20260924-200229-ca532a-prometheus 9090:9090
+```
+ To remove every kept Prometheus at once:
+
+```console
+$ kubectl delete deployment,service,configmap -n dokimi-iperf2 \
+    -l app.kubernetes.io/managed-by=dokimi,app.kubernetes.io/component=prometheus
+```
