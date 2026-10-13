@@ -29,6 +29,7 @@ from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.run_identity import RunId
 from dokimi.run_images import COMPONENTS
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
+from tests.fake_robot import FakeRobotRunner
 
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = f"{IMAGE_REPOSITORY}@{DIGEST}"
@@ -93,6 +94,15 @@ def job_cluster(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> FakeCl
     submitted(cluster, RUN_ID)
     given_images(monkeypatch)
     return cluster
+
+
+@pytest.fixture(autouse=True)
+def robot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeRobotRunner:
+    """Phase 6's runner, faked, and the Job's artifact directory, in a temporary one."""
+    fake = FakeRobotRunner()
+    monkeypatch.setattr(commands, "ROBOT_RUNNER", lambda: fake)
+    monkeypatch.setattr(commands, "ARTIFACTS_ROOT", tmp_path / "artifacts")
+    return fake
 
 
 @pytest.fixture
@@ -299,10 +309,10 @@ def test_execute_parses_then_plans(
     assert "pair-001  worker-01 -> worker-02" in out.out
     assert job_cluster.node_reads == 1
     assert "phase 4 (preflight): cluster claimed for this run until" in out.out
-    # The rest of phases 4 to 11 do not exist yet, and a run that stops early must not
-    # look like one that passed.
+    # Phases 7 to 11 do not exist yet, and a run that stops early must not look like one
+    # that passed.
     assert code == ExitCode.INTERNAL
-    assert "the rest of phases 4 to 11 is not implemented" in out.err
+    assert "the rest of phases 7 to 11 is not implemented" in out.err
 
 
 def test_execute_marks_its_run_finished_so_the_next_one_can_start(
@@ -660,3 +670,171 @@ def test_execute_without_its_images_is_refused_before_it_claims(
     assert "submitted without an image for orchestrator" in capsys.readouterr().err
     owner = cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
+
+
+# -- phases 5, 6 and 9a (M1-11) -------------------------------------------------------
+
+
+def test_execute_renders_runs_one_robot_process_per_pair_and_merges(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+    out = capsys.readouterr().out
+
+    assert "phase 5 (suite rendering):" in out
+    assert "phase 6 (execution): pair-001  worker-01 -> worker-02" in out
+    assert "phase 9a (reporting):" in out
+    assert len(robot.runs) == 1
+    assert robot.merges == [[robot.runs[0].output]]
+
+
+def test_each_robot_process_is_told_its_run_and_its_images(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    main(EXECUTE)
+    environment = robot.runs[0].environment
+
+    assert environment["DOKIMI_RUN_ID"] == RUN_ID
+    assert environment["DOKIMI_NAMESPACE"] == "dokimi-iperf2"
+    assert environment["DOKIMI_TEST_ID"] == "pair-001"
+    assert environment["DOKIMI_IPERF2_IMAGE"] == f"ghcr.io/dokimi-io/iperf2@{DIGEST}"
+
+
+def test_the_suite_that_runs_is_what_convert_prints(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # M1-11's second acceptance criterion: one renderer, called from two places.
+    main(EXECUTE)
+    executed = robot.runs[0].suite.read_bytes()
+    capsys.readouterr()
+
+    assert main(["convert", str(EXAMPLE)]) == ExitCode.PASS
+    assert capsys.readouterr().out.encode("utf-8") == executed
+
+
+def test_the_rendered_suite_is_kept_under_the_run_id(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    main(EXECUTE)
+
+    assert robot.runs[0].suite.parent.name == RUN_ID
+    assert robot.runs[0].suite.name == "suite.robot"
+
+
+def test_a_robot_process_that_wrote_nothing_is_an_internal_error(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    robot.writes_output = False
+
+    assert main(EXECUTE) == ExitCode.INTERNAL
+    assert "wrote no pair-001.xml" in capsys.readouterr().err
+    # The run still releases the cluster on its way out.
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_convert_renders_yaml_too(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["convert", str(EXAMPLE), "--to", "yaml"]) == ExitCode.PASS
+    assert "kind: NetworkTest" in capsys.readouterr().out
+
+
+def test_convert_touches_no_cluster(no_cluster: None) -> None:
+    assert main(["convert", str(EXAMPLE)]) == ExitCode.PASS
+
+
+# -- phase 11 starts: the run's test pods go before the claim does (ADR-05-13) ---------
+
+
+def left_pod(fake: FakeCluster, name: str, component: str = "client") -> None:
+    """A pod phase 6 left behind, labelled like every run-owned object."""
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    fake.store.put(
+        POD,
+        "dokimi-iperf2",
+        {
+            "metadata": {
+                "name": name,
+                "labels": ownership_labels(RunId(RUN_ID), component=component),
+            }
+        },
+    )
+
+
+def test_execute_removes_the_test_pods_then_releases_the_cluster(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-server", component="server")
+
+    main(EXECUTE)
+
+    assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
+    assert "phase 11 (cleanup): removed 2 test pod(s)" in capsys.readouterr().out
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+    # Only pods: the definition and the owner stay, for attach and for cleanup.
+    assert job_cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+
+
+def test_only_the_test_pods_are_removed_before_the_claim_is_released(
+    job_cluster: FakeCluster,
+) -> None:
+    # A kept Prometheus's pod or a DaemonSet's carries the run's labels too. Neither is test
+    # traffic: deleting one loses the history it is kept for, or is undone by its controller,
+    # and waiting for it to go would hold the cluster until the claim expires.
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+    left_pod(job_cluster, f"run-{RUN_ID}-prometheus-abc12", component="prometheus")
+    left_pod(job_cluster, f"run-{RUN_ID}-node-exporter-x7k2p", component="node-exporter")
+
+    main(EXECUTE)
+
+    remaining = job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2")
+    assert sorted(pod["metadata"]["name"] for pod in remaining) == [
+        f"run-{RUN_ID}-node-exporter-x7k2p",
+        f"run-{RUN_ID}-prometheus-abc12",
+    ]
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_pods_that_cannot_be_deleted_keep_the_cluster_claimed(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A client that may still be sending must not let the next run measure next to it.
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+    job_cluster.store.fail_deleting = True
+
+    main(EXECUTE)
+    err = capsys.readouterr().err
+
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
+    assert "keeps its claim on the cluster until" in err
+    assert (
+        f"kubectl delete pod -n dokimi-iperf2 -l 'dokimi.io/run-id={RUN_ID},"
+        "app.kubernetes.io/component in (client,server)'" in err
+    )
+    # Removing the pods frees nothing by itself: the way out ends at the claim.
+    assert f"kubectl delete configmap -n dokimi-iperf2 run-{RUN_ID}-owner" in err
+
+
+def test_pods_that_never_go_away_keep_the_cluster_claimed(
+    job_cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+    from dokimi.k8s.ownership import find_run_owned  # noqa: PLC0415
+
+    lingering = find_run_owned(job_cluster.store, RunId(RUN_ID), namespace="dokimi-iperf2")
+    monkeypatch.setattr(commands, "find_run_owned", lambda *_a, **_k: lingering)
+    monkeypatch.setattr(commands, "POD_REMOVAL_TIMEOUT_SECONDS", 0.0)
+
+    main(EXECUTE)
+
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
+    assert "were still there after 0s" in capsys.readouterr().err

@@ -43,6 +43,7 @@ __all__ = [
     "bound_job",
     "bound_pod",
     "job_budget_for",
+    "workload_budget",
     "workload_budget_for",
 ]
 
@@ -155,8 +156,19 @@ def workload_budget_for(
     *warmup_seconds* is the pass the workload actually runs — ``0`` when it is disabled —
     so a workload is never budgeted for a warm-up it does not do, nor denied one it does.
     """
+    return workload_budget(float(definition.duration.seconds), warmup_seconds=warmup_seconds)
+
+
+def workload_budget(
+    test_duration_seconds: float, *, warmup_seconds: float = DEFAULT_WARMUP_SECONDS
+) -> DeadlineBudget:
+    """The workload budget for one pair that measures for *test_duration_seconds*.
+
+    What phase 6 uses, from the parameters it runs with rather than from a definition,
+    and what :func:`workload_budget_for` uses, so the two cannot budget differently.
+    """
     return DeadlineBudget(
-        test_duration=float(definition.duration.seconds),
+        test_duration=test_duration_seconds,
         startup=DEFAULT_STARTUP_SECONDS,
         warmup=warmup_seconds,
         direct_read=DEFAULT_DIRECT_READ_SECONDS,

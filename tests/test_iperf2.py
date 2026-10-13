@@ -183,6 +183,13 @@ def test_the_warm_up_is_in_the_run_metadata() -> None:
     assert disabled["warmup_duration_seconds"] == "0"
 
 
+def test_the_warm_up_the_deadline_allows_for_is_the_one_the_client_runs() -> None:
+    plugin = Iperf2(image=IMAGE)
+
+    assert plugin.workload(params(warmup="5s"), PLACEMENT).warmup_seconds == 5.0
+    assert plugin.workload(params(warmup="0s"), PLACEMENT).warmup_seconds == 0.0
+
+
 def test_the_warm_up_the_metadata_records_is_the_one_the_client_runs() -> None:
     metadata = Iperf2(image=IMAGE).workload(params(warmup="5s"), PLACEMENT).run_metadata
 

@@ -204,7 +204,7 @@ canonical, in-memory test definition model, and the orchestration library consum
 A YAML-authored test is never executed by interpreting the YAML. It is parsed to the canonical
 model (phase 2), rendered to a `.robot` suite (phase 5), and that suite is what Robot's runner
 executes — the same path a Robot-authored test takes once parsed and re-rendered. The renderer used
-in phase 5 is the same function the user-facing conversion command calls; there is never a second,
+in phase 5 is the same function the user-facing conversion command, `dokimi convert`, calls; there is never a second,
 drifting renderer.
 
 ### YAML
@@ -479,15 +479,17 @@ Further rules:
   the cluster, regardless of test type or namespace — two concurrent runs would contend for the same
   nodes' network capacity. The Job claims the cluster as the first step of phase 4, by writing
   a claim onto its run's owner, and refuses to start (exit `4`, `run_already_active`) if another
-  owner in any namespace holds a claim that is neither finished nor expired. A run marks itself
-  finished before cleanup, and a crashed run's claim expires with its Job's deadline, so neither
-  retained evidence nor a crash blocks later runs indefinitely. Two submissions racing to start
+  owner in any namespace holds a claim that is neither finished nor expired. A run removes its
+  test pods, waits until they are gone, and marks itself finished before any other cleanup, and a
+  crashed run's claim expires with its Job's deadline, so neither retained evidence nor a crash
+  blocks later runs indefinitely, and no test still sends once the cluster is free. Two submissions racing to start
   are serialised by a `Lease` named `dokimi-run-lock` in the `dokimi` namespace, which
   `deploy/rbac.yaml` creates; exactly one of them starts.
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
   inspection; flags force either. It runs **after** the post-run diagnostic snapshot, which needs
   the run's pods and placement to still exist, and is bounded by its own timeout so a stuck snapshot
-  cannot delay cleanup indefinitely.
+  cannot delay cleanup indefinitely. Until M1-16 builds it, the test pods are the exception: they are removed
+  on failure too, before the claim is released, and the run's report is what it keeps.
 
 ### Preflight and readiness
 
@@ -758,15 +760,9 @@ Cross-cluster discovery, connectivity, identity, security, matrices and result c
 
 Recorded here so they are not mistaken for oversights:
 
-- **Granularity of the Robot process.** One Robot run per submitted Job, covering the whole matrix
-  in one suite and one `log.html`, or one Robot run per test pair with N reports merged afterwards.
-  This determines what a single `log.html` contains, and it interacts with the concurrency strategy,
-  because Robot has an execution model of its own.
 - **Result-status mapping.** The exact mapping between Robot Framework's own result statuses and the
   outcome categories above. It covers phases 6 to 8 only — phase 4's run-level category and phase
   10's anomaly finding have no Robot status to map from.
-- **Retention of the rendered suite.** Whether phase 5's `.robot` output is kept on disk after the
-  run or discarded once execution completes.
 - **Whether direct library invocation is a first-class mode**, with a documented flag, or purely an
   internal and testing convenience with no user-facing guarantee.
 - **Configuration source precedence.** Which source wins when several disagree, whether conflicts

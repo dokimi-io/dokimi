@@ -16,7 +16,8 @@
 #     every namespace, takes a Lease in the lock namespace, reads its own Job's start
 #     time to date the claim's expiry, and writes its claim onto its own owner; phase 11
 #     marks that owner finished;
-#   - phase 6 creates each pair's client and server pods and reads their status.
+#   - phase 6 creates each pair's client and server pods and reads their status, and
+#     phase 11 deletes them before the run releases the cluster.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -128,11 +129,13 @@ rules:
     resources: ["jobs"]
     verbs: ["get"]
   # Phase 6 creates each pair's client and server pods, and reads them for the readiness
-  # gate and for completion (ADR-05-07, ADR-02-01). No pods/exec: a test starts over its
-  # trigger port, and completion is read from the pod's status.
+  # gate and for completion (ADR-05-07, ADR-02-01). Phase 11 lists and deletes them before
+  # the run releases the cluster, so that no test can still be sending (ADR-05-13). No
+  # pods/exec: a test starts over its trigger port, and completion is read from the
+  # pod's status.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["create", "get"]
+    verbs: ["create", "get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

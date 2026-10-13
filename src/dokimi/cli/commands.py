@@ -6,6 +6,7 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,14 +16,29 @@ from typing import Any, TextIO
 import yaml
 
 from dokimi.cli.exit_codes import ExitCode
-from dokimi.formats import parse_file
+from dokimi.execution import (
+    ARTIFACTS_ROOT,
+    RobotRunner,
+    RunArtifacts,
+    SubprocessRobotRunner,
+    default_robot_directory,
+    execute_pairs,
+    merge_reports,
+    render_suite,
+)
+from dokimi.formats import parse_file, render_robot, render_yaml
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds
 from dokimi.k8s.namespaces import namespace_for
-from dokimi.k8s.ownership import format_timestamp
-from dokimi.k8s.resources import ResourceClient
+from dokimi.k8s.ownership import (
+    delete_run_owned,
+    find_run_owned,
+    format_timestamp,
+    owner_name,
+)
+from dokimi.k8s.resources import POD, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
@@ -34,9 +50,13 @@ from dokimi.run_images import (
     resolve_component,
     resolve_run_images,
 )
-from dokimi.testtypes.interface import WorkloadImage
+from dokimi.testtypes.interface import Role, WorkloadImage
 
-__all__ = ["Console", "attach", "execute", "show_image", "submit_run", "validate"]
+__all__ = ["Console", "attach", "convert", "execute", "show_image", "submit_run", "validate"]
+
+#: How phase 6 runs Robot Framework. A module attribute so that a test can replace
+#: the subprocess with a fake without a real Robot or a real cluster.
+ROBOT_RUNNER: Callable[[], RobotRunner] = SubprocessRobotRunner
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +74,18 @@ class Console:
 
     def fail(self, message: str) -> None:
         print(f"dokimi: {message}", file=self.err)
+
+
+def convert(console: Console, *, path: Path, to: str) -> int:
+    """Render a definition in the other format. Never touches a cluster.
+
+    ``--to robot`` is ``render_robot()``, the same function phase 5 of every run calls,
+    so this prints exactly the suite a run executes (ADR-01-08, ADR-04-05).
+    """
+    definition = parse_file(path)
+    renderers = {"robot": render_robot, "yaml": render_yaml}
+    console.out.write(renderers[to](definition))
+    return ExitCode.PASS
 
 
 def validate(console: Console, *, path: Path) -> int:
@@ -150,6 +182,8 @@ def execute(
     connect_to: Callable[..., ClusterClient] | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     env: Mapping[str, str] | None = None,
+    artifacts_root: Path | None = None,
+    robot_directory: Path | None = None,
 ) -> int:
     """The in-cluster entry point: what the submitted Job runs.
 
@@ -158,10 +192,13 @@ def execute(
     and the run's id, and it owns phases 2 to 11.
 
     Phases 2 and 3 are implemented, and phase 4 begins with the run-exclusivity claim
-    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). The rest of phase 4 and
-    the phases after it are not yet: preflight is M1-07 (#42), execution M1-11 (#46),
-    validation M1-13 (#48), results M1-14 (#49), cleanup and the real exit code M1-16
-    (#51). Rather than exit 0 and let a submitter read that as a passing run, this
+    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). Phases 5, 6 and 9a
+    render the suite, run it through Robot Framework once per pair, and merge the
+    reports into the run's artifact directory (ADR-01-08).
+
+    Not built yet: preflight's checks (M1-07, #42), measurement (M1-12, #47), validation
+    (M1-13, #48), the result artifact (M1-14, #49), and cleanup and the real exit code
+    (M1-16, #51). Rather than exit 0 and let a submitter read that as a passing run, this
     reports an orchestrator error and names what is missing.
 
     Once claimed, the run is always marked finished on the way out — the start of phase
@@ -209,14 +246,114 @@ def execute(
             "phase 4 (preflight): cluster claimed for this run until "
             f"{format_timestamp(expires_at)}"
         )
+        # A phase line, so on the same stream as the others: stdout and stderr reach the
+        # Job's log through separate pipes, and lines microseconds apart can swap.
+        console.say(
+            "phase 4 (preflight): the cluster checks are not implemented in this build "
+            "(M1-07, #42); the run continues without them"
+        )
+        console.say()
+
+        artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
+        suite = render_suite(definition, artifacts)
+        console.say(f"phase 5 (suite rendering): {suite}")
+        executions = execute_pairs(
+            plan,
+            suite=suite,
+            artifacts=artifacts,
+            runner=ROBOT_RUNNER(),
+            robot_directory=robot_directory or default_robot_directory(),
+            namespace=resolved_namespace,
+            images=run_images,
+            on_pair=lambda pair: console.say(
+                f"phase 6 (execution): {pair.test_id}  {pair.source.name} -> "
+                f"{pair.target.name}, one Robot Framework process"
+            ),
+        )
+        merge_reports(executions, artifacts, ROBOT_RUNNER())
+        console.say(f"phase 9a (reporting): {artifacts.log}, {artifacts.report}")
+        console.say()
         console.warn(
-            "the rest of phases 4 to 11 is not implemented in this build: preflight (#42), "
-            "execution (#46), validation (#48), results (#49), cleanup and outcome (#51). "
-            "The run stops here without a verdict."
+            "the rest of phases 7 to 11 is not implemented in this build: measurement "
+            "(#47), validation (#48), results (#49), cleanup and outcome (#51). The run "
+            "stops here without a verdict; Robot's report says which steps ran."
         )
         return ExitCode.INTERNAL
     finally:
-        _finish(console, resources, resolved_run_id, resolved_namespace, now)
+        # ADR-05-13: a run stops blocking the cluster only once nothing of it can still be
+        # sending traffic. A test aborted mid-measurement leaves a client that keeps
+        # sending, so its pods go first, on every path, and the claim is released only
+        # once they are gone. If they cannot be removed, the claim stays until it expires.
+        if _remove_test_pods(console, resources, resolved_run_id, resolved_namespace):
+            _finish(console, resources, resolved_run_id, resolved_namespace, now)
+        else:
+            # Removing the pods alone frees nothing: only a finished or expired claim does
+            # (ADR-05-13). So the way out names both steps, the second one being the
+            # recovery the refusal of a later run prints too.
+            console.warn(
+                f"run {resolved_run_id} keeps its claim on the cluster until "
+                f"{format_timestamp(expires_at)}, because its test pods may still be sending "
+                "traffic. To free it earlier, remove them: kubectl delete pod -n "
+                f"{resolved_namespace} -l 'dokimi.io/run-id={resolved_run_id},"
+                "app.kubernetes.io/component in (client,server)'. Then clear the claim by "
+                "deleting the run's owner, which removes the rest of the run with it: "
+                f"kubectl delete configmap -n {resolved_namespace} "
+                f"{owner_name(resolved_run_id)}"
+            )
+
+
+#: A test's pods, by their component label. Only these are removed before the claim is
+#: released: a run's other pods, such as its kept Prometheus or a DaemonSet's, are not test
+#: traffic, and a controller would only recreate them.
+TEST_POD_COMPONENTS = frozenset(role.value for role in Role)
+
+#: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
+#: the API server's and the kubelet's reaction time.
+POD_REMOVAL_TIMEOUT_SECONDS = 60.0
+
+
+def _remove_test_pods(
+    console: Console,
+    resources: ResourceClient,
+    run_id: RunId,
+    namespace: str,
+    *,
+    timeout: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Delete the run's test pods, and wait until they are gone. True if they are.
+
+    Only the test's client and server pods: the owner and the definition stay for
+    ``attach`` and for cleanup (M1-16), and the Job's own pod is never selected. Waiting
+    matters, because a deleted pod keeps running through its grace period, and so can its
+    traffic.
+    """
+    limit = POD_REMOVAL_TIMEOUT_SECONDS if timeout is None else timeout
+    try:
+        report = delete_run_owned(
+            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
+        )
+        if report.failed:
+            console.warn(
+                f"could not delete run {run_id}'s test pods: "
+                + "; ".join(f"{obj.name}: {error}" for obj, error in report.failed)
+            )
+            return False
+        deadline = clock() + limit
+        while find_run_owned(
+            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
+        ):
+            if clock() >= deadline:
+                console.warn(f"run {run_id}'s test pods were still there after {limit:g}s")
+                return False
+            sleep(2.0)
+    except ClusterError as error:
+        console.warn(f"could not remove run {run_id}'s test pods: {error}")
+        return False
+    if report.deleted:
+        console.say(f"phase 11 (cleanup): removed {len(report.deleted)} test pod(s)")
+    return True
 
 
 def _finish(

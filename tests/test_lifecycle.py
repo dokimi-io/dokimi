@@ -251,7 +251,16 @@ def pulling_failed(reason: str) -> Manifest:
 
 
 @pytest.mark.parametrize(
-    "reason", ["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]
+    "reason",
+    [
+        "ErrImagePull",
+        "ImagePullBackOff",
+        "InvalidImageName",
+        "ErrImageNeverPull",
+        "ImageInspectError",
+        "RegistryUnavailable",
+        "SignatureValidationFailed",
+    ],
 )
 def test_an_image_pull_failure_is_its_own_category(
     cluster: FakeResources, spec: WorkloadSpec, reason: str

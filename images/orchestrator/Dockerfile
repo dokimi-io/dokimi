@@ -62,12 +62,20 @@ RUN groupadd --gid 65532 orchestrator \
 
 COPY --from=build --chown=root:root /opt/orchestrator /opt/orchestrator
 
+# Phase 6 runs the rendered suite through Robot Framework (ADR-01-08), and the suite
+# imports the resource file and the library adapter from here. They are not part of the
+# installed package, deliberately: they are the Robot-facing surface, and the library
+# never imports them (ADR-01-02).
+COPY --chown=root:root robot/resources /opt/dokimi/robot/resources
+COPY --chown=root:root robot/libraries /opt/dokimi/robot/libraries
+
 # Robot writes `output.xml` per pair and `rebot` merges them (ADR-01-08, phase 9a), so
 # the Job needs somewhere writable that is not the read-only application directory.
 RUN install -d -o 65532 -g 65532 /work
 
 ENV PATH="/opt/orchestrator/bin:${PATH}" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DOKIMI_ROBOT_DIR=/opt/dokimi/robot
 
 USER 65532:65532
 WORKDIR /work

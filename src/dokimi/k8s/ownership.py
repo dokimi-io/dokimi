@@ -31,7 +31,7 @@ run — not a workload, not retained evidence, not a kept managed Prometheus.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -438,11 +438,13 @@ def find_run_owned(
     *,
     namespace: str | None = None,
     kinds: Sequence[Kind] = RUN_OWNED_KINDS,
+    components: Collection[str] | None = None,
 ) -> list[OwnedObject]:
     """Every run-owned object of *kinds*, for *run_id* or for any run.
 
-    *namespace* ``None`` means every namespace. The labels are re-checked on each result,
-    so a selector the server misread cannot smuggle in an object that is not ours.
+    *namespace* ``None`` means every namespace, and *components* ``None`` every component.
+    The labels are re-checked on each result, so a selector the server misread cannot
+    smuggle in an object that is not ours.
     """
     selector = run_selector(run_id)
     found: list[OwnedObject] = []
@@ -453,6 +455,8 @@ def find_run_owned(
             metadata = item["metadata"]
             labels = metadata.get("labels") or {}
             if labels.get(COMPONENT_LABEL) == ORCHESTRATOR_COMPONENT:
+                continue
+            if components is not None and labels.get(COMPONENT_LABEL) not in components:
                 continue
             found.append(
                 OwnedObject(
@@ -487,8 +491,9 @@ def delete_run_owned(
     *,
     namespace: str | None = None,
     kinds: Sequence[Kind] = RUN_OWNED_KINDS,
+    components: Collection[str] | None = None,
 ) -> DeletionReport:
-    """Delete everything *run_id* owns, in *namespace* or everywhere.
+    """Delete everything *run_id* owns, in *namespace* or everywhere, of *components*.
 
     A ``run_id`` is required: "delete every run's objects" is a different, age-bounded
     operation that belongs to the cleanup phase and needs its own guard. Dependents are
@@ -496,7 +501,9 @@ def delete_run_owned(
     by the garbage collector cascading from its owner.
     """
     report = DeletionReport(run_id=str(run_id))
-    objects = find_run_owned(cluster, run_id, namespace=namespace, kinds=kinds)
+    objects = find_run_owned(
+        cluster, run_id, namespace=namespace, kinds=kinds, components=components
+    )
     for obj in _dependents_first(objects):
         try:
             cluster.delete(obj.kind, obj.namespace, obj.name, uid=obj.uid)
