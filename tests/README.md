@@ -24,6 +24,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_identity.py`](test_identity.py) | Run ids and ownership labels |
 | [`test_run_identity.py`](test_run_identity.py) | The `RunId` type ownership and exclusivity are written against |
 | [`test_cluster_name.py`](test_cluster_name.py) | The cluster's name: given at submission, required, a DNS label, never derived |
+| [`test_diagnostics.py`](test_diagnostics.py) | Phase 10's post-run snapshot: what it records on every run, what is an anomaly, and that it never blocks cleanup |
 | [`test_ownership.py`](test_ownership.py) | Run-owned object creation, owner references, and label-scoped deletion |
 | [`test_exclusivity.py`](test_exclusivity.py) | One run at a time: the run-start lease, the claim lifecycle and its expiry, and two racing submissions through `submit` |
 | [`test_deadlines.py`](test_deadlines.py) | Workload and Job deadline budgets, including warm-up, and the Pod and Job bounds they enforce |

@@ -18,6 +18,7 @@ import yaml
 from dokimi.artifact_stream import ArtifactReceiver, ArtifactStreamError, write_artifacts
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cluster_name import cluster_from_job_environment, resolve_cluster
+from dokimi.diagnostics import SNAPSHOT_TIMEOUT_SECONDS, capture, write_report
 from dokimi.execution import (
     ARTIFACTS_ROOT,
     PairExecution,
@@ -36,11 +37,13 @@ from dokimi.k8s.identity import COMPONENT_LABEL, RUN_ID_LABEL, validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
+    TEST_ID_LABEL,
     RunOwnership,
     delete_run_owned,
     find_run_owned,
     format_timestamp,
     owner_name,
+    run_selector,
 )
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
@@ -65,7 +68,7 @@ from dokimi.metrics.prometheus import (
     verify_query_access,
 )
 from dokimi.model import DEFAULT_RESULTS_DIRECTORY, ConfigError, Criterion, TestDefinition, TestType
-from dokimi.planning import Plan, discover, plan_run
+from dokimi.planning import Plan, PlannedPair, discover, plan_run
 from dokimi.preflight import check_cluster, node_exporter_reachability
 from dokimi.run_identity import RunId
 from dokimi.run_images import (
@@ -88,6 +91,9 @@ __all__ = [
     "submit_run",
     "validate",
 ]
+
+#: How long phase 10 may take. Module-level so a test can shorten it.
+DIAGNOSTICS_TIMEOUT_SECONDS = SNAPSHOT_TIMEOUT_SECONDS
 
 #: How phase 6 runs Robot Framework. A module attribute so that a test can replace
 #: the subprocess with a fake without a real Robot or a real cluster.
@@ -326,7 +332,9 @@ def execute(
     probe mode, which is removed again before phase 5. A failed check exits 4 as well,
     and nothing in the matrix runs. Phases 5, 6 and 9a render the suite, run it through
     Robot Framework once per pair, and merge the reports into the run's artifact
-    directory (ADR-01-08).
+    directory (ADR-01-08). Phase 10 takes the post-run snapshot on every path, before
+    anything is removed, and writes ``diagnostics.json`` next to Robot's reports
+    (ADR-05-07).
 
     With *preflight_only* the run stops after phase 4 and exits 0: ``dokimi preflight``.
 
@@ -385,6 +393,10 @@ def execute(
     )
     artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
     node_exporter: NodeExporter | None = None
+    # The run's managed Prometheus, once provisioned: phase 10 checks it is still up.
+    prometheus: ManagedPrometheus | None = None
+    # The pairs whose pods were deployed: phase 10 expects only their pods to exist.
+    started: set[str] = set()
     try:
         console.say(
             "phase 4 (preflight): cluster claimed for this run until "
@@ -488,9 +500,9 @@ def execute(
             namespace=resolved_namespace,
             cluster=run_cluster,
             images=run_images,
-            on_pair=lambda pair: console.say(
-                f"phase 6 (execution): {pair.test_id}  {pair.source.name} -> "
-                f"{pair.target.name}, one Robot Framework process"
+            on_pair=lambda pair: _start_pair(console, pair),
+            after_pair=lambda pair: _record_deployed(
+                console, resources, resolved_run_id, resolved_namespace, started, pair
             ),
         )
         _confirm_measurements(console, prometheus, executions, artifacts)
@@ -504,6 +516,20 @@ def execute(
         )
         return ExitCode.INTERNAL
     finally:
+        # Phase 10 first, on every path: while everything the run created still exists,
+        # and before cleanup removes any of it (ADR-05-07).
+        _diagnose(
+            console,
+            resources,
+            cluster,
+            run_cluster,
+            resolved_run_id,
+            resolved_namespace,
+            plan,
+            started,
+            artifacts,
+            prometheus,
+        )
         # ADR-05-13: a run stops blocking the cluster only once nothing of it can still be
         # sending traffic. A test aborted mid-measurement leaves a client that keeps
         # sending, so its pods go first, on every path, and the claim is released only
@@ -625,6 +651,79 @@ def _test_pod_selector(run_id: RunId) -> str:
 #: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
 #: the API server's and the kubelet's reaction time.
 POD_REMOVAL_TIMEOUT_SECONDS = 60.0
+
+
+def _start_pair(console: Console, pair: PlannedPair) -> None:
+    console.say(
+        f"phase 6 (execution): {pair.test_id}  {pair.source.name} -> "
+        f"{pair.target.name}, one Robot Framework process"
+    )
+
+
+def _record_deployed(
+    console: Console,
+    resources: ResourceClient,
+    run_id: RunId,
+    namespace: str,
+    started: set[str],
+    pair: PlannedPair,
+) -> None:
+    """After a pair's Robot process: whether its pods were deployed, for phase 10.
+
+    Only deploy() creates a test's pods, inside the Robot process, and nothing removes
+    them before phase 11. So a pod of the pair now means its pods were deployed, and none
+    means it ended before that, by an error its own category names. A pair that could not
+    be checked counts as deployed: a missing pod is then reported rather than missed.
+    """
+    # Only a test's pods carry its test id.
+    selector = f"{run_selector(run_id)},{TEST_ID_LABEL}={pair.test_id}"
+    try:
+        deployed = bool(resources.list(POD, selector, namespace))
+    except Exception as error:
+        console.warn(f"could not check whether {pair.test_id}'s pods were deployed: {error}")
+        deployed = True
+    if deployed:
+        started.add(pair.test_id)
+
+
+def _diagnose(
+    console: Console,
+    resources: ResourceClient,
+    cluster: ClusterClient,
+    cluster_name: str,
+    run_id: RunId,
+    namespace: str,
+    plan: Plan,
+    started: set[str],
+    artifacts: RunArtifacts,
+    prometheus: ManagedPrometheus | None,
+) -> None:
+    """Phase 10: the post-run snapshot, written next to Robot's reports. Never raises.
+
+    Should anything in it raise after all, the run would keep its test pods and its claim,
+    so whatever it is becomes a warning, and cleanup goes on.
+    """
+    try:
+        ready = None if prometheus is None else PrometheusClient(prometheus.endpoint).ready
+        diagnostics = capture(
+            resources,
+            run_id=run_id,
+            namespace=namespace,
+            plan=plan,
+            started=started,
+            artifacts=artifacts,
+            list_nodes=cluster.list_nodes,
+            prometheus_ready=ready,
+            cluster=cluster_name,
+            timeout=DIAGNOSTICS_TIMEOUT_SECONDS,
+        )
+        for line in diagnostics.summary():
+            console.say(line)
+        report = write_report(diagnostics, artifacts.directory)
+        console.say(f"phase 10 (diagnostics): {report}")
+    except Exception as error:
+        console.warn(f"could not record the run's diagnostics: {error}")
+    console.say()
 
 
 def _remove_test_pods(
@@ -781,7 +880,8 @@ def _follow(
         )
         return ExitCode.INTERRUPTED
     finally:
-        # A preflight writes no artifacts, so their absence is not worth a note.
+        # A preflight writes no test results, only phase 10's snapshot, so missing
+        # artifacts are not worth a note there.
         _store_artifacts(console, receiver, results / run_id, ended=ended and expect_artifacts)
 
 

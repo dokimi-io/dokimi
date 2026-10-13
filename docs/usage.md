@@ -72,6 +72,13 @@ phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../repor
 the rest of phases 8 to 11 is not implemented in this build: validation (#48), results
 (#49), cleanup and outcome (#51). The run stops here without a verdict; Robot's report
 says which steps ran.
+phase 10 (diagnostics): 5 pod(s), 1 pair(s), none down
+  run-20261002-120000-a1b2c3-pair-001-client on worker-01: Running
+  run-20261002-120000-a1b2c3-pair-001-server on worker-02: Running
+  run-20261002-120000-a1b2c3-prometheus-7d9f6c5b8-x2kqp on worker-03: Running
+  2 node-exporter pod(s)
+phase 10 (diagnostics): /work/artifacts/20261002-120000-a1b2c3/diagnostics.json
+
 phase 11 (cleanup): removed 2 test pod(s)
 phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-exporter
 ```
@@ -98,6 +105,15 @@ Five things to know about a run today:
 - **Robot's report comes back to you.** `submit` and `attach` extract it into
   `<results.directory>/<run-id>/`: `log.html`, `report.html`, the merged `output.xml`, and
   `suite.robot`, the exact suite that ran. See [The run's reports](#the-runs-reports).
+- **Before anything is removed, the run records itself** (phase 10, ADR-05-07): which
+  node every pod ran on, how each pod and container ended, which pairs were down, and
+  whether the namespace was still reachable. That's `diagnostics.json`, next to Robot's
+  reports, on every run. Anything no test was in flight to notice is an anomaly: a test
+  pod or the Prometheus pod that went missing, was evicted or stopped by its deadline, a
+  container of one that restarted, crash-looped or was OOM-killed, or its node no longer
+  Ready. The node-exporter's pods, one on every node, are recorded but never an anomaly.
+  An anomaly marks the run `"retain": true`. Until M1-16, the test pods are still removed, as below, and the
+  snapshot is what keeps their state.
 - **The run removes its test pods before it frees the cluster,** however it ended, and
   waits until they are gone: a server pod would otherwise idle until its deadline, and a
   pod still sending must keep the cluster claimed (ADR-05-13). That takes the pods of a
@@ -418,6 +434,9 @@ deploys the pair afresh, so the probe never runs next to a test.
 creates nothing; this creates real pods, because whether they schedule and connect can
 only be seen by trying. It claims the cluster while it runs, provisions the run's managed
 Prometheus, which is kept as every run's is, and removes everything else it deployed.
+Like every run, it ends with phase 10's snapshot: `diagnostics.json` in
+`<results.directory>/<run-id>/`, which after a failed check shows the probe's pods as they
+were.
 
 A passed preflight is a floor, not a guarantee: one pair, under no load, says nothing about
 what the full matrix will meet.
@@ -484,6 +503,7 @@ results/20261002-120000-a1b2c3/
   pairs/         one output.xml per pair, and what its test read directly
                  (<test-id>.measurement.json)
   measurement.json  every test's directly read values, and what Prometheus held of them
+  diagnostics.json  where every pod ran, how it ended, and any anomaly (phase 10)
 ```
 
 `attach` reads `results.directory` from the definition the run was submitted with. A
@@ -504,6 +524,40 @@ is what it recommends. Two consequences of it:
   extracts nothing; `dokimi attach <run-id>` later does, until the pod is deleted.
 - **The Job's raw log ends with a block of base64.** `kubectl logs` shows it; `submit` and
   `attach` never do.
+
+### diagnostics.json
+
+The post-run snapshot, taken before anything of the run is removed. Its `schema` is `1`;
+a field that changes meaning or goes away raises it.
+
+| Field | Type | What it says |
+| --- | --- | --- |
+| `schema` | integer | `1` |
+| `run_id`, `cluster`, `namespace` | string | The run, the cluster's name as given at submission, and the namespace it ran in |
+| `captured_at` | string | When the snapshot began, UTC, ISO 8601 |
+| `complete` | boolean | `false` if a step failed or the snapshot ran out of time; the rest is still there |
+| `retain` | boolean | `true` if there is any anomaly: the run's resources are kept |
+| `anomalies` | list | Each with `kind`, `subject` (a pod, a node, a pair as `<test-id>/<role>`, or `run`) and `detail` |
+| `prometheus_deployed` | boolean | Whether the run deployed a Prometheus of its own |
+| `reachable.namespace` | boolean or null | Whether the run's pods could be listed; `null` if not tried |
+| `reachable.prometheus` | boolean or null | Whether the run's Prometheus was ready; `null` if it deployed none, or the check didn't run |
+| `pairs` | list | Each planned pair: `test_id`, `source_node`, `target_node`, `started` (its pods were deployed), `pods` (each role's pod name, or `null`), `findings` (its Robot output, relative to the run's directory, or `null`) and `down` |
+| `pods` | list | Each run-owned pod: `name`, `component`, `test_id`, `node`, `phase`, `ready`, `ip`, `reason`, `message`, and `containers`, each with `name`, `state`, `reason`, `exit_code`, `restarts`, `last_state`, `last_reason` and `last_exit_code` |
+
+The anomaly kinds:
+
+| `kind` | When |
+| --- | --- |
+| `pod_missing` | A pod of a pair whose pods were deployed no longer exists |
+| `pod_evicted`, `pod_deadline_exceeded` | The cluster ended a test pod or the Prometheus pod |
+| `container_restarted`, `container_crash_looping`, `container_oom_killed` | A container of a test pod or the Prometheus pod, also an OOM kill before a restart |
+| `node_not_ready` | The node of a test pod or the Prometheus pod is not `Ready`, or gone |
+| `namespace_unreachable`, `prometheus_unreachable` | The run's pods couldn't be listed, or its Prometheus wasn't ready |
+| `snapshot_incomplete` | A step failed (its `subject` names it) or the snapshot ran out of time (`run`) |
+
+A pair is `down` when its pods were deployed and one is missing, a container of it exited
+non-zero, or an anomaly concerns its pods or its nodes. A client that exited non-zero is
+the test's own result, so it is not an anomaly, but its pair is down.
 
 ## Exit codes
 

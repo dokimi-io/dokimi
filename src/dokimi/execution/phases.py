@@ -55,12 +55,16 @@ def execute_pairs(
     cluster: str,
     images: Mapping[str, WorkloadImage],
     on_pair: Callable[[PlannedPair], None] = lambda _pair: None,
+    after_pair: Callable[[PlannedPair], None] = lambda _pair: None,
 ) -> list[PairExecution]:
     """Phase 6: one Robot process per pair, in the plan's order.
 
     Milestone-01's plan is one pair, so this runs once. It is still the general shape:
     the matrix growing past one pair is Milestone-02, and concurrency within a wave is
     the scheduler's to add here (ADR-04-04), not Robot's.
+
+    *on_pair* is called before a pair's process starts, *after_pair* once it has ended,
+    however it ended: phase 10 asks then whether the pair's pods were deployed.
 
     Raises:
         RobotRunError: if a pair's process could not run, or wrote no results.
@@ -79,12 +83,15 @@ def execute_pairs(
                 cluster,
                 images,
             )
-            runner.run(
-                suite,
-                output=output,
-                environment=context.environment(),
-                pythonpath=robot_directory,
-            )
+            try:
+                runner.run(
+                    suite,
+                    output=output,
+                    environment=context.environment(),
+                    pythonpath=robot_directory,
+                )
+            finally:
+                after_pair(pair)
             if not output.is_file():
                 raise RobotRunError(f"{pair.test_id}: Robot Framework wrote no {output.name}")
             executions.append(PairExecution(pair, output))

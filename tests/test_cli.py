@@ -368,9 +368,10 @@ def test_execute_parses_then_plans(
     assert "phase 2 (ingestion): definition parsed" in out.out
     assert "phase 3 (planning): 1 test, sequential" in out.out
     assert "pair-001  worker-01 -> worker-02" in out.out
-    # Once to plan, and once more in phase 4, to check the plan against the nodes as they
-    # are when the tests are about to start.
-    assert job_cluster.node_reads == 2
+    # Once to plan, once more in phase 4, to check the plan against the nodes as they
+    # are when the tests are about to start, and once after the run, to see whether its
+    # nodes are still Ready (phase 10).
+    assert job_cluster.node_reads == 3
     assert "phase 4 (preflight): cluster claimed for this run until" in out.out
     # Phases 7 to 11 do not exist yet, and a run that stops early must not look like one
     # that passed.
@@ -514,7 +515,14 @@ def test_a_failed_cluster_check_exits_4_and_runs_nothing(
     assert "cluster not ready (dns): the probe of pair-001 (worker-01 -> worker-02)" in err
     assert "Traceback" not in err
     assert robot.runs == []
-    assert not (tmp_path / "artifacts").exists()
+    # No test results: phase 10's snapshot is all the run writes. It records the probe's
+    # pods, which were still there, without making the pair look started or an anomaly.
+    run_artifacts = tmp_path / "artifacts" / RUN_ID
+    assert sorted(path.name for path in run_artifacts.iterdir()) == ["diagnostics.json"]
+    report = json.loads((run_artifacts / "diagnostics.json").read_text())
+    assert report["pairs"][0]["started"] is False
+    assert {pod["test_id"] for pod in report["pods"]} == {"pair-001-preflight"}
+    assert report["anomalies"] == []
     assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
@@ -572,6 +580,18 @@ def test_execute_preflight_only_stops_after_phase_4_and_exits_0(
     assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_a_preflight_only_run_takes_phase_10_too(job_cluster: FakeCluster, tmp_path: Path) -> None:
+    # Phase 10 runs on every path. After a passed preflight the probe's pods are gone, so
+    # there is nothing to find, and nothing in it counts as a pair that started.
+    main([*EXECUTE, "--preflight-only"])
+
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "diagnostics.json").read_text())
+    assert report["pods"] == []
+    assert report["pairs"][0]["started"] is False
+    assert report["anomalies"] == []
+    assert report["retain"] is False
 
 
 def test_the_preflight_command_submits_a_run_that_stops_after_phase_4(
@@ -1400,6 +1420,161 @@ def test_a_pair_without_a_measurement_is_named(
     main(EXECUTE)
 
     assert "pair-001 has no measurement" in capsys.readouterr().err
+
+
+def pair_pods(fake: FakeCluster) -> None:
+    """The pair's two pods as phase 6 leaves them, labelled with their test.
+
+    Called from the fake Robot process, as ``robot.on_run``: phase 4 removes every test pod
+    of the run before phase 5, so pods put there before the run would be gone by phase 10.
+    """
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    for role, node_name in (("client", "worker-01"), ("server", "worker-02")):
+        fake.store.put(
+            POD,
+            "dokimi-iperf2",
+            {
+                "metadata": {
+                    "name": f"run-{RUN_ID}-pair-001-{role}",
+                    "labels": ownership_labels(RunId(RUN_ID), test_id="pair-001", component=role),
+                },
+                "spec": {"nodeName": node_name},
+                "status": {"phase": "Running"},
+            },
+        )
+
+
+def removed_pair_pods(fake: FakeCluster) -> list[str]:
+    """The pair's pods deleted so far, without the preflight's probe pods phase 4 removes."""
+    pods = {f"run-{RUN_ID}-pair-001-{role}" for role in ("client", "server")}
+    return [name for kind, _, name in fake.store.deleted if kind == "Pod" and name in pods]
+
+
+def test_phase_10_records_the_run_next_to_robots_reports(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Acceptance criterion: on every run, passing ones included.
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert "phase 10 (diagnostics): 2 pod(s), 1 pair(s), none down" in out
+    assert f"  run-{RUN_ID}-pair-001-server on worker-02: Running" in out
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "diagnostics.json").read_text())
+    assert report["retain"] is False
+    assert report["pairs"][0]["findings"] == "pairs/pair-001.xml"
+    # Labelled like every result, with the name given at submission.
+    assert report["cluster"] == "test-cluster"
+
+
+def test_phase_10_checks_the_runs_prometheus_is_still_up(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, prometheus: FakePrometheus, tmp_path: Path
+) -> None:
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    main(EXECUTE)
+
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "diagnostics.json").read_text())
+    assert report["reachable"]["prometheus"] is True
+    # Asked once in phase 4, and once more after the run.
+    assert len([url for url in prometheus.urls if url.endswith("/-/ready")]) >= 2
+
+
+def test_phase_10_is_taken_before_cleanup_removes_anything(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Acceptance criterion: cleanup cannot start before the snapshot completes.
+    robot.on_run = lambda: pair_pods(job_cluster)
+    removed_when_captured: list[list[str]] = []
+    from dokimi.diagnostics import capture as real  # noqa: PLC0415
+
+    def removed_pods() -> list[str]:
+        return removed_pair_pods(job_cluster)
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        removed_when_captured.append(removed_pods())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(commands, "capture", spy)
+
+    main(EXECUTE)
+
+    assert removed_when_captured == [[]]
+    assert len(removed_pods()) == 2
+
+
+def test_phase_10_is_taken_when_the_run_fails_too(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, tmp_path: Path
+) -> None:
+    robot.on_run = lambda: pair_pods(job_cluster)
+    robot.writes_output = False  # a crashed Robot process
+
+    assert main(EXECUTE) == ExitCode.INTERNAL
+    assert (tmp_path / "artifacts" / RUN_ID / "diagnostics.json").is_file()
+
+
+def test_an_anomaly_means_the_run_is_retained(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Only the client is left: the server pod of a pair that started has gone.
+    from dokimi.k8s.resources import POD  # noqa: PLC0415
+
+    def phase_6() -> None:
+        pair_pods(job_cluster)
+        job_cluster.store.objects.pop((POD.kind, "dokimi-iperf2", f"run-{RUN_ID}-pair-001-server"))
+
+    robot.on_run = phase_6
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert "  1 anomaly(ies): the run's resources are retained" in out
+    assert (
+        "    pod_missing pair-001/server: its pods were deployed, and this one no longer exists"
+        in out
+    )
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "diagnostics.json").read_text())
+    assert report["retain"] is True
+
+
+def test_a_pair_that_ended_before_its_pods_were_deployed_is_no_anomaly(
+    job_cluster: FakeCluster, tmp_path: Path
+) -> None:
+    # A parameter ConfigError, a missing image or a Robot crash before deploy(): its own
+    # error category caught it, and no pod of it ever existed.
+    main(EXECUTE)
+
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "diagnostics.json").read_text())
+    assert report["anomalies"] == []
+    assert report["retain"] is False
+    assert report["pairs"][0]["started"] is False
+
+
+def test_a_phase_10_that_raises_still_lets_cleanup_run(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("a bug in phase 10")
+
+    monkeypatch.setattr(commands, "capture", broken)
+
+    main(EXECUTE)
+
+    assert "could not record the run's diagnostics: a bug in phase 10" in capsys.readouterr().err
+    assert len(removed_pair_pods(job_cluster)) == 2
 
 
 def test_execute_removes_the_test_pods_then_releases_the_cluster(
