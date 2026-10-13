@@ -125,10 +125,10 @@ cmd_up() {
   # knows which cluster to remove: written after creation, a failure inside `kind create`
   # or `k3d cluster create` would leave a cluster that `down` refused to touch.
   echo "$profile" > "$state/profile"
-  # The profile is written into the trap now, not read when it runs: an EXIT trap runs
-  # after this function has been left, when its locals are gone, and `set -u` would
-  # abort the handler before it says anything (#49).
-  trap "on_up_failure $(printf '%q' "$profile")" EXIT
+  # No argument: an EXIT trap runs after this function has been left, when `profile` is
+  # gone, and under `set -u` naming it aborted the handler before it said anything
+  # (#49). The handler reads the profile just recorded instead, as `down` does.
+  trap on_up_failure EXIT
 
   say "creating $profile: 1 control plane + $WORKERS workers, Kubernetes from versions.env"
   case "$tool" in
@@ -156,9 +156,10 @@ cmd_up() {
 on_up_failure() {
   # Runs when `up` exits early. The partial cluster is kept rather than deleted, because
   # what it contains is the evidence of why it failed; CI's failure step reads it.
-  local rc=$?
+  local rc=$? profile
   [[ "$rc" -eq 0 ]] && return
-  echo "test-env: bringing up $1 failed. Whatever was created is kept for inspection" \
+  profile="$(cat "$state/profile" 2>/dev/null)" || profile="the test environment"
+  echo "test-env: bringing up $profile failed. Whatever was created is kept for inspection" \
     "(export KUBECONFIG=$KUBECONFIG); remove it with: test-env/test-env.sh down" >&2
 }
 
