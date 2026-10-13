@@ -237,6 +237,14 @@ def test_the_exporters_python_is_pinned_and_the_exporter_installed() -> None:
     ) in instructions
     # The pods' root filesystem is read-only.
     assert "ENV PYTHONDONTWRITEBYTECODE=1" in instructions
+    # .dockerignore excludes everything by default.
+    ignore = (REPOSITORY_ROOT / ".dockerignore").read_text().splitlines()
+    assert "!images/iperf2/dokimi_iperf2_exporter.py" in ignore
+    # It runs through its shebang, which a CRLF would break.
+    exporter = (REPOSITORY_ROOT / "images" / "iperf2" / "dokimi_iperf2_exporter.py").read_bytes()
+    assert exporter.startswith(b"#!/usr/bin/env python3\n")
+    attributes = (REPOSITORY_ROOT / ".gitattributes").read_text().splitlines()
+    assert "images/iperf2/*.py text eol=lf" in attributes
 
 
 def test_the_iperf2_image_runs_as_a_non_root_user() -> None:
