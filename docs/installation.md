@@ -173,21 +173,27 @@ tell you so rather than falling back to a tag that might mean something else tom
 
 ```console
 $ dokimi submit test.yaml
-dokimi: this is a development build with no published orchestrator image, so
-there is no default to submit. Pass an explicit reference or set DOKIMI_IMAGE.
+dokimi: this is a development build with no published orchestrator image, so there is no
+default to run. Choose one with --image orchestrator=<reference> or DOKIMI_ORCHESTRATOR_IMAGE
 ```
 
 Until then — and afterwards, in an air-gapped or policy-constrained cluster — point it at
 an image yourself:
 
 ```console
-$ export DOKIMI_IMAGE=registry.internal/orchestrator@sha256:...
+$ export DOKIMI_ORCHESTRATOR_IMAGE=registry.internal/orchestrator@sha256:...
 $ dokimi submit test.yaml
 ```
+
+`DOKIMI_IMAGE`, its earlier name, still works.
 
 [Building](building.md#the-orchestrator-image) covers building that image, and
 [Usage](usage.md#choosing-the-orchestrator-image) covers the precedence between the flag,
 the environment variable and the release default.
+
+The same holds for the images a run deploys, today the `iperf2` test workload: a source
+checkout has none, and `submit` refuses until one is chosen with `--image iperf2=<reference>`
+or `DOKIMI_IPERF2_IMAGE` ([Usage](usage.md#choosing-the-images-a-run-deploys)).
 
 ## Checking the installation
 

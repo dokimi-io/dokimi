@@ -30,12 +30,13 @@ from dokimi.cli.commands import (
     validate,
 )
 from dokimi.cli.exit_codes import ExitCode
-from dokimi.images import IMAGE_OVERRIDE_ENV_VAR, ImageResolutionError
+from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
 from dokimi.k8s.ownership import OwnershipError
 from dokimi.k8s.submission import RunNotFound
 from dokimi.model import ConfigError
+from dokimi.run_images import COMPONENTS
 
 __all__ = ["build_parser", "main"]
 
@@ -114,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     image_parser = commands.add_parser(
         "image",
-        help="show the orchestrator image a run would submit",
+        help="show the images a run would submit and deploy",
     )
     _add_image_argument(image_parser)
 
@@ -141,7 +142,23 @@ def _add_image_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--orchestrator-image",
         dest="image_override",
-        help=f"image reference to submit, overriding ${IMAGE_OVERRIDE_ENV_VAR} and the default",
+        help="the same as --image orchestrator=REFERENCE, its earlier name",
+    )
+    components = ", ".join(sorted(COMPONENTS))
+    variables = ", ".join(
+        "$" + " or $".join((component.env_var, *component.env_aliases))
+        for component in COMPONENTS.values()
+    )
+    parser.add_argument(
+        "--image",
+        dest="images",
+        action="append",
+        default=[],
+        metavar="COMPONENT=REFERENCE",
+        help=(
+            f"an image the run deploys, overriding {variables} and the default; "
+            f"repeatable. Components: {components}"
+        ),
     )
 
 
@@ -206,6 +223,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             namespace=args.namespace,
             run_id=args.run_id,
             image_override=args.image_override,
+            images=args.images,
             service_account=args.service_account,
             kubeconfig=args.kubeconfig,
             context=args.context,
@@ -220,7 +238,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             context=args.context,
         )
     if args.command == "image":
-        return show_image(console, image_override=args.image_override)
+        return show_image(console, image_override=args.image_override, images=args.images)
     if args.command == "execute":
         return execute(
             console,

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from dokimi.formats import parse_file
+from dokimi.images import ImageSource
 from dokimi.k8s.exclusivity import (
     LOCK_NAME,
     REFUSAL_REASON,
@@ -42,8 +43,16 @@ from dokimi.k8s.ownership import (
 from dokimi.k8s.resources import CONFIG_MAP, DEPLOYMENT, JOB, LEASE, POD, Kind, Manifest
 from dokimi.k8s.submission import plan_submission, submit
 from dokimi.run_identity import RunId, new_run_id
+from dokimi.testtypes.interface import WorkloadImage
 from tests.fake_cluster import FakeCluster
 from tests.fake_resources import FakeResources
+
+#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+RUN_IMAGES = {
+    "iperf2": WorkloadImage(
+        "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
+    )
+}
 
 FIRST = RunId("20260924-143012-k3f9x2")
 SECOND = RunId("20260924-143013-p7m2q8")
@@ -319,7 +328,12 @@ def test_two_simultaneous_submissions_through_submit_start_exactly_one_run(
     run_ids = [new_run_id(), new_run_id()]
     for run_id in run_ids:
         submission = plan_submission(
-            definition, source=source, source_path=EXAMPLE, image="img", run_id=str(run_id)
+            definition,
+            source=source,
+            source_path=EXAMPLE,
+            image="img",
+            images=RUN_IMAGES,
+            run_id=str(run_id),
         )
         submit(fake, submission)
 

@@ -128,7 +128,7 @@ def test_an_override_is_used_as_given_and_says_so() -> None:
     # An air-gapped mirror may only offer a tag. It is allowed, and recorded as unpinned.
     image = resolve_workload_image("iperf2", DIGEST, "mirror.local/iperf2:2.2.1")
 
-    assert image == WorkloadImage("mirror.local/iperf2:2.2.1", ImageSource.OVERRIDE)
+    assert image == WorkloadImage("mirror.local/iperf2:2.2.1", ImageSource.RUN_OVERRIDE)
     assert image.digest is None
 
 

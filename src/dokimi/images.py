@@ -13,11 +13,12 @@ ADR-05-08 left two things as follow-up work. This module settles both:
   distribution. Chosen over a build-time template or a lockfile-adjacent manifest because
   it needs no packaging hook and is readable by the same import machinery as everything
   else.
-* **Override interface** — ``--orchestrator-image`` for one run, the
-  ``DOKIMI_IMAGE`` environment variable for one installation, the baked-in
-  digest otherwise. Two levels and no config file, deliberately: [ADR-04-02]
-  (configuration sources and precedence) is still ``proposed``, and Milestone-01 must not
-  implement a precedence chain a later decision would overturn.
+* **Override interface** — since [ADR-04-08], the orchestrator is one component among
+  the images a run uses, chosen like the others in :mod:`dokimi.run_images`:
+  ``--image orchestrator=<reference>`` for one run, ``DOKIMI_ORCHESTRATOR_IMAGE`` for
+  one installation, the baked-in digest otherwise. ``--orchestrator-image`` and
+  ``DOKIMI_IMAGE`` are kept as aliases. Two levels and no config file, deliberately:
+  [ADR-04-02] (configuration sources and precedence) is still ``proposed``.
 
 An override is honoured as given, including a tag rather than a digest — an air-gapped
 mirror may not expose digests the same way. What the run *cannot* do is stay quiet about
@@ -28,29 +29,22 @@ specific build ([ADR-05-04], [ADR-05-08]).
 
 from __future__ import annotations
 
-import os
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
 from dokimi._image_digest import ORCHESTRATOR_IMAGE_DIGEST
 
 __all__ = [
-    "IMAGE_OVERRIDE_ENV_VAR",
     "IMAGE_REPOSITORY",
     "ImageResolutionError",
     "ImageSource",
     "OrchestratorImage",
     "default_reference",
-    "resolve_image",
 ]
 
 #: Registry and repository, inherited from ADR-05-04 rather than decided again here.
 IMAGE_REPOSITORY = "ghcr.io/dokimi-io/orchestrator"
-
-#: Per-installation override. The per-run override is a CLI argument, not an env var.
-IMAGE_OVERRIDE_ENV_VAR = "DOKIMI_IMAGE"
 
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -112,46 +106,3 @@ def default_reference() -> str | None:
             "This file is written by the release workflow and should not be edited by hand."
         )
     return f"{IMAGE_REPOSITORY}@{digest}"
-
-
-def resolve_image(
-    override: str | None = None,
-    *,
-    env: Mapping[str, str] | None = None,
-) -> OrchestratorImage:
-    """Resolve the image reference for a run.
-
-    Precedence: *override* (one run) beats ``DOKIMI_IMAGE`` (one installation)
-    beats the digest baked in at release time.
-
-    Raises:
-        ImageResolutionError: if nothing is baked in and nothing was overridden — the
-            case of a development checkout, where submitting a Job needs an explicit
-            image because there is no published build of this code.
-    """
-    environment = os.environ if env is None else env
-
-    run_override = _clean(override)
-    if run_override is not None:
-        return OrchestratorImage(run_override, ImageSource.RUN_OVERRIDE)
-
-    installation_override = _clean(environment.get(IMAGE_OVERRIDE_ENV_VAR))
-    if installation_override is not None:
-        return OrchestratorImage(installation_override, ImageSource.INSTALLATION_OVERRIDE)
-
-    baked_in = default_reference()
-    if baked_in is not None:
-        return OrchestratorImage(baked_in, ImageSource.RELEASE_DEFAULT)
-
-    raise ImageResolutionError(
-        "this is a development build with no published orchestrator image, so there is "
-        f"no default to submit. Pass an explicit reference or set {IMAGE_OVERRIDE_ENV_VAR}."
-    )
-
-
-def _clean(value: str | None) -> str | None:
-    """Normalise an override: blank and whitespace-only are the same as unset."""
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None

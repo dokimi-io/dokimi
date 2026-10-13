@@ -6,7 +6,7 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +16,6 @@ import yaml
 
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.formats import parse_file
-from dokimi.images import ImageResolutionError, resolve_image
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
 from dokimi.k8s.identity import validate_run_id
@@ -28,6 +27,14 @@ from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.model import ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
 from dokimi.run_identity import RunId
+from dokimi.run_images import (
+    COMPONENTS,
+    images_from_job_environment,
+    parse_image_options,
+    resolve_component,
+    resolve_run_images,
+)
+from dokimi.testtypes.interface import WorkloadImage
 
 __all__ = ["Console", "attach", "execute", "show_image", "submit_run", "validate"]
 
@@ -66,20 +73,27 @@ def submit_run(
     namespace: str | None = None,
     run_id: str | None = None,
     image_override: str | None = None,
+    images: Sequence[str] = (),
     service_account: str | None = None,
     kubeconfig: str | None = None,
     context: str | None = None,
     follow_logs: bool = True,
     connect_to: Callable[..., ClusterClient] | None = None,
 ) -> int:
-    """Validate locally, then either render the run or create it."""
+    """Validate locally, then either render the run or create it.
+
+    Every image is resolved here, before anything else happens: the orchestrator's, and
+    the ones the run deploys (ADR-04-08). A source build given no override for one of them
+    stops with a config_error, rather than a Job that fails once it is running.
+    """
     definition = parse_file(path)
-    image = _resolve_image(image_override)
+    run_images = resolve_run_images(parse_image_options(images, orchestrator_image=image_override))
     submission = plan_submission(
         definition,
         source=path.read_text(encoding="utf-8"),
         source_path=path,
-        image=image,
+        image=run_images["orchestrator"].reference,
+        images=run_images,
         run_id=run_id,
         namespace=namespace,
         service_account=service_account,
@@ -135,6 +149,7 @@ def execute(
     deadline_seconds: int,
     connect_to: Callable[..., ClusterClient] | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    env: Mapping[str, str] | None = None,
 ) -> int:
     """The in-cluster entry point: what the submitted Job runs.
 
@@ -159,9 +174,13 @@ def execute(
 
     console.say(f"run {run_id}")
     definition = parse_file(path)
+    # Resolved by submit, never here: the submitter's environment does not reach the Job
+    # (ADR-04-08). What the Job was given is what it runs, and the log says so.
+    run_images = images_from_job_environment(env)
     console.say("phase 2 (ingestion): definition parsed")
     console.say()
     _describe(console, definition)
+    _describe_images(console, run_images)
     console.say()
 
     # Phase 3. Discovery happens here, in the cluster, with the Job's own credentials:
@@ -217,12 +236,27 @@ def _finish(
         )
 
 
-def show_image(console: Console, *, image_override: str | None = None) -> int:
-    """Show the orchestrator image a run would submit (M1-02)."""
-    image = resolve_image(image_override)
-    console.say(image.reference)
-    console.say(f"  source: {image.source}")
-    console.say(f"  digest: {image.digest or 'not pinned by digest'}")
+def show_image(
+    console: Console, *, image_override: str | None = None, images: Sequence[str] = ()
+) -> int:
+    """Show the images a run would submit and deploy, and where each one came from.
+
+    A diagnostic, so a component without an image is listed as such rather than stopping
+    the listing: ``submit`` is what refuses it.
+    """
+    overrides = parse_image_options(images, orchestrator_image=image_override)
+    width = max(len(name) for name in COMPONENTS) + 2
+    for component in COMPONENTS.values():
+        run_image = resolve_component(component, overrides.get(component.name))
+        if run_image is None:
+            console.say(f"{component.name:<{width}}no default in a development build")
+            console.say(
+                f"  choose one with --image {component.name}=<reference> or {component.env_var}"
+            )
+            continue
+        console.say(f"{component.name:<{width}}{run_image.reference}")
+        console.say(f"  source: {run_image.source}")
+        console.say(f"  digest: {run_image.digest or 'not pinned by digest'}")
     return ExitCode.PASS
 
 
@@ -237,15 +271,6 @@ def _follow(console: Console, cluster: ClusterClient, namespace: str, run_id: st
             f"cluster; resume with: dokimi attach {run_id}"
         )
         return ExitCode.INTERRUPTED
-
-
-def _resolve_image(override: str | None) -> str:
-    try:
-        return resolve_image(override).reference
-    except ImageResolutionError as error:
-        # Not having an image to submit is a problem with the request, not the cluster,
-        # and it is detected before anything is created — a config_error by ADR-05-05.
-        raise ConfigError(str(error)) from error
 
 
 def _render(
@@ -286,7 +311,10 @@ def _render(
     console.warn("")
     console.warn(f"Run id     {submission.run_id}")
     console.warn(f"Namespace  {submission.namespace}")
-    console.warn(f"Image      {submission.image}")
+    console.warn("Images")
+    width = max((len(name) for name in submission.images), default=0) + 2
+    for name, run_image in sorted(submission.images.items()):
+        console.warn(f"  {name:<{width}}{run_image.reference} ({run_image.source})")
     console.warn(f"Deadline   {job_deadline_seconds(definition)}s")
     console.warn("")
 
@@ -335,6 +363,11 @@ def _dump(manifest: dict[str, Any]) -> str:
         default_flow_style=False,
         width=100,
     ).rstrip()
+
+
+def _describe_images(console: Console, run_images: Mapping[str, WorkloadImage]) -> None:
+    for name, run_image in sorted(run_images.items()):
+        console.say(f"  image       {name} {run_image.reference} ({run_image.source})")
 
 
 def _describe(console: Console, definition: TestDefinition) -> None:

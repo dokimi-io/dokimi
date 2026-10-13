@@ -4,6 +4,9 @@ ADR-05-08's requirements are easy to state and easy to lose: a released CLI subm
 digest of the image built from its own commit, an operator can override that reference,
 and whatever was used ends up in the run metadata. These are the tests that keep those
 three properties from quietly decaying into "whatever the default tag resolves to today".
+
+Since ADR-04-08 the orchestrator is resolved like every other component; these tests hold
+it to ADR-05-08 through that shared path, including its earlier names.
 """
 
 from __future__ import annotations
@@ -12,16 +15,24 @@ import pytest
 
 from dokimi import images
 from dokimi.images import (
-    IMAGE_OVERRIDE_ENV_VAR,
     IMAGE_REPOSITORY,
     ImageResolutionError,
     ImageSource,
     OrchestratorImage,
-    resolve_image,
 )
+from dokimi.model import ConfigError
+from dokimi.run_images import COMPONENTS, resolve_component
 
 DIGEST = "sha256:" + "ab" * 32
 OTHER_DIGEST = "sha256:" + "cd" * 32
+IMAGE_OVERRIDE_ENV_VAR = "DOKIMI_ORCHESTRATOR_IMAGE"
+
+
+def resolve_image(override: str | None = None, *, env: dict[str, str]) -> OrchestratorImage:
+    image = resolve_component(COMPONENTS["orchestrator"], override, env=env)
+    if image is None:
+        raise ImageResolutionError("development build: no orchestrator image")
+    return OrchestratorImage(image.reference, image.source)
 
 
 @pytest.fixture
@@ -70,9 +81,25 @@ def test_an_override_can_rescue_a_development_build() -> None:
     assert image.source is ImageSource.RUN_OVERRIDE
 
 
-@pytest.mark.parametrize("blank", ["", "   "])
-def test_blank_overrides_are_the_same_as_unset(blank: str, released: str) -> None:
-    assert resolve_image(blank, env={IMAGE_OVERRIDE_ENV_VAR: blank}).reference == released
+def test_a_blank_installation_override_is_the_same_as_unset(released: str) -> None:
+    assert resolve_image(env={IMAGE_OVERRIDE_ENV_VAR: "  "}).reference == released
+
+
+def test_the_earlier_variable_name_still_works(released: str) -> None:
+    image = resolve_image(env={"DOKIMI_IMAGE": "registry.internal/orchestrator:1.2.3"})
+
+    assert image.reference == "registry.internal/orchestrator:1.2.3"
+    assert image.source is ImageSource.INSTALLATION_OVERRIDE
+
+
+def test_the_two_variable_names_must_agree(released: str) -> None:
+    with pytest.raises(ConfigError, match="DOKIMI_ORCHESTRATOR_IMAGE and DOKIMI_IMAGE"):
+        resolve_image(
+            env={
+                "DOKIMI_ORCHESTRATOR_IMAGE": "registry.internal/orchestrator:1.2.3",
+                "DOKIMI_IMAGE": "registry.internal/orchestrator:1.2.4",
+            }
+        )
 
 
 def test_a_tagged_override_is_honoured_but_recorded_as_unpinned() -> None:

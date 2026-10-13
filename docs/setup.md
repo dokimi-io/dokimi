@@ -98,14 +98,19 @@ changes land in Docker's Linux VM, not in macOS itself. Inside WSL2 they land in
 every distribution shares, and last until `wsl --shutdown` rather than a reboot. The whole list
 is in [what it changes on your machine](../test-env/README.md#what-it-changes-on-your-machine).
 
-The cluster needs the orchestrator image, and a local build is not in any registry it can
-reach — so build it and load it in directly:
+The cluster needs the orchestrator image and the `iperf2` workload image, and a local build
+is in no registry it can reach — so build both and load them in directly:
 
 ```console
 $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
+$ docker build -f images/iperf2/Dockerfile -t iperf2:dev .
 $ test-env/test-env.sh load orchestrator:dev
-$ export DOKIMI_IMAGE=orchestrator:dev
+$ test-env/test-env.sh load iperf2:dev
+$ export DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
 ```
+
+A source checkout has no default for either, so `submit` refuses without them
+([Usage](usage.md#choosing-the-images-a-run-deploys)).
 
 Create the namespaces and grant the run's Job what it needs, once:
 

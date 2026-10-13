@@ -21,6 +21,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [How nodes are resolved](#how-nodes-are-resolved)
 - [What a submission creates](#what-a-submission-creates)
 - [Choosing the orchestrator image](#choosing-the-orchestrator-image)
+- [Choosing the images a run deploys](#choosing-the-images-a-run-deploys)
 - [Cleaning up](#cleaning-up)
 
 ## What a run does today
@@ -196,7 +197,8 @@ own exit code.
 | `--no-follow` | submit and return, rather than streaming |
 | `--run-id` | use a specific run id instead of generating one |
 | `--namespace`, `-n` | override the test type's namespace |
-| `--orchestrator-image` | override the image the Job runs |
+| `--image <component>=<reference>` | choose an image for this run, repeatable: `orchestrator`, the Job's own, or `iperf2` |
+| `--orchestrator-image` | the earlier name of `--image orchestrator=` |
 | `--service-account` | run the Job as a specific service account |
 | `--kubeconfig`, `--context` | pick cluster credentials |
 
@@ -215,7 +217,9 @@ Nodes were not checked against a cluster. A dry run contacts nothing unless give
 
 Run id     20260924-200229-ca532a
 Namespace  dokimi-iperf2
-Image      ghcr.io/dokimi-io/orchestrator@sha256:...
+Images
+  iperf2        ghcr.io/dokimi-io/iperf2@sha256:... (release-default)
+  orchestrator  ghcr.io/dokimi-io/orchestrator@sha256:... (release-default)
 Deadline   930s
 
 dry run: nothing was created.
@@ -302,13 +306,20 @@ run is somewhere else.
 
 ```console
 $ dokimi image
-ghcr.io/dokimi-io/orchestrator@sha256:ab...
+orchestrator  ghcr.io/dokimi-io/orchestrator@sha256:ab...
   source: release-default
   digest: sha256:ab...
+iperf2        ghcr.io/dokimi-io/iperf2@sha256:cd...
+  source: release-default
+  digest: sha256:cd...
 ```
 
-Shows which image a run would submit and where that reference came from. See
-[Choosing the orchestrator image](#choosing-the-orchestrator-image).
+Shows which images a run would submit and deploy, and where each reference came from.
+`--image <component>=<reference>` works here as on `submit`. A component with no image, as
+in a source checkout, is listed as such with how to choose one, and `dokimi image` still
+exits `0`: it is a diagnostic, and `submit` is what refuses. See
+[Choosing the orchestrator image](#choosing-the-orchestrator-image) and
+[Choosing the images a run deploys](#choosing-the-images-a-run-deploys).
 
 ## Exit codes
 
@@ -437,13 +448,18 @@ artifact. `attach` refuses anything else, including a run id in capitals.
 
 ## Choosing the orchestrator image
 
-Precedence, highest first:
+The orchestrator is a component like the images a run deploys (ADR-04-08). Precedence,
+highest first:
 
 | Source | How | Scope |
 | --- | --- | --- |
-| Run override | `--orchestrator-image ghcr.io/example/orchestrator@sha256:…` | one run |
-| Installation override | `DOKIMI_IMAGE` | one installation |
+| Run override | `--image orchestrator=ghcr.io/example/orchestrator@sha256:…` | one run |
+| Installation override | `DOKIMI_ORCHESTRATOR_IMAGE` | one installation |
 | Release default | baked in at release time, by digest | the released build |
+
+`--orchestrator-image` and `DOKIMI_IMAGE` are its earlier names and still work. Given
+together with the new name, both have to name the same image, or `submit` refuses rather
+than pick one.
 
 A released CLI carries the digest of the image built from its own commit, so the two can
 never resolve different dependency versions (ADR-05-08). A source checkout has no default
@@ -453,6 +469,36 @@ An override is used exactly as given, including a plain tag, since an air-gapped
 may be all that offers one. What a run will not do is claim a pin it does not have: the
 run metadata records the reference, the digest if there is one, and where the reference
 came from.
+
+## Choosing the images a run deploys
+
+A run also deploys images of its own: today the `iperf2` test workload. Each one is chosen
+the same way as the orchestrator's, per component (ADR-04-08):
+
+| Source | How | Scope |
+| --- | --- | --- |
+| Run override | `--image iperf2=registry.internal/iperf2@sha256:…`, repeatable | one run |
+| Installation override | `DOKIMI_IPERF2_IMAGE`, on the machine that submits | one installation |
+| Release default | baked in at release time, by digest | the released build |
+
+They are chosen **at submission, never in the test document.** An image depends on where a
+run is submitted, not on what it tests: the same document runs unchanged in every cluster,
+while each site may pull from its own mirror. `submit` resolves every image and writes it,
+with its source, into the Job's environment (`DOKIMI_IPERF2_IMAGE` and
+`DOKIMI_IPERF2_IMAGE_SOURCE`), so `--dry-run` shows exactly what will run. The Job uses what
+it was given and never reads the submitter's environment, which does not reach it anyway.
+
+A source checkout has no default for the images dokimi publishes itself, the orchestrator
+and `iperf2`, since nothing of this code was published. `submit` refuses before creating
+anything:
+
+```console
+$ dokimi submit test.yaml
+dokimi: this is a development build with no published iperf2 image, so there is no
+default to run. Choose one with --image iperf2=<reference> or DOKIMI_IPERF2_IMAGE
+```
+
+`dokimi image` shows every image a run would use and where each one came from.
 
 ## Cleaning up
 

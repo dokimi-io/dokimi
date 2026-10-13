@@ -58,6 +58,7 @@ from dokimi.testtypes.interface import (
     Placement,
     Role,
     TestParameters,
+    WorkloadImage,
     WorkloadSpec,
 )
 from dokimi.testtypes.lifecycle import NotReadyError, WorkloadLostError, pod_is_ready
@@ -183,19 +184,29 @@ class Iperf2:
 
     name = IMAGE_NAME
 
-    def __init__(self, *, image: str | None = None, trigger: Trigger | None = None) -> None:
-        """*image* overrides the release-default image, for air-gapped or mirrored
-        registries ([ADR-05-04]); it is used exactly as given and recorded as such."""
-        self._image_override = image
+    def __init__(
+        self, *, image: WorkloadImage | str | None = None, trigger: Trigger | None = None
+    ) -> None:
+        """*image* is the image to run instead of the release default ([ADR-05-04]).
+
+        A run passes the :class:`WorkloadImage` it resolved at submission ([ADR-04-08]),
+        which keeps where the reference came from. A plain reference is a library caller
+        choosing one itself, and is recorded as a run override. Either way it is used
+        exactly as given.
+        """
+        self._image = image
         self._trigger = trigger if trigger is not None else tcp_trigger
 
     # -- declaration ------------------------------------------------------------------------
 
     def images(self) -> ImagePair:
         # One image for both roles: the same binary is client and server.
-        image = resolve_workload_image(
-            IMAGE_NAME, _image_digest.IPERF2_IMAGE_DIGEST, self._image_override
-        )
+        if isinstance(self._image, WorkloadImage):
+            image = self._image
+        else:
+            image = resolve_workload_image(
+                IMAGE_NAME, _image_digest.IPERF2_IMAGE_DIGEST, self._image
+            )
         return ImagePair(client=image, server=image)
 
     def parameter_schema(self) -> ParameterSchema:

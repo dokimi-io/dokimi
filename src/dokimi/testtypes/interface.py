@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from dokimi.images import ImageSource
 from dokimi.model import ConfigError, Metric
 
 if TYPE_CHECKING:
@@ -105,16 +106,14 @@ class Role(enum.Enum):
     SERVER = "server"
 
 
-class ImageSource(enum.Enum):
-    """Where a workload image reference came from. Recorded in the run metadata."""
-
-    OVERRIDE = "override"
-    RELEASE_DEFAULT = "release-default"
-
-
 @dataclass(frozen=True, slots=True)
 class WorkloadImage:
-    """A resolved workload image reference and where it came from."""
+    """A resolved image reference a run deploys, and where it came from.
+
+    *source* is :class:`dokimi.images.ImageSource`, the vocabulary the orchestrator's
+    own image already records, so every image in the run metadata says the same thing
+    the same way: ``run-override``, ``installation-override`` or ``release-default``.
+    """
 
     reference: str
     source: ImageSource

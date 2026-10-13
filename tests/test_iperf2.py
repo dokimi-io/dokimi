@@ -196,7 +196,7 @@ def test_the_run_metadata_attributes_the_result() -> None:
 
     assert metadata["workload_image"] == IMAGE
     assert metadata["workload_image_digest"] == DIGEST
-    assert metadata["workload_image_source"] == "override"
+    assert metadata["workload_image_source"] == "run-override"
     assert metadata["connectivity_mode"] == "podNetwork"
     assert metadata["address_family"] == "IPv4"
     assert metadata["protocol"] == "udp"

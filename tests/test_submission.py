@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from dokimi.cli.exit_codes import ExitCode
+from dokimi.images import ImageSource
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.identity import RUN_ID_LABEL, run_selector
 from dokimi.k8s.submission import (
@@ -37,10 +38,17 @@ from dokimi.model import (
     TestType,
     Unit,
 )
+from dokimi.testtypes.interface import WorkloadImage
 from tests.fake_cluster import FakeCluster
 
 RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
+#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+RUN_IMAGES = {
+    "iperf2": WorkloadImage(
+        "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
+    )
+}
 
 
 @pytest.fixture
@@ -70,6 +78,7 @@ def _plan(definition: TestDefinition, namespace: str | None = None) -> Submissio
         source="apiVersion: dokimi.io/v1alpha1\n",
         source_path=Path("pair.yaml"),
         image=IMAGE,
+        images=RUN_IMAGES,
         run_id=RUN_ID,
         namespace=namespace,
     )
@@ -90,7 +99,9 @@ def test_planning_needs_no_cluster(definition: TestDefinition) -> None:
 
 
 def test_planning_generates_a_run_id_when_not_given(definition: TestDefinition) -> None:
-    submission = plan_submission(definition, source="", source_path=Path("p.yaml"), image=IMAGE)
+    submission = plan_submission(
+        definition, source="", source_path=Path("p.yaml"), image=IMAGE, images=RUN_IMAGES
+    )
 
     assert submission.run_id
 
@@ -201,7 +212,14 @@ def test_a_given_run_id_is_validated_before_anything_is_rendered(
     # one used to reach the API server as a 422 (exit 5 instead of 3), and `,` or `=`
     # would have changed what the selector matched.
     with pytest.raises(ConfigError, match="malformed run id"):
-        plan_submission(definition, source="", source_path=Path("p.yaml"), image=IMAGE, run_id=bad)
+        plan_submission(
+            definition,
+            source="",
+            source_path=Path("p.yaml"),
+            image=IMAGE,
+            images=RUN_IMAGES,
+            run_id=bad,
+        )
 
 
 def test_submitting_does_not_change_the_submission(definition: TestDefinition) -> None:

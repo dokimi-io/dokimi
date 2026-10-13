@@ -263,12 +263,15 @@ jobs:
           uv run python - <<'PY'
           import os
 
-          from dokimi.images import IMAGE_REPOSITORY, ImageSource, resolve_image
+          from dokimi.images import IMAGE_REPOSITORY, ImageSource
+          from dokimi.run_images import COMPONENTS, resolve_component
           from dokimi.testtypes.interface import ImageSource as WorkloadImageSource
           from dokimi.testtypes.iperf2 import Iperf2
 
+          # Resolved the way submit resolves it, with no override set (ADR-04-08).
           expected = f"{IMAGE_REPOSITORY}@{os.environ['DIGEST']}"
-          image = resolve_image(env={})
+          image = resolve_component(COMPONENTS["orchestrator"], env={})
+          assert image is not None, "the orchestrator has no release default"
           assert image.reference == expected, f"{image.reference} != {expected}"
           assert image.source is ImageSource.RELEASE_DEFAULT
           assert image.digest == os.environ["DIGEST"]
