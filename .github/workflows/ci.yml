@@ -203,3 +203,41 @@ jobs:
             || { echo "no server report for the measurement's source port 5102"; exit 1; }
           printf '%s\n' "$reports" | grep -Eq '^[0-9]{14}(\.[0-9]+)?,[0-9.]+,5103,' \
             || { echo "no server report for the warm-up's source port 5103"; exit 1; }
+
+  prometheus-config:
+    name: The managed Prometheus configuration is valid for its pinned image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+
+      # The configuration is generated, so a typo in it is invisible until a real run's
+      # Prometheus refuses to start. promtool from the very image a run deploys is the
+      # parser that matters, for both shapes the configuration takes: with the cluster's
+      # own supporting exporters, and with the node-exporter a run deploys itself.
+      - name: promtool accepts the rendered configurations
+        run: |
+          mkdir -p "$RUNNER_TEMP/prometheus"
+          uv run python - "$RUNNER_TEMP/prometheus" <<'PY'
+          import sys
+          from pathlib import Path
+
+          from dokimi.metrics.managed import NodeExporter, SupportingExporter, render_config
+
+          run_id, namespace = "20260101-100000-4f2a9c", "dokimi-iperf2"
+          reused = [
+              SupportingExporter("node-exporter", "monitoring", "node-exporter"),
+              SupportingExporter("kube-state-metrics", "kube-system", "kube-state-metrics"),
+          ]
+          deployed = NodeExporter(namespace, f"run-{run_id}-node-exporter", run_id, True)
+          directory = Path(sys.argv[1])
+          (directory / "reused.yml").write_text(render_config(run_id, namespace, reused))
+          (directory / "deployed.yml").write_text(render_config(run_id, namespace, (), deployed))
+          PY
+          image="$(uv run python -c 'from dokimi.metrics.managed import PROMETHEUS_IMAGE; print(PROMETHEUS_IMAGE)')"
+          docker run --rm -v "$RUNNER_TEMP/prometheus:/config:ro" --entrypoint promtool \
+            "$image" check config /config/reused.yml /config/deployed.yml

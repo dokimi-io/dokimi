@@ -25,7 +25,8 @@ from dokimi.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
-from dokimi.k8s.resources import CONFIG_MAP, JOB
+from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD
+from dokimi.metrics.prometheus import PrometheusClient, Response
 from dokimi.run_identity import RunId
 from dokimi.run_images import COMPONENTS
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
@@ -66,6 +67,33 @@ def given_images(monkeypatch: pytest.MonkeyPatch) -> None:
     for component in COMPONENTS.values():
         monkeypatch.setenv(component.env_var, f"ghcr.io/dokimi-io/{component.name}@{DIGEST}")
         monkeypatch.setenv(component.source_env_var, "release-default")
+
+
+class FakePrometheus:
+    """The run's Prometheus over the real client, answering from a script, offline."""
+
+    def __init__(self, *, answers: bool = True) -> None:
+        self.answers = answers
+        self.urls: list[str] = []
+
+    def transport(self, url: str) -> Response:
+        self.urls.append(url)
+        if not self.answers:
+            raise ConnectionRefusedError("connection refused")
+        if url.endswith("/-/ready"):
+            return Response(200, b"Prometheus Server is Ready.")
+        return Response(200, b'{"status":"success","data":{"resultType":"vector","result":[]}}')
+
+    def client(self, endpoint: str) -> PrometheusClient:
+        return PrometheusClient(endpoint, transport=self.transport)
+
+
+@pytest.fixture(autouse=True)
+def prometheus(monkeypatch: pytest.MonkeyPatch) -> FakePrometheus:
+    """Every execute talks to its managed Prometheus; none of them reaches a network."""
+    fake = FakePrometheus()
+    monkeypatch.setattr(commands, "PrometheusClient", fake.client)
+    return fake
 
 
 def submitted(fake: FakeCluster, run_id: str, namespace: str = "dokimi-iperf2") -> None:
@@ -359,6 +387,110 @@ def test_execute_is_refused_with_4_while_another_run_is_active(
     assert "run_already_active" in err
     assert "20260101-090000-bbbbbb already active" in err
     assert "Traceback" not in err
+
+
+def test_execute_provisions_and_names_its_prometheus_before_any_workload(
+    job_cluster: FakeCluster, prometheus: FakePrometheus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ADR-03-02: the selected mode and the resolved endpoint are logged prominently, and
+    # query access is verified in phase 4.
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    endpoint = f"http://run-{RUN_ID}-prometheus.dokimi-iperf2.svc:9090"
+    assert "monitoring mode managed (requested)" in out
+    assert f"Prometheus  {endpoint}" in out
+    assert "phase 4 (preflight): Prometheus answers queries" in out
+    assert "kept after the run" in out
+    assert any(url.startswith(f"{endpoint}/api/v1/query") for url in prometheus.urls)
+    assert job_cluster.store.exists(DEPLOYMENT, "dokimi-iperf2", f"run-{RUN_ID}-prometheus")
+
+
+def test_an_unqueryable_prometheus_fails_phase_4_before_any_workload(
+    job_cluster: FakeCluster,
+    prometheus: FakePrometheus,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The acceptance criterion: a cluster where Prometheus cannot be queried fails in
+    # phase 4 (exit 4, "cluster not ready"), and no test workload is ever deployed.
+    prometheus.answers = False
+    monkeypatch.setattr(commands, "QUERY_ACCESS_TIMEOUT_SECONDS", 0)
+
+    code = main(EXECUTE)
+
+    assert code == ExitCode.PREFLIGHT_FAILURE
+    err = capsys.readouterr().err
+    assert "cluster not ready (prometheus_unreachable)" in err
+    assert "connection refused" in err
+    assert not [kind for kind, _ in job_cluster.store.created if kind is POD]
+    # However phase 4 ends, the run stops holding the cluster (ADR-05-13).
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_existing_monitoring_is_refused_before_the_cluster_is_touched(
+    no_cluster: None, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    definition = tmp_path / "existing.yaml"
+    definition.write_text(
+        EXAMPLE.read_text().replace("mode: managed", "mode: existing"), encoding="utf-8"
+    )
+    arguments = [*EXECUTE]
+    arguments[2] = str(definition)
+
+    assert main(arguments) == ExitCode.CONFIG_ERROR
+    assert "'existing' is not available" in capsys.readouterr().err
+
+
+def existing_definition(tmp_path: Path) -> Path:
+    definition = tmp_path / "existing.yaml"
+    definition.write_text(
+        EXAMPLE.read_text().replace("mode: managed", "mode: existing"), encoding="utf-8"
+    )
+    return definition
+
+
+def test_validate_refuses_existing_monitoring(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["validate", str(existing_definition(tmp_path))]) == ExitCode.CONFIG_ERROR
+    assert "'existing' is not available" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("extra", [["--dry-run"], []])
+def test_submit_refuses_existing_monitoring_before_anything_is_created(
+    no_cluster: None, tmp_path: Path, extra: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The fixture's client raises on contact: the refusal comes before any cluster call,
+    # so no run is created that could only fail in phase 2.
+    arguments = ["submit", str(existing_definition(tmp_path)), *extra]
+
+    assert main(arguments) == ExitCode.CONFIG_ERROR
+    assert "'existing' is not available" in capsys.readouterr().err
+
+
+def test_execute_deploys_a_node_exporter_when_the_cluster_has_none(
+    job_cluster: FakeCluster, prometheus: FakePrometheus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    name = f"run-{RUN_ID}-node-exporter"
+    assert job_cluster.store.exists(DAEMON_SET, "dokimi-iperf2", name)
+    assert f"node_exporter       deployed by this run (dokimi-iperf2/{name})" in out
+    assert "node-exporter pods  pods not reported yet" in out
+
+
+def test_execute_keeps_its_prometheus_off_the_tested_nodes_where_it_can(
+    job_cluster: FakeCluster, prometheus: FakePrometheus
+) -> None:
+    main(EXECUTE)
+
+    deployment = job_cluster.store.get(DEPLOYMENT, "dokimi-iperf2", f"run-{RUN_ID}-prometheus")
+    affinity = deployment["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
+    (term,) = affinity["preferredDuringSchedulingIgnoredDuringExecution"]
+    assert term["preference"]["matchFields"][0]["values"] == ["worker-01", "worker-02"]
 
 
 def test_execute_rejects_a_missing_node_as_a_config_error(

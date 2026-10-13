@@ -48,6 +48,7 @@ from dokimi.model import Bandwidth, ConfigError, Duration, Protocol
 from dokimi.testtypes.images import resolve_workload_image
 from dokimi.testtypes.interface import (
     ADDRESS_FAMILY,
+    EXPORTER_PORT_NAME,
     Capability,
     ClusterFacts,
     DeployedWorkload,
@@ -224,6 +225,7 @@ class Iperf2:
             port=9101,
             path="/metrics",
             results_directory=RESULTS_DIRECTORY,
+            port_name=EXPORTER_PORT_NAME,
         )
 
     # -- workload ---------------------------------------------------------------------------

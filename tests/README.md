@@ -30,6 +30,8 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
 | [`test_iperf2.py`](test_iperf2.py) | 42 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
 | [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
+| [`test_prometheus.py`](test_prometheus.py) | 7 | The Prometheus client, and phase 4's query-access check |
+| [`test_managed_prometheus.py`](test_managed_prometheus.py) | 44 | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
 | [`test_execution.py`](test_execution.py) | 27 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
 | [`test_robot_execution.py`](test_robot_execution.py) | 4 | What Robot Framework does with the rendered suite: YAML and Robot run identically, every criterion says it was not evaluated, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
 | [`test_artifact_stream.py`](test_artifact_stream.py) | 13 | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
@@ -43,8 +45,8 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_image_build.py`](test_image_build.py) | 21 | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
-| [`test_rbac.py`](test_rbac.py) | 10 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
-| [`test_package_layout.py`](test_package_layout.py) | 24 | The prescribed package layout exists and imports |
+| [`test_rbac.py`](test_rbac.py) | 12 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
+| [`test_package_layout.py`](test_package_layout.py) | 26 | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | 1 | The core library does not pull in Robot Framework |
 
 ## How the cluster-facing tests work without a cluster

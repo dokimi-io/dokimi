@@ -37,6 +37,7 @@ from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
 from dokimi.k8s.ownership import OwnershipError
 from dokimi.k8s.submission import RunNotFound
+from dokimi.metrics.prometheus import PrometheusUnreachableError
 from dokimi.model import ConfigError
 from dokimi.run_images import COMPONENTS
 
@@ -205,10 +206,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunNotFound as error:
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
-    except (RunExclusivityError, OwnershipError) as error:
+    except (RunExclusivityError, OwnershipError, PrometheusUnreachableError) as error:
         # ADR-01-11: another run holds the cluster, or an owner belongs to another run.
-        # A run-level precondition checked before any workload exists, so a preflight
-        # failure (4). A refusal's message names its `run_already_active` reason.
+        # ADR-03-02: the run's Prometheus cannot be queried. Each a run-level
+        # precondition checked before any workload exists, so a preflight failure (4).
+        # A refusal's message names its `run_already_active` reason.
         console.fail(_with_notes(error))
         return ExitCode.PREFLIGHT_FAILURE
     except (ClusterError, RobotRunError) as error:

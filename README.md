@@ -586,6 +586,41 @@ Prometheus produced their results.
 - In `managed` mode, an already-present `node_exporter`/`kube-state-metrics` is reused rather than
   a second copy deployed.
 
+**What Milestone-01 builds** is `managed` mode, in `src/dokimi/metrics/`:
+
+- **`auto` falls back to `managed`,** and the log says so. `existing` is refused as a
+  `config_error` until detection exists.
+- **`existing` is refused by `validate` and `submit` as well,** so a run that could only fail is
+  never created.
+- **One Prometheus per run** in the run's namespace: a ConfigMap, a Deployment and a Service. It
+  scrapes this run's exporter pods only, which are pods labelled with the run's `run_id` that have
+  a container port named `metrics`. It scrapes every 5 s, and that interval is recorded in the run
+  metadata, together with the mode that was requested and why it changed, if it did.
+- **Off the test's nodes where it can be.** The Prometheus prefers any node other than the run's
+  source and target, so it does not compete with the measurement. Preferred, not required: on a
+  two-node cluster it still runs.
+- **A node-exporter or kube-state-metrics that is already running** is found by its Service's
+  `app.kubernetes.io/name` and scraped where it runs. An absent kube-state-metrics is recorded as
+  absent.
+- **An absent node-exporter is deployed** as a DaemonSet owned by the run, so cleanup removes it
+  with the run. One that an earlier run deployed and that is still there is reused instead, since a
+  second one could not bind its port. It collects CPU, memory and network interfaces only
+  (`--collector.disable-defaults --collector.cpu --collector.meminfo --collector.netdev`) on
+  port 9137, not 9100, so it never collides with an undetected node-exporter. It needs the host's
+  network to count the node's interfaces, and nothing else: no host path, no host PID namespace,
+  no privilege, no service account token. A namespace that enforces the `baseline` Pod Security
+  level refuses that; the run then says so and continues without node metrics, which explain a
+  result but never decide one.
+- **Kept after the run.** The objects carry the run's labels, so they stay attributable and
+  removable by `run_id`, but they have no ownerReference, so deleting the run's owner does not
+  cascade to them. Cleanup keeps them unless removal is requested. A kept Prometheus never blocks
+  the next run: exclusivity reads run owners only. Phase 4 prints the `kubectl` command that
+  removes it. What each one keeps is bounded to 512 MB of data in a 1 GiB volume.
+- **It runs as `dokimi-prometheus`**, a service account that `deploy/rbac.yaml` creates with
+  read-only discovery rights. The images are upstream `quay.io/prometheus/prometheus:v3.15.0`
+  and `quay.io/prometheus/node-exporter:v1.12.1`, both pinned by digest. Upstream does not sign
+  them, so the digest is what pins them to the images we reviewed.
+
 ### Execution strategy
 
 The default is **bounded concurrency with node exclusivity**: run as many tests concurrently as

@@ -21,6 +21,7 @@ from dokimi.k8s.identity import (
     RUN_ID_LABEL,
     default_namespace,
 )
+from dokimi.metrics.managed import PROMETHEUS_SERVICE_ACCOUNT, managed_manifests
 from dokimi.model import TestType
 
 RBAC = pathlib.Path(__file__).resolve().parent.parent / "deploy" / "rbac.yaml"
@@ -38,8 +39,17 @@ def objects() -> dict[Key, dict[str, Any]]:
     }
 
 
-def _only(objects: dict[Key, dict[str, Any]], kind: str) -> dict[str, Any]:
-    (found,) = (doc for (doc_kind, _, _), doc in objects.items() if doc_kind == kind)
+#: The Job's identity. The file also creates the managed Prometheus's (ADR-03-02).
+JOB_ACCOUNT = "dokimi"
+PROMETHEUS_ACCOUNT = PROMETHEUS_SERVICE_ACCOUNT
+
+
+def _only(objects: dict[Key, dict[str, Any]], kind: str, name: str = JOB_ACCOUNT) -> dict[str, Any]:
+    (found,) = (
+        doc
+        for (doc_kind, doc_name, _), doc in objects.items()
+        if (doc_kind, doc_name) == (kind, name)
+    )
     return found
 
 
@@ -64,14 +74,17 @@ def test_the_namespaces_are_not_run_owned(objects: dict[Key, dict[str, Any]], na
     assert RUN_ID_LABEL not in labels
 
 
-def test_every_binding_points_at_the_service_account_it_defines(
+def test_every_binding_points_at_a_service_account_it_defines(
     objects: dict[Key, dict[str, Any]],
 ) -> None:
-    account = _only(objects, "ServiceAccount")["metadata"]
-    for (kind, _, namespace), doc in objects.items():
+    # Each binding grants exactly one of the two identities: the Prometheus's binding is
+    # the only one that names the Prometheus's account.
+    for (kind, name, namespace), doc in objects.items():
         if kind not in ("ClusterRoleBinding", "RoleBinding"):
             continue
         role_kind = "ClusterRole" if kind == "ClusterRoleBinding" else "Role"
+        account_name = PROMETHEUS_ACCOUNT if name == PROMETHEUS_ACCOUNT else JOB_ACCOUNT
+        account = _only(objects, "ServiceAccount", account_name)["metadata"]
 
         assert doc["subjects"] == [
             {"kind": "ServiceAccount", "name": account["name"], "namespace": account["namespace"]}
@@ -88,6 +101,33 @@ def test_the_cluster_wide_grant_is_read_only(objects: dict[Key, dict[str, Any]])
         {"apiGroups": [""], "resources": ["nodes"], "verbs": ["get", "list"]},
         # Phase 4: the exclusivity scan reads run owners in every namespace (ADR-05-10).
         {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["list"]},
+        # Phase 4: a supporting exporter already present is reused (ADR-03-02).
+        {"apiGroups": [""], "resources": ["services"], "verbs": ["list"]},
+    ]
+
+
+def test_the_prometheus_account_is_the_one_its_deployment_runs_as(
+    objects: dict[Key, dict[str, Any]],
+) -> None:
+    account = _only(objects, "ServiceAccount", PROMETHEUS_ACCOUNT)["metadata"]
+    (_, deployment) = managed_manifests("20260101-100000-4f2a9c", RUN_NAMESPACE)[1]
+
+    assert account["namespace"] == RUN_NAMESPACE
+    assert deployment["spec"]["template"]["spec"]["serviceAccountName"] == account["name"]
+
+
+def test_the_prometheus_can_only_read_what_discovery_needs(
+    objects: dict[Key, dict[str, Any]],
+) -> None:
+    rules = _only(objects, "ClusterRole", PROMETHEUS_ACCOUNT)["rules"]
+
+    assert rules == [
+        {"apiGroups": [""], "resources": ["pods", "services"], "verbs": ["get", "list", "watch"]},
+        {
+            "apiGroups": ["discovery.k8s.io"],
+            "resources": ["endpointslices"],
+            "verbs": ["get", "list", "watch"],
+        },
     ]
 
 
@@ -107,18 +147,23 @@ def test_the_lock_grant_is_confined_to_leases_in_the_lock_namespace(
     ]
 
 
-def test_the_run_namespace_grant_is_the_claim_and_the_pair_pods(
+def test_the_run_namespace_grant_is_the_claim_the_managed_prometheus_and_the_pair_pods(
     objects: dict[Key, dict[str, Any]],
 ) -> None:
     # Claiming and marking finished write annotations onto the run's own owner, and the
-    # claim's expiry is read from the Job's start time (ADR-05-13). Phase 6 creates the
-    # pair's pods and reads them for the readiness gate and completion (ADR-05-07).
-    # Nothing is deleted yet: that is cleanup, M1-16.
+    # claim's expiry is read from the Job's start time (ADR-05-13). Phase 4 creates the
+    # managed Prometheus and, when the cluster has none, a node-exporter (ADR-03-02).
+    # Phase 6 creates the pair's pods and reads them for the readiness gate and
+    # completion (ADR-05-07). Nothing is deleted: the Prometheus is kept by default, and
+    # cleanup is M1-16.
     role = objects[("Role", "dokimi", RUN_NAMESPACE)]
 
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "update"]},
         {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
+        {"apiGroups": [""], "resources": ["configmaps", "services"], "verbs": ["create"]},
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create"]},
+        {"apiGroups": ["apps"], "resources": ["daemonsets"], "verbs": ["create", "get", "list"]},
         {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "delete"]},
     ]
 

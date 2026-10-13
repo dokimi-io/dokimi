@@ -16,8 +16,16 @@
 #     every namespace, takes a Lease in the lock namespace, reads its own Job's start
 #     time to date the claim's expiry, and writes its claim onto its own owner; phase 11
 #     marks that owner finished;
+#   - phase 4 then deploys the run's managed Prometheus (ADR-03-02): it looks for an
+#     already-present node-exporter or kube-state-metrics by listing Services, deploys
+#     a node-exporter DaemonSet when there is none, and creates the Prometheus's
+#     ConfigMap, Deployment and Service in the run namespace;
 #   - phase 6 creates each pair's client and server pods and reads their status, and
 #     phase 11 deletes them before the run releases the cluster.
+#
+# The managed Prometheus runs as its own service account, dokimi-prometheus, created
+# here rather than by a run: its discovery rights would otherwise have to be granted by
+# a Job that does not hold them.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -60,6 +68,11 @@ rules:
   # including its data. It is the price of cluster-wide exclusivity (ADR-05-02).
   - apiGroups: [""]
     resources: ["configmaps"]
+    verbs: ["list"]
+  # Phase 4: an already-present node-exporter or kube-state-metrics is reused rather
+  # than duplicated (ADR-03-02), found by its Service's labels in any namespace.
+  - apiGroups: [""]
+    resources: ["services"]
     verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -128,6 +141,21 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get"]
+  # Phase 4 deploys the run's managed Prometheus: its configuration, its Deployment and
+  # its Service (ADR-03-02). Kept after the run by default, so nothing here deletes.
+  - apiGroups: [""]
+    resources: ["configmaps", "services"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create"]
+  # Phase 4 deploys a node-exporter DaemonSet when the cluster has none (ADR-03-02). It
+  # lists the run namespace's DaemonSets first, to reuse one an earlier run deployed, and
+  # reads the new one's status to tell whether Pod Security refused its pods. Owned by
+  # the run, so the owner's deletion removes it.
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["create", "get", "list"]
   # Phase 6 creates each pair's client and server pods, and reads them for the readiness
   # gate and for completion (ADR-05-07, ADR-02-01). Phase 11 lists and deletes them before
   # the run releases the cluster, so that no test can still be sending (ADR-05-13). No
@@ -151,4 +179,43 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: dokimi
+    namespace: dokimi-iperf2
+---
+# The managed Prometheus's own identity. It discovers the run's exporter pods in the run
+# namespace, and a supporting exporter's endpoints wherever that runs. Read-only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dokimi-prometheus
+  namespace: dokimi-iperf2
+  labels:
+    app.kubernetes.io/managed-by: dokimi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dokimi-prometheus
+  labels:
+    app.kubernetes.io/managed-by: dokimi
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dokimi-prometheus
+  labels:
+    app.kubernetes.io/managed-by: dokimi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dokimi-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: dokimi-prometheus
     namespace: dokimi-iperf2

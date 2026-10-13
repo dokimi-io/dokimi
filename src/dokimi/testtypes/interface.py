@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADDRESS_FAMILY",
+    "EXPORTER_PORT_NAME",
     "Capability",
     "ClusterFacts",
     "DeployedWorkload",
@@ -58,6 +59,11 @@ T = TypeVar("T")
 #: The address family test traffic uses. [ADR-05-03]: IPv4 in Milestone-01 when both
 #: families are available, and the family used is recorded with the result.
 ADDRESS_FAMILY = "IPv4"
+
+#: The container port name that marks an exporter. The managed Prometheus scrapes exactly
+#: the ports of a run's pods that carry this name ([ADR-03-02]), so every exporter names
+#: its port this way, whatever number it serves on.
+EXPORTER_PORT_NAME = "metrics"
 
 
 class NoIPv4AddressError(RuntimeError):
@@ -246,6 +252,8 @@ class ExporterSpec:
     port: int
     path: str
     results_directory: str
+    #: The container port's name. Prometheus finds an exporter by it, not by its number.
+    port_name: str = EXPORTER_PORT_NAME
 
 
 @dataclass(frozen=True, slots=True)

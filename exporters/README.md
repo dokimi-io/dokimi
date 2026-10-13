@@ -24,3 +24,9 @@ it plugs in, in `Iperf2.exporter()`: a sidecar container named `exporter`, servi
   measured connection is the line whose source port (the third field) is
   `measurement_source_port`. The warm-up's line and the sum line are not results.
 - **`iperf2.stderr`**: the client's diagnostics, next to its CSV.
+
+**How the managed Prometheus finds an exporter** (M1-08): it discovers pods in the run's
+namespace that carry the run's `dokimi.io/run-id` label, and keeps only container ports named
+**`metrics`**. An exporter sidecar must therefore name its port `metrics`, which is what
+`ExporterSpec.port_name` says and defaults to. The scrape uses `honor_labels: true`, so the
+labels the exporter emits are never overwritten by target labels.

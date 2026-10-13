@@ -92,9 +92,13 @@ $ kubectl apply -f deploy/rbac.yaml
 That creates the `dokimi-iperf2` namespace for runs, the `dokimi` namespace for the
 run-start lock, a `dokimi` service account, and its grants: `get` and `list` on nodes,
 `list` on ConfigMaps cluster-wide, the run-start lease in `dokimi`, and in
-`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, and `create`, `get`,
-`list` and `delete` on Pods: each pair's client and server, removed again when the run
-ends. Then submit with that service account:
+`dokimi-iperf2` `get` and `update` on ConfigMaps, `get` on Jobs, `create` on ConfigMaps,
+Services and Deployments for the run's managed Prometheus, `create`, `get`, `list` and `delete`
+on DaemonSets for the node-exporter a run deploys when the cluster has none and removes when it
+ends, and `create`, `get`, `list` and `delete` on Pods: each pair's client and server, removed
+again when the run ends. It also creates the `dokimi-prometheus` service account that Prometheus
+runs as, which can read pods, services and endpoint slices for discovery. Then submit with that
+service account:
 
 ```console
 $ dokimi submit test.yaml --service-account dokimi
@@ -592,18 +596,29 @@ default to run. Choose one with --image iperf2=<reference> or DOKIMI_IPERF2_IMAG
 
 Automatic cleanup arrives with M1-16 (#51). Until then, deleting a run's owner object
 takes the rest with it — the cluster's own garbage collector cascades through the
-`ownerReferences`:
+`ownerReferences`, and that includes a node-exporter the run deployed:
 
 ```console
 $ kubectl delete configmap run-20260924-200229-ca532a-owner -n dokimi-iperf2
 ```
 
-Or by label, across everything a run created:
+Or by label, across everything a run created except its Prometheus:
 
 ```console
-$ kubectl delete job,configmap -n dokimi-iperf2 \
-    -l dokimi.io/run-id=20260924-200229-ca532a
+$ kubectl delete job,configmap,daemonset -n dokimi-iperf2 \
+    -l 'dokimi.io/run-id=20260924-200229-ca532a,app.kubernetes.io/component!=prometheus'
 ```
 
 The run id reads the same in the object name and the label, so either command can be
 built from the id `submit` printed.
+
+**Every run leaves its Prometheus behind**, on purpose: the run's history outlives the
+run (ADR-03-02). It has no owner reference, so neither command above removes it, and
+the label command must exclude it as shown, or it deletes the Prometheus's ConfigMap
+and leaves a Prometheus that cannot restart. Phase 4 prints the command that removes
+one run's Prometheus. To remove every kept Prometheus at once:
+
+```console
+$ kubectl delete deployment,service,configmap -n dokimi-iperf2 \
+    -l app.kubernetes.io/managed-by=dokimi,app.kubernetes.io/component=prometheus
+```
