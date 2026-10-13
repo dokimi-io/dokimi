@@ -163,7 +163,11 @@ def test_the_run_namespace_grant_is_the_claim_the_managed_prometheus_and_the_pai
         {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
         {"apiGroups": [""], "resources": ["configmaps", "services"], "verbs": ["create"]},
         {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create"]},
-        {"apiGroups": ["apps"], "resources": ["daemonsets"], "verbs": ["create", "get", "list"]},
+        {
+            "apiGroups": ["apps"],
+            "resources": ["daemonsets"],
+            "verbs": ["create", "get", "list", "delete"],
+        },
         {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "delete"]},
     ]
 

@@ -48,6 +48,7 @@ from dokimi.k8s.resources import (
     SERVICE,
     Kind,
     Manifest,
+    NotFoundError,
     ResourceClient,
 )
 from dokimi.model import ConfigError, MonitoringMode
@@ -76,9 +77,11 @@ __all__ = [
     "managed_manifests",
     "node_exporter_manifest",
     "node_exporter_status",
+    "port_forward_command",
     "provide_node_exporter",
     "provision_managed_prometheus",
     "removal_command",
+    "remove_node_exporter",
     "render_config",
     "select_monitoring",
 ]
@@ -141,6 +144,11 @@ class MonitoringSelection:
     requested: MonitoringMode
     selected: MonitoringMode
     reason: str
+
+    @property
+    def deploys(self) -> bool:
+        """Whether the run deploys its own Prometheus, and a node-exporter if none is found."""
+        return self.selected is MonitoringMode.MANAGED
 
     def describe(self) -> str:
         if self.requested is self.selected:
@@ -277,7 +285,8 @@ def render_config(
         )
     if node_exporter is not None:
         # The same job name as a reused one, so a query reads the same either way. It has
-        # no Service, so its pods are discovered directly, by our labels and its port.
+        # no Service, so its pods are discovered directly, by our labels and its port, and
+        # by the run that deployed it: a kept Prometheus never scrapes a later run's.
         jobs.append(
             {
                 "job_name": NODE_EXPORTER_COMPONENT,
@@ -289,7 +298,8 @@ def render_config(
                             {
                                 "role": "pod",
                                 "label": f"{MANAGED_BY_LABEL}={MANAGED_BY},"
-                                f"{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT}",
+                                f"{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT},"
+                                f"{RUN_ID_LABEL}={node_exporter.run_id}",
                             }
                         ],
                     }
@@ -325,7 +335,11 @@ def _name(run_id: str) -> str:
 
 
 def _away_from(nodes: Sequence[str]) -> dict[str, Any]:
-    """A preferred node anti-affinity: anywhere but *nodes*, if the cluster has room."""
+    """A preferred node anti-affinity: anywhere but *nodes*, if the cluster has room.
+
+    One term per node: a node *field* selector takes exactly one value with ``NotIn``, and
+    the API server refuses a term that lists two.
+    """
     if not nodes:
         return {}
     return {
@@ -336,14 +350,11 @@ def _away_from(nodes: Sequence[str]) -> dict[str, Any]:
                         "weight": 100,
                         "preference": {
                             "matchFields": [
-                                {
-                                    "key": "metadata.name",
-                                    "operator": "NotIn",
-                                    "values": sorted(set(nodes)),
-                                }
+                                {"key": "metadata.name", "operator": "NotIn", "values": [node]}
                             ]
                         },
                     }
+                    for node in sorted(set(nodes))
                 ]
             }
         }
@@ -521,10 +532,10 @@ def node_exporter_manifest(
 
 
 def find_deployed_node_exporter(cluster: ResourceClient, namespace: str) -> NodeExporter | None:
-    """A node-exporter an earlier run deployed and its cleanup has not removed yet.
+    """A node-exporter an earlier run deployed and did not remove, because it crashed.
 
     Reused rather than deployed again: on the host's network a second one could never
-    bind its port. Its labels say which run deployed it.
+    bind its port. Its labels say which run deployed it, and it is left as found.
     """
     found = cluster.list(
         DAEMON_SET,
@@ -548,8 +559,9 @@ def provide_node_exporter(
     """Make sure a node-exporter runs: the cluster's own, an earlier run's, or a new one.
 
     ``None`` when the cluster already has one of its own (it is then in *supporting*).
-    Otherwise one dokimi deployed earlier is reused, and only if there is none does this
-    run deploy one, owned by the run like its pods.
+    Otherwise one dokimi deployed earlier and left behind is reused, and only if there is
+    none does this run deploy one, owned by the run like its pods. A run removes the one
+    it deployed when it ends (:func:`remove_node_exporter`), and leaves one it found.
 
     The DaemonSet asks for the host's network and nothing else. A namespace that enforces
     the ``baseline`` or ``restricted`` Pod Security level refuses that — not the
@@ -566,6 +578,28 @@ def provide_node_exporter(
     manifest = node_exporter_manifest(run_id, namespace, image=image)
     ownership.create(DAEMON_SET, manifest, component=NODE_EXPORTER_COMPONENT)
     return NodeExporter(namespace, _node_exporter_name(run_id), run_id, True)
+
+
+def remove_node_exporter(cluster: ResourceClient, exporter: NodeExporter) -> bool:
+    """Delete the node-exporter this run deployed. False if it was not this run's.
+
+    A run cleans up what it created and nothing else: the cluster's own node-exporter, or
+    one a crashed run left, stays. Deleted by its uid, so a same-named DaemonSet created
+    since is never hit. Its pods go with it, through the garbage collector.
+
+    Raises:
+        ClusterError: if the API server refused the deletion.
+    """
+    if not exporter.by_this_run:
+        return False
+    try:
+        current = cluster.get(DAEMON_SET, exporter.namespace, exporter.name)
+        cluster.delete(
+            DAEMON_SET, exporter.namespace, exporter.name, uid=current["metadata"]["uid"]
+        )
+    except NotFoundError:
+        return False
+    return True
 
 
 def node_exporter_status(cluster: ResourceClient, exporter: NodeExporter) -> tuple[bool, str]:
@@ -657,6 +691,14 @@ def provision_managed_prometheus(
         tuple(supporting),
         selection or select_monitoring(MonitoringMode.MANAGED),
         node_exporter,
+    )
+
+
+def port_forward_command(prometheus: ManagedPrometheus) -> str:
+    """How to reach a kept Prometheus from the submitter's machine: it is in-cluster only."""
+    return (
+        f"kubectl port-forward -n {prometheus.namespace} service/{prometheus.name} "
+        f"{PROMETHEUS_PORT}:{PROMETHEUS_PORT}"
     )
 
 

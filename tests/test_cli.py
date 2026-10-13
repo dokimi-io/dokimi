@@ -477,9 +477,42 @@ def test_execute_deploys_a_node_exporter_when_the_cluster_has_none(
 
     out = capsys.readouterr().out
     name = f"run-{RUN_ID}-node-exporter"
-    assert job_cluster.store.exists(DAEMON_SET, "dokimi-iperf2", name)
+    assert (DAEMON_SET, name) in [
+        (kind, manifest["metadata"]["name"]) for kind, manifest in job_cluster.store.created
+    ]
     assert f"node_exporter       deployed by this run (dokimi-iperf2/{name})" in out
     assert "node-exporter pods  pods not reported yet" in out
+    # The 2026-10-07 decision: removed at the end of the run that deployed it.
+    assert not job_cluster.store.exists(DAEMON_SET, "dokimi-iperf2", name)
+    assert f"phase 11 (cleanup): removed node-exporter {name}" in out
+
+
+def test_execute_deploys_the_monitoring_images_submit_chose(
+    job_cluster: FakeCluster, prometheus: FakePrometheus
+) -> None:
+    main(EXECUTE)
+
+    images = {
+        manifest["metadata"]["name"]: container["image"]
+        for kind, manifest in job_cluster.store.created
+        if kind in (DAEMON_SET, DEPLOYMENT)
+        for container in manifest["spec"]["template"]["spec"]["containers"]
+    }
+    assert images == {
+        f"run-{RUN_ID}-node-exporter": f"ghcr.io/dokimi-io/node-exporter@{DIGEST}",
+        f"run-{RUN_ID}-prometheus": f"ghcr.io/dokimi-io/prometheus@{DIGEST}",
+    }
+
+
+def test_execute_says_how_to_reach_its_kept_prometheus(
+    job_cluster: FakeCluster, prometheus: FakePrometheus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+
+    assert (
+        "query it from your machine with: kubectl port-forward -n dokimi-iperf2 "
+        f"service/run-{RUN_ID}-prometheus 9090:9090"
+    ) in capsys.readouterr().out
 
 
 def test_execute_keeps_its_prometheus_off_the_tested_nodes_where_it_can(
@@ -489,8 +522,11 @@ def test_execute_keeps_its_prometheus_off_the_tested_nodes_where_it_can(
 
     deployment = job_cluster.store.get(DEPLOYMENT, "dokimi-iperf2", f"run-{RUN_ID}-prometheus")
     affinity = deployment["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
-    (term,) = affinity["preferredDuringSchedulingIgnoredDuringExecution"]
-    assert term["preference"]["matchFields"][0]["values"] == ["worker-01", "worker-02"]
+    terms = affinity["preferredDuringSchedulingIgnoredDuringExecution"]
+    assert [term["preference"]["matchFields"][0]["values"] for term in terms] == [
+        ["worker-01"],
+        ["worker-02"],
+    ]
 
 
 def test_execute_rejects_a_missing_node_as_a_config_error(
@@ -621,7 +657,9 @@ def test_image_on_a_development_build_lists_every_component_anyway(
 
     assert main(["image"]) == ExitCode.PASS
     out = capsys.readouterr().out
-    assert out.count("no default in a development build") == len(COMPONENTS)
+    # The monitoring images are pinned upstream digests, so a source build has them too.
+    assert out.count("no default in a development build") == 2
+    assert "prometheus     quay.io/prometheus/prometheus:" in out
     assert "--image iperf2=<reference> or DOKIMI_IPERF2_IMAGE" in out
 
 
@@ -736,8 +774,9 @@ def test_a_dry_run_shows_the_images_the_run_deploys(
     assert main(["submit", str(EXAMPLE), "--dry-run", "--image", "iperf2=iperf2:dev"]) == 0
     captured = capsys.readouterr()
 
-    assert "  iperf2        iperf2:dev (run-override)" in captured.err
-    assert f"  orchestrator  {IMAGE} (release-default)" in captured.err
+    assert "  iperf2         iperf2:dev (run-override)" in captured.err
+    assert f"  orchestrator   {IMAGE} (release-default)" in captured.err
+    assert "  node-exporter  quay.io/prometheus/node-exporter:" in captured.err
     # They are part of the rendered Job, which is what submit would create.
     assert "name: DOKIMI_IPERF2_IMAGE\n" in captured.out
     assert "value: iperf2:dev\n" in captured.out
@@ -778,8 +817,9 @@ def test_image_lists_every_image_and_where_it_came_from(
     assert main(["image", "--image", "iperf2=iperf2:dev"]) == ExitCode.PASS
     out = capsys.readouterr().out
 
-    assert f"orchestrator  {IMAGE}" in out
-    assert "iperf2        iperf2:dev\n  source: run-override\n" in out
+    assert f"orchestrator   {IMAGE}" in out
+    assert "iperf2         iperf2:dev\n  source: run-override\n" in out
+    assert "node-exporter  quay.io/prometheus/node-exporter:" in out
 
 
 def test_execute_reports_the_images_it_was_given(

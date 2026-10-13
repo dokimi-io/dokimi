@@ -44,9 +44,11 @@ from dokimi.metrics.managed import (
     managed_manifests,
     node_exporter_manifest,
     node_exporter_status,
+    port_forward_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
+    remove_node_exporter,
     render_config,
     select_monitoring,
 )
@@ -360,10 +362,23 @@ def pod_spec(**kwargs: Any) -> dict[str, Any]:
 def test_it_prefers_any_node_but_the_tested_ones() -> None:
     affinity = pod_spec(avoid_nodes=["worker-02", "worker-01", "worker-02"])["affinity"]
 
-    (term,) = affinity["nodeAffinity"]["preferredDuringSchedulingIgnoredDuringExecution"]
-    assert term["preference"]["matchFields"] == [
-        {"key": "metadata.name", "operator": "NotIn", "values": ["worker-01", "worker-02"]}
+    terms = affinity["nodeAffinity"]["preferredDuringSchedulingIgnoredDuringExecution"]
+    assert [term["preference"]["matchFields"] for term in terms] == [
+        [{"key": "metadata.name", "operator": "NotIn", "values": ["worker-01"]}],
+        [{"key": "metadata.name", "operator": "NotIn", "values": ["worker-02"]}],
     ]
+
+
+def test_each_node_field_term_holds_one_value() -> None:
+    # The API server refuses a node field selector with more than one value for In or
+    # NotIn (HTTP 422, found on kind), and the fake API server does not validate it.
+    affinity = pod_spec(avoid_nodes=["worker-01", "worker-02", "worker-03"])["affinity"]
+
+    terms = affinity["nodeAffinity"]["preferredDuringSchedulingIgnoredDuringExecution"]
+    assert len(terms) == 3
+    for term in terms:
+        for field in term["preference"]["matchFields"]:
+            assert len(field["values"]) == 1
 
 
 def test_avoiding_the_tested_nodes_is_preferred_never_required() -> None:
@@ -442,6 +457,44 @@ def test_an_earlier_runs_node_exporter_is_reused_never_duplicated() -> None:
     assert len(cluster.list(DAEMON_SET, f"{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT}")) == 1
 
 
+def test_a_run_removes_the_node_exporter_it_deployed() -> None:
+    # The 2026-10-07 decision: a run cleans up what it created.
+    cluster = FakeResources()
+    exporter = provide_node_exporter(owned(cluster), NAMESPACE)
+    assert exporter is not None
+
+    assert remove_node_exporter(cluster, exporter) is True
+    assert cluster.list(DAEMON_SET, f"{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT}") == []
+
+
+def test_a_run_leaves_a_node_exporter_it_found() -> None:
+    # One a crashed run left behind is used and left, like the cluster's own.
+    cluster = FakeResources()
+    provide_node_exporter(owned(cluster), NAMESPACE)
+    exporter = provide_node_exporter(owned(cluster, LATER_RUN), NAMESPACE)
+    assert exporter is not None
+
+    assert remove_node_exporter(cluster, exporter) is False
+    assert len(cluster.list(DAEMON_SET, f"{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT}")) == 1
+
+
+def test_a_node_exporter_already_gone_is_not_an_error() -> None:
+    cluster = FakeResources()
+    exporter = provide_node_exporter(owned(cluster), NAMESPACE)
+    assert exporter is not None
+    remove_node_exporter(cluster, exporter)
+
+    assert remove_node_exporter(cluster, exporter) is False
+
+
+def test_a_kept_prometheus_is_reached_through_a_port_forward() -> None:
+    prometheus = provision_managed_prometheus(owned(FakeResources()), NAMESPACE)
+
+    assert port_forward_command(prometheus) == (
+        f"kubectl port-forward -n {NAMESPACE} service/{NAME} 9090:9090"
+    )
+
+
 def test_the_node_exporter_asks_for_the_host_network_and_nothing_else() -> None:
     spec = daemon_set_spec()
     (container,) = spec["containers"]
@@ -496,7 +549,8 @@ def test_a_deployed_node_exporter_is_scraped_by_its_labels_and_port() -> None:
     (discovery,) = found["kubernetes_sd_configs"]
     assert discovery["namespaces"] == {"names": [NAMESPACE]}
     assert discovery["selectors"][0]["label"] == (
-        f"app.kubernetes.io/managed-by=dokimi,{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT}"
+        f"app.kubernetes.io/managed-by=dokimi,{COMPONENT_LABEL}={NODE_EXPORTER_COMPONENT},"
+        f"dokimi.io/run-id={RUN}"
     )
     assert found["relabel_configs"][0] == {
         "source_labels": ["__meta_kubernetes_pod_container_port_name"],

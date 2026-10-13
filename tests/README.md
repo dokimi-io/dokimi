@@ -1,6 +1,6 @@
 # The test suite
 
-670 tests, none of which need a cluster, a network or a container runtime. Everything runs
+743 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -31,7 +31,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_iperf2.py`](test_iperf2.py) | 42 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
 | [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | 7 | The Prometheus client, and phase 4's query-access check |
-| [`test_managed_prometheus.py`](test_managed_prometheus.py) | 44 | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
+| [`test_managed_prometheus.py`](test_managed_prometheus.py) | 49 | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
 | [`test_execution.py`](test_execution.py) | 27 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
 | [`test_robot_execution.py`](test_robot_execution.py) | 4 | What Robot Framework does with the rendered suite: YAML and Robot run identically, every criterion says it was not evaluated, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
 | [`test_artifact_stream.py`](test_artifact_stream.py) | 13 | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
@@ -39,9 +39,9 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_submission.py`](test_submission.py) | 33 | Submitting, following and reattaching, and which exit codes are a verdict |
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | 6 | How the real Kubernetes adapter translates the client library's failures |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | 13 | The per-kind resource adapter builds real client methods and maps HTTP status to errors |
-| [`test_cli.py`](test_cli.py) | 71 | Every command, and the exit code each produces |
+| [`test_cli.py`](test_cli.py) | 81 | Every command, and the exit code each produces |
 | [`test_images.py`](test_images.py) | 15 | Orchestrator image resolution and override precedence |
-| [`test_run_images.py`](test_run_images.py) | 22 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
+| [`test_run_images.py`](test_run_images.py) | 25 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 21 | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |

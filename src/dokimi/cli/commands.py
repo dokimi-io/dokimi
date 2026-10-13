@@ -43,11 +43,14 @@ from dokimi.k8s.ownership import (
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.metrics.managed import (
+    NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
+    port_forward_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
+    remove_node_exporter,
     select_monitoring,
 )
 from dokimi.metrics.prometheus import (
@@ -146,8 +149,11 @@ def submit_run(
     definition = parse_file(path)
     # Refused before anything is created, a dry run included: a run that could only
     # fail in phase 2 should never be submitted (ADR-05-05's config_error).
-    select_monitoring(definition.monitoring_mode)
-    run_images = resolve_run_images(parse_image_options(images, orchestrator_image=image_override))
+    monitoring = select_monitoring(definition.monitoring_mode)
+    run_images = resolve_run_images(
+        parse_image_options(images, orchestrator_image=image_override),
+        monitoring=monitoring.deploys,
+    )
     submission = plan_submission(
         definition,
         source=path.read_text(encoding="utf-8"),
@@ -261,7 +267,7 @@ def execute(
     monitoring = select_monitoring(definition.monitoring_mode)
     # Resolved by submit, never here: the submitter's environment does not reach the Job
     # (ADR-04-08). What the Job was given is what it runs, and the log says so.
-    run_images = images_from_job_environment(env)
+    run_images = images_from_job_environment(env, monitoring=monitoring.deploys)
     console.say("phase 2 (ingestion): definition parsed")
     console.say()
     _describe(console, definition)
@@ -290,6 +296,7 @@ def execute(
         resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
     )
     artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
+    node_exporter: NodeExporter | None = None
     try:
         console.say(
             "phase 4 (preflight): cluster claimed for this run until "
@@ -300,7 +307,12 @@ def execute(
         # so the user always knows which Prometheus produced their results.
         ownership = RunOwnership(resources, resolved_run_id)
         supporting = detect_supporting_exporters(resources)
-        node_exporter = provide_node_exporter(ownership, resolved_namespace, supporting)
+        node_exporter = provide_node_exporter(
+            ownership,
+            resolved_namespace,
+            supporting,
+            image=run_images["node-exporter"].reference,
+        )
         prometheus = provision_managed_prometheus(
             ownership,
             resolved_namespace,
@@ -308,6 +320,7 @@ def execute(
             selection=monitoring,
             node_exporter=node_exporter,
             avoid_nodes=_tested_nodes(plan),
+            image=run_images["prometheus"].reference,
         )
         console.say(f"phase 4 (preflight): monitoring mode {monitoring.describe()}")
         console.say(f"  Prometheus  {prometheus.endpoint}")
@@ -327,6 +340,7 @@ def execute(
         console.say(
             "  kept after the run (ADR-03-02); remove it with: " + removal_command(prometheus)
         )
+        console.say("  query it from your machine with: " + port_forward_command(prometheus))
         # A phase line, so on the same stream as the others: stdout and stderr reach the
         # Job's log through separate pipes, and lines microseconds apart can swap.
         console.say(
@@ -367,6 +381,10 @@ def execute(
         # The artifacts go last in the log, so they come after the pods' removal, and the
         # claim is released after both.
         removed = _remove_test_pods(console, resources, resolved_run_id, resolved_namespace)
+        if node_exporter is not None:
+            # The 2026-10-07 decision: a run removes the node-exporter it deployed, before
+            # it releases the cluster, and leaves one it found.
+            _remove_node_exporter(console, resources, node_exporter)
         if not removed:
             # Removing the pods alone frees nothing: only a finished or expired claim does
             # (ADR-05-13). So the way out names both steps, the second one being the
@@ -445,6 +463,18 @@ def _remove_test_pods(
     if report.deleted:
         console.say(f"phase 11 (cleanup): removed {len(report.deleted)} test pod(s)")
     return True
+
+
+def _remove_node_exporter(
+    console: Console, resources: ResourceClient, exporter: NodeExporter
+) -> None:
+    """Remove the node-exporter this run deployed. Never fails the run: it is not traffic."""
+    try:
+        if remove_node_exporter(resources, exporter):
+            console.say(f"phase 11 (cleanup): removed node-exporter {exporter.name}")
+    except ClusterError as error:
+        # A later run finds it and reuses it, so nothing clashes on the host port.
+        console.warn(f"could not remove node-exporter {exporter.name}: {error}")
 
 
 def _finish(

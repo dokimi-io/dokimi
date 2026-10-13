@@ -150,12 +150,12 @@ rules:
     resources: ["deployments"]
     verbs: ["create"]
   # Phase 4 deploys a node-exporter DaemonSet when the cluster has none (ADR-03-02). It
-  # lists the run namespace's DaemonSets first, to reuse one an earlier run deployed, and
-  # reads the new one's status to tell whether Pod Security refused its pods. Owned by
-  # the run, so the owner's deletion removes it.
+  # lists the run namespace's DaemonSets first, to reuse one a crashed run left, and
+  # reads the new one's status to tell whether Pod Security refused its pods. Phase 11
+  # deletes the one the run deployed, before the run releases the cluster.
   - apiGroups: ["apps"]
     resources: ["daemonsets"]
-    verbs: ["create", "get", "list"]
+    verbs: ["create", "get", "list", "delete"]
   # Phase 6 creates each pair's client and server pods, and reads them for the readiness
   # gate and for completion (ADR-05-07, ADR-02-01). Phase 11 lists and deletes them before
   # the run releases the cluster, so that no test can still be sending (ADR-05-13). No

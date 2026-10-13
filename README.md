@@ -602,9 +602,11 @@ Prometheus produced their results.
 - **A node-exporter or kube-state-metrics that is already running** is found by its Service's
   `app.kubernetes.io/name` and scraped where it runs. An absent kube-state-metrics is recorded as
   absent.
-- **An absent node-exporter is deployed** as a DaemonSet owned by the run, so cleanup removes it
-  with the run. One that an earlier run deployed and that is still there is reused instead, since a
-  second one could not bind its port. It collects CPU, memory and network interfaces only
+- **An absent node-exporter is deployed** as a DaemonSet owned by the run, and the run deletes it
+  when it ends, before it frees the cluster. One it finds, the cluster's own or one a crashed run
+  left behind, it uses and leaves, since a second one could not bind its port: a run cleans up
+  what it created and nothing else. Each Prometheus scrapes only the node-exporter of the run that
+  deployed it, so a kept one never scrapes a later run's nodes. It collects CPU, memory and network interfaces only
   (`--collector.disable-defaults --collector.cpu --collector.meminfo --collector.netdev`) on
   port 9137, not 9100, so it never collides with an undetected node-exporter. It needs the host's
   network to count the node's interfaces, and nothing else: no host path, no host PID namespace,
@@ -614,11 +616,13 @@ Prometheus produced their results.
 - **Kept after the run.** The objects carry the run's labels, so they stay attributable and
   removable by `run_id`, but they have no ownerReference, so deleting the run's owner does not
   cascade to them. Cleanup keeps them unless removal is requested. A kept Prometheus never blocks
-  the next run: exclusivity reads run owners only. Phase 4 prints the `kubectl` command that
-  removes it. What each one keeps is bounded to 512 MB of data in a 1 GiB volume.
+  the next run: exclusivity reads run owners only. Phase 4 prints the `kubectl` commands that
+  reach it through a port-forward and that remove it. What each one keeps is bounded to 512 MB of data in a 1 GiB volume.
 - **It runs as `dokimi-prometheus`**, a service account that `deploy/rbac.yaml` creates with
   read-only discovery rights. The images are upstream `quay.io/prometheus/prometheus:v3.15.0`
-  and `quay.io/prometheus/node-exporter:v1.12.1`, both pinned by digest. Upstream does not sign
+  and `quay.io/prometheus/node-exporter:v1.12.1`, both pinned by digest, and chosen like every
+  other image: `--image prometheus=…` or `DOKIMI_PROMETHEUS_IMAGE`, `--image node-exporter=…` or
+  `DOKIMI_NODE_EXPORTER_IMAGE` (ADR-04-08). Upstream does not sign
   them, so the digest is what pins them to the images we reviewed.
 
 ### Execution strategy
