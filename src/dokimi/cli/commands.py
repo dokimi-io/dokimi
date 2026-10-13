@@ -30,7 +30,7 @@ from dokimi.execution import (
 from dokimi.formats import SUFFIXES, parse, parse_file, render_robot, render_yaml
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
-from dokimi.k8s.identity import validate_run_id
+from dokimi.k8s.identity import COMPONENT_LABEL, RUN_ID_LABEL, validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
@@ -315,8 +315,8 @@ def execute(
                 f"run {resolved_run_id} keeps its claim on the cluster until "
                 f"{format_timestamp(expires_at)}, because its test pods may still be sending "
                 "traffic. To free it earlier, remove them: kubectl delete pod -n "
-                f"{resolved_namespace} -l 'dokimi.io/run-id={resolved_run_id},"
-                "app.kubernetes.io/component in (client,server)'. Then clear the claim by "
+                f"{resolved_namespace} -l '{_test_pod_selector(resolved_run_id)}'. "
+                "Then clear the claim by "
                 "deleting the run's owner, which removes the rest of the run with it: "
                 f"kubectl delete configmap -n {resolved_namespace} "
                 f"{owner_name(resolved_run_id)}"
@@ -330,6 +330,13 @@ def execute(
 #: released: a run's other pods, such as its kept Prometheus or a DaemonSet's, are not test
 #: traffic, and a controller would only recreate them.
 TEST_POD_COMPONENTS = frozenset(role.value for role in Role)
+
+
+def _test_pod_selector(run_id: RunId) -> str:
+    """The label selector for a run's test pods, the same set phase 11 removes."""
+    components = ",".join(sorted(TEST_POD_COMPONENTS))
+    return f"{RUN_ID_LABEL}={run_id},{COMPONENT_LABEL} in ({components})"
+
 
 #: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
 #: the API server's and the kubelet's reaction time.
