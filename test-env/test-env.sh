@@ -125,7 +125,10 @@ cmd_up() {
   # knows which cluster to remove: written after creation, a failure inside `kind create`
   # or `k3d cluster create` would leave a cluster that `down` refused to touch.
   echo "$profile" > "$state/profile"
-  trap 'on_up_failure "$profile"' EXIT
+  # The profile is written into the trap now, not read when it runs: an EXIT trap runs
+  # after this function has been left, when its locals are gone, and `set -u` would
+  # abort the handler before it says anything (#49).
+  trap "on_up_failure $(printf '%q' "$profile")" EXIT
 
   say "creating $profile: 1 control plane + $WORKERS workers, Kubernetes from versions.env"
   case "$tool" in
