@@ -138,9 +138,10 @@ $ uv run dokimi submit kind-pair.yaml --dry-run --kubeconfig .test-env/kubeconfi
 $ uv run dokimi submit kind-pair.yaml --service-account dokimi
 ```
 
-The first command resolves both nodes read-only and prints the plan. The second runs it:
-phases 2 and 3 in the cluster, then an exit `5` because phases 4 to 11 are still being
-built — see [what a run does today](usage.md#what-a-run-does-today).
+The first command resolves both nodes read-only and prints the plan. The second runs it in
+the cluster, up to Robot's report, which lands in `results/<run-id>/`. It exits `5`, because
+measurement, validation and the final verdict are still being built — see
+[what a run does today](usage.md#what-a-run-does-today).
 
 Worth trying once, to see the errors a first run can hit: point the definition at
 `dokimi-control-plane` (tainted), `kubectl cordon` a worker, or leave off
