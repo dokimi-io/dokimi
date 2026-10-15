@@ -7,6 +7,7 @@ called" is an assertion about what happened rather than about what the code inte
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -400,3 +401,94 @@ def test_a_test_that_never_completes_times_out(cluster: FakeResources, spec: Wor
             clock=clock,
             sleep=clock.sleep,
         )
+
+
+# -- giving up on an image ----------------------------------------------------------------
+
+
+def pulls(
+    cluster: FakeResources, spec: WorkloadSpec, reasons: list[str]
+) -> tuple[Clock, Callable[[float], None]]:
+    """A clock, and a sleep that moves the client's pull on to the next of *reasons*."""
+    clock = Clock()
+    remaining = iter(reasons[1:])
+    set_status(cluster, spec, Role.CLIENT, pulling_failed(reasons[0]))
+
+    def sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+        reason = next(remaining, None)
+        if reason is not None:
+            set_status(cluster, spec, Role.CLIENT, pulling_failed(reason))
+
+    return clock, sleep
+
+
+def test_the_gate_gives_up_after_three_failed_pulls_not_at_its_timeout(
+    cluster: FakeResources, spec: WorkloadSpec
+) -> None:
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
+    back_off = ["ErrImagePull", "ImagePullBackOff", "ImagePullBackOff"]
+    clock, sleep = pulls(cluster, spec, back_off * 3 + ["ImagePullBackOff"] * 200)
+
+    with pytest.raises(ReadinessGateError, match="failed to pull its image 3 times") as raised:
+        await_ready(cluster, spec, timeout=300, clock=clock, sleep=sleep)
+
+    assert raised.value.category is ErrorCategory.IMAGE_PULL
+    # The third failure is seen on the seventh poll, 12 s in, not at 300 s.
+    assert clock.now == 12
+
+
+def test_a_failure_seen_on_consecutive_polls_is_one_attempt(
+    cluster: FakeResources, spec: WorkloadSpec
+) -> None:
+    # The kubelet reports a failed pull until its next sync, often across several polls.
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
+    clock, sleep = pulls(
+        cluster, spec, ["ErrImagePull"] * 4 + ["ImagePullBackOff"] * 4 + ["ErrImagePull"] * 50
+    )
+
+    with pytest.raises(ReadinessGateError, match="not Ready after 100s"):
+        await_ready(cluster, spec, timeout=100, clock=clock, sleep=sleep)
+
+    assert clock.now == 100
+
+
+@pytest.mark.parametrize("reason", ["InvalidImageName", "ErrImageNeverPull"])
+def test_an_image_no_retry_can_fix_fails_the_gate_at_once(
+    cluster: FakeResources, spec: WorkloadSpec, reason: str
+) -> None:
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
+    set_status(cluster, spec, Role.CLIENT, pulling_failed(reason))
+    clock = Clock()
+
+    with pytest.raises(ReadinessGateError, match="no retry can pull") as raised:
+        await_ready(cluster, spec, timeout=300, clock=clock, sleep=clock.sleep)
+
+    assert raised.value.category is ErrorCategory.IMAGE_PULL
+    assert clock.now == 0
+
+
+def test_a_pull_that_succeeds_on_its_second_try_passes(
+    cluster: FakeResources, spec: WorkloadSpec
+) -> None:
+    deployed_to(cluster, spec)
+    set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
+    clock = Clock()
+    states: list[Manifest] = [
+        pulling_failed("ImagePullBackOff"),
+        pulling_failed("ErrImagePull"),
+        running("10.0.1.5"),
+    ]
+    set_status(cluster, spec, Role.CLIENT, pulling_failed("ErrImagePull"))
+
+    def sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+        if states:
+            set_status(cluster, spec, Role.CLIENT, states.pop(0))
+
+    deployed = await_ready(cluster, spec, timeout=300, clock=clock, sleep=sleep)
+
+    assert pod_is_ready(deployed.pods[Role.CLIENT])
