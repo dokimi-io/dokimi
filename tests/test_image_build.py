@@ -17,6 +17,7 @@ import re
 import textwrap
 
 import pytest
+import yaml
 
 from dokimi import _image_digest, images
 
@@ -99,52 +100,103 @@ def test_the_checked_in_digest_is_unset() -> None:
     assert "ORCHESTRATOR_IMAGE_DIGEST: str | None = None" in GENERATED_DIGEST.read_text()
 
 
-def test_the_release_workflow_still_matches_the_lines_it_rewrites() -> None:
+def _built_images() -> list[dict[str, str]]:
+    """The release's `images` matrix: every image dokimi builds and publishes itself."""
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+    entries: list[dict[str, str]] = workflow["jobs"]["images"]["strategy"]["matrix"]["include"]
+    return entries
+
+
+def _digest_constants() -> set[str]:
+    return set(re.findall(r"^([A-Z0-9_]+_IMAGE_DIGEST): str", GENERATED_DIGEST.read_text(), re.M))
+
+
+def _constant(name: str) -> str:
+    return f"{name.upper().replace('-', '_')}_IMAGE_DIGEST"
+
+
+def test_every_built_image_has_a_dockerfile_and_a_digest_constant() -> None:
+    # A digest constant no image fills stays None in a release, and an image without a
+    # constant is published but never resolved: either way every released CLI behaves
+    # as a development checkout for it. The release refuses both; this catches them first.
+    built = _built_images()
+
+    assert {entry["name"] for entry in built} == {"orchestrator", "iperf2"}
+    for entry in built:
+        assert (REPOSITORY_ROOT / entry["file"]).is_file(), entry["file"]
+        assert entry["image"] == f"ghcr.io/dokimi-io/{entry['name']}", entry
+    assert {_constant(entry["name"]) for entry in built} == _digest_constants()
+
+
+def _release_script(step: str) -> str:
+    """The inline Python of one release step, as the workflow holds it."""
     workflow = RELEASE_WORKFLOW.read_text()
-    patterns = re.findall(r'r"(\^[A-Z0-9_]+_IMAGE_DIGEST[^"]*)"', workflow)
-    assert patterns, "the release workflow no longer rewrites the generated digest file"
-
-    generated = GENERATED_DIGEST.read_text()
-    for found in patterns:
-        assert re.search(found, generated, re.MULTILINE), (
-            f"the release workflow looks for {found!r}, which no longer matches anything "
-            f"in {GENERATED_DIGEST.name}. A release would build a distribution with no "
-            "image digest baked in."
-        )
-
-
-def test_the_release_workflow_bakes_every_generated_digest() -> None:
-    # A digest constant nobody rewrites stays None in a release, and that image's
-    # resolution fails on every released CLI, as if it were a development checkout.
-    constants = set(
-        re.findall(r"^([A-Z0-9_]+_IMAGE_DIGEST): str", GENERATED_DIGEST.read_text(), re.M)
-    )
-    rewritten = set(re.findall(r'r"\^([A-Z0-9_]+_IMAGE_DIGEST):', RELEASE_WORKFLOW.read_text()))
-
-    assert constants == {"ORCHESTRATOR_IMAGE_DIGEST", "IPERF2_IMAGE_DIGEST"}
-    assert rewritten == constants
-
-
-def _release_verification() -> str:
-    """The Python the release runs once the digests are baked in, as the workflow holds it."""
-    workflow = RELEASE_WORKFLOW.read_text()
-    step = workflow[workflow.index("Verify the baked-in defaults") :]
-    script = re.search(r"python - <<'PY'\n(.*?)\n\s*PY\n", step, re.S)
-    assert script, "the release's verification step no longer runs an inline script"
+    after = workflow[workflow.index(step) :]
+    script = re.search(r"python - <<'PY'\n(.*?)\n\s*PY\n", after, re.S)
+    assert script, f"the release step {step!r} no longer runs an inline script"
     return textwrap.dedent(script.group(1))
 
 
-def test_the_release_verification_runs_against_this_code(monkeypatch: pytest.MonkeyPatch) -> None:
+def _digests(directory: pathlib.Path) -> dict[str, str]:
+    """What each matrix leg hands on: a file per image holding its digest-pinned reference."""
+    (directory / "digests").mkdir()
+    references = {}
+    for number, entry in enumerate(_built_images()):
+        reference = f"{entry['image']}@sha256:{f'{number:x}' * 64}"
+        (directory / "digests" / entry["name"]).write_text(reference + "\n")
+        references[entry["name"]] = reference
+    return references
+
+
+def test_the_release_bakes_every_digest_into_the_generated_file(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generated = tmp_path / "src" / "dokimi" / "_image_digest.py"
+    generated.parent.mkdir(parents=True)
+    generated.write_text(GENERATED_DIGEST.read_text())
+    references = _digests(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    exec(compile(_release_script("Bake the image digests"), "release.yml", "exec"), {})
+
+    baked = generated.read_text()
+    for name, reference in references.items():
+        digest = reference.partition("@")[2]
+        assert f'{_constant(name)}: str | None = "{digest}"' in baked
+
+
+def test_the_release_refuses_an_image_without_a_digest_constant(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generated = tmp_path / "src" / "dokimi" / "_image_digest.py"
+    generated.parent.mkdir(parents=True)
+    generated.write_text(GENERATED_DIGEST.read_text())
+    _digests(tmp_path)
+    (tmp_path / "digests" / "irtt").write_text(f"ghcr.io/dokimi-io/irtt@sha256:{'e' * 64}\n")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit, match="do not match one to one"):
+        exec(compile(_release_script("Bake the image digests"), "release.yml", "exec"), {})
+    assert generated.read_text() == GENERATED_DIGEST.read_text()
+
+
+def test_the_release_verification_runs_against_this_code(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # It runs only in a release, after the images are pushed. An import it can no longer
     # make shows up there first, as a release with published images and no CLI. It did
     # once: dokimi.images.resolve_image went away with ADR-04-08.
-    digest, workload_digest = "sha256:" + "ab" * 32, "sha256:" + "cd" * 32
-    monkeypatch.setenv("DIGEST", digest)
-    monkeypatch.setenv("IPERF2_DIGEST", workload_digest)
-    monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", digest)
-    monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", workload_digest)
+    references = _digests(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        images, "ORCHESTRATOR_IMAGE_DIGEST", references["orchestrator"].partition("@")[2]
+    )
+    monkeypatch.setattr(
+        _image_digest, "IPERF2_IMAGE_DIGEST", references["iperf2"].partition("@")[2]
+    )
 
-    exec(compile(_release_verification(), str(RELEASE_WORKFLOW), "exec"), {"__name__": "__main__"})
+    script = _release_script("Verify the baked-in defaults")
+    exec(compile(script, "release.yml", "exec"), {"__name__": "__main__"})
 
 
 def test_the_checked_in_workload_digests_are_unset() -> None:

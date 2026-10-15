@@ -62,12 +62,17 @@ To run it against a local cluster, see [Setup](setup.md#a-cluster-to-submit-runs
 `.github/workflows/release.yml`, triggered by a `v*` tag. The order is the decision, not
 an implementation detail:
 
-1. Build and push the image for `linux/amd64` and `linux/arm64`.
-2. Sign it with keyless cosign and attest its build provenance, pushing the attestation to
-   the registry.
-3. Write the digest the registry returned into `src/dokimi/_image_digest.py`.
-4. Verify the baked-in default now resolves to exactly that digest.
+1. Build and push every image dokimi builds, the orchestrator and `iperf2`, for
+   `linux/amd64` and `linux/arm64`. They are one matrix job, `images`, one entry each.
+2. Sign each with keyless cosign and attest its build provenance, pushing the attestation
+   to the registry.
+3. Write the digests the registry returned into `src/dokimi/_image_digest.py`, one
+   `<NAME>_IMAGE_DIGEST` per image. A release whose images and constants differ stops here.
+4. Verify that each baked-in default now resolves to exactly that digest.
 5. `uv build`, then create or update the GitHub release and attach the distribution.
+
+Adding an image dokimi builds is one entry in the matrix, with its name, Dockerfile and
+registry path, plus its line in `src/dokimi/_image_digest.py`.
 
 The image comes first because a released CLI must ship the digest of the image built from
 its own commit (ADR-05-08). The consequence, accepted explicitly by that ADR, is that the
