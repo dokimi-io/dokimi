@@ -27,6 +27,7 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
+from dokimi.cluster_name import CLUSTER_ENV_VAR
 from dokimi.k8s.deadlines import job_budget_for
 from dokimi.k8s.identity import ownership_labels
 from dokimi.k8s.ownership import OWNER_COMPONENT, owner_manifest
@@ -84,12 +85,14 @@ def render_manifests(
     image: str,
     namespace: str,
     images: Mapping[str, WorkloadImage],
+    cluster: str,
     service_account: str | None = None,
 ) -> list[dict[str, Any]]:
     """Render the objects a submission creates, in the order they must be created.
 
     *image* is the orchestrator's own; *images* are the ones the run deploys, resolved at
-    submission and handed to the Job in its environment (ADR-04-08).
+    submission and handed to the Job in its environment (ADR-04-08), like *cluster*, the
+    name the operator gave the cluster (ADR-02-07).
     """
     owner = _owner_manifest(run_id, namespace)
     owner_reference = _owner_reference(owner)
@@ -108,6 +111,7 @@ def render_manifests(
             namespace=namespace,
             image=image,
             images=images,
+            cluster=cluster,
             source_suffix=source_suffix,
             service_account=service_account,
             owner_reference=owner_reference,
@@ -178,6 +182,7 @@ def _job_manifest(
     namespace: str,
     image: str,
     images: Mapping[str, WorkloadImage],
+    cluster: str,
     source_suffix: str,
     service_account: str | None,
     owner_reference: dict[str, Any],
@@ -210,9 +215,14 @@ def _job_manifest(
                     "--deadline-seconds",
                     str(deadline),
                 ],
-                # The images the run deploys, resolved on the submitter's side, whose
-                # environment the Job never sees (ADR-04-08).
-                "env": [{"name": "DOKIMI_RUN_ID", "value": run_id}, *job_environment(images)],
+                # The images the run deploys and the cluster's name, resolved on the
+                # submitter's side, whose environment the Job never sees (ADR-04-08,
+                # ADR-02-07).
+                "env": [
+                    {"name": "DOKIMI_RUN_ID", "value": run_id},
+                    {"name": CLUSTER_ENV_VAR, "value": cluster},
+                    *job_environment(images),
+                ],
                 "securityContext": {
                     "allowPrivilegeEscalation": False,
                     "readOnlyRootFilesystem": True,

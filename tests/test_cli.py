@@ -55,6 +55,9 @@ EXECUTE = [
 @pytest.fixture(autouse=True)
 def _released_build(monkeypatch: pytest.MonkeyPatch) -> None:
     """Most commands need images to submit and deploy; a checkout has none by design."""
+    # And a cluster name, which has no default either (ADR-02-07): on the submitter's side
+    # as an installation override, and in the Job as what submit wrote.
+    monkeypatch.setenv("DOKIMI_CLUSTER", "test-cluster")
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
     monkeypatch.setattr(_image_digest, "IPERF2_IMAGE_DIGEST", DIGEST)
     for component in COMPONENTS.values():
@@ -841,6 +844,59 @@ def test_execute_without_its_images_is_refused_before_it_claims(
     assert main(EXECUTE) == ExitCode.CONFIG_ERROR
     assert "submitted without an image for orchestrator" in capsys.readouterr().err
     owner = cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
+
+
+# -- the cluster's name (ADR-02-07) ------------------------------------------------------
+
+
+def test_submit_without_a_cluster_name_creates_nothing(
+    no_cluster: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No default: refused before anything is rendered, a dry run included.
+    monkeypatch.delenv("DOKIMI_CLUSTER")
+
+    assert main(["submit", str(EXAMPLE), "--dry-run"]) == ExitCode.CONFIG_ERROR
+    assert "--cluster <name> or DOKIMI_CLUSTER" in capsys.readouterr().err
+
+
+def test_a_malformed_cluster_name_is_a_config_error(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["submit", str(EXAMPLE), "--dry-run", "--cluster", "Lab EU"]) == (
+        ExitCode.CONFIG_ERROR
+    )
+    assert "--cluster 'Lab EU' is not a cluster name" in capsys.readouterr().err
+
+
+def test_the_cluster_flag_reaches_the_job_and_the_dry_run(
+    no_cluster: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["submit", str(EXAMPLE), "--dry-run", "--cluster", "lab-fra-1"]) == 0
+    captured = capsys.readouterr()
+
+    assert "Cluster    lab-fra-1" in captured.err
+    assert "name: DOKIMI_CLUSTER\n" in captured.out
+    assert "value: lab-fra-1\n" in captured.out
+    assert "value: test-cluster\n" not in captured.out
+
+
+def test_execute_reports_the_cluster_it_was_given(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+
+    assert "  cluster     test-cluster" in capsys.readouterr().out
+
+
+def test_execute_without_a_cluster_name_is_refused_before_it_claims(
+    job_cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("DOKIMI_CLUSTER")
+
+    assert main(EXECUTE) == ExitCode.CONFIG_ERROR
+    assert "submitted without a cluster name" in capsys.readouterr().err
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
 
 

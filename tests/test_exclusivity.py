@@ -333,6 +333,7 @@ def test_two_simultaneous_submissions_through_submit_start_exactly_one_run(
             source_path=EXAMPLE,
             image="img",
             images=RUN_IMAGES,
+            cluster="test-cluster",
             run_id=str(run_id),
         )
         submit(fake, submission)

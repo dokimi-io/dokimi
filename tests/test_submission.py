@@ -79,6 +79,7 @@ def _plan(definition: TestDefinition, namespace: str | None = None) -> Submissio
         source_path=Path("pair.yaml"),
         image=IMAGE,
         images=RUN_IMAGES,
+        cluster="test-cluster",
         run_id=RUN_ID,
         namespace=namespace,
     )
@@ -100,7 +101,12 @@ def test_planning_needs_no_cluster(definition: TestDefinition) -> None:
 
 def test_planning_generates_a_run_id_when_not_given(definition: TestDefinition) -> None:
     submission = plan_submission(
-        definition, source="", source_path=Path("p.yaml"), image=IMAGE, images=RUN_IMAGES
+        definition,
+        source="",
+        source_path=Path("p.yaml"),
+        image=IMAGE,
+        images=RUN_IMAGES,
+        cluster="test-cluster",
     )
 
     assert submission.run_id
@@ -218,6 +224,7 @@ def test_a_given_run_id_is_validated_before_anything_is_rendered(
             source_path=Path("p.yaml"),
             image=IMAGE,
             images=RUN_IMAGES,
+            cluster="test-cluster",
             run_id=bad,
         )
 
