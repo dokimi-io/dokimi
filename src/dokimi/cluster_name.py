@@ -37,11 +37,15 @@ __all__ = ["CLUSTER_ENV_VAR", "cluster_from_job_environment", "resolve_cluster"]
 #: The installation level on the submitter's side, and the resolved value in the Job.
 CLUSTER_ENV_VAR = "DOKIMI_CLUSTER"
 
-_DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+_DNS_LABEL = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 
 
 def resolve_cluster(flag: str | None = None, *, env: Mapping[str, str] | None = None) -> str:
     """The run's cluster name: ``--cluster`` over ``DOKIMI_CLUSTER``. Never a default.
+
+    Surrounding whitespace is trimmed, the one thing that is: a name pasted with a space
+    or read from a file with its newline means the same name. Everything inside it is
+    held to the DNS-label rule as given.
 
     Raises:
         ConfigError: if neither is given, or the name is not a DNS label. Before
@@ -79,7 +83,7 @@ def cluster_from_job_environment(env: Mapping[str, str] | None = None) -> str:
 
 
 def _validated(value: str, where: str) -> str:
-    if not _DNS_LABEL.match(value):
+    if not _DNS_LABEL.fullmatch(value):
         raise ConfigError(
             f"{where} {value!r} is not a cluster name: use lowercase letters, digits and "
             "hyphens, starting and ending with a letter or digit, at most 63 characters"

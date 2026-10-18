@@ -64,3 +64,34 @@ def test_a_job_without_a_cluster_name_is_refused() -> None:
     # Made by hand or by an older CLI: the Job never invents one.
     with pytest.raises(ConfigError, match="submitted without a cluster name"):
         cluster_from_job_environment({})
+
+
+@pytest.mark.parametrize(
+    ("flag", "env"),
+    [(" lab-fra-1 ", {}), (None, {CLUSTER_ENV_VAR: "lab-fra-1\n"})],
+)
+def test_surrounding_whitespace_is_trimmed_and_nothing_else(
+    flag: str | None, env: dict[str, str]
+) -> None:
+    # A name pasted with a space, or read from a file with its newline, is the same name.
+    assert resolve_cluster(flag, env=env) == "lab-fra-1"
+
+
+def test_whitespace_inside_the_name_is_still_refused() -> None:
+    with pytest.raises(ConfigError, match="is not a cluster name"):
+        resolve_cluster("lab\nfra", env={})
+
+
+def test_a_trailing_newline_is_refused_by_the_rule_itself() -> None:
+    # The trim removes it first today; the rule must hold without it, which a `$` anchor
+    # alone would not ("prod\n" matches `^prod$`).
+    from dokimi import cluster_name  # noqa: PLC0415
+
+    with pytest.raises(ConfigError, match="is not a cluster name"):
+        cluster_name._validated("prod\n", "--cluster")
+
+
+def test_a_job_given_a_malformed_name_is_refused() -> None:
+    # A Job edited by hand: it never normalises either.
+    with pytest.raises(ConfigError, match="DOKIMI_CLUSTER 'Prod-EU' is not a cluster name"):
+        cluster_from_job_environment({CLUSTER_ENV_VAR: "Prod-EU"})

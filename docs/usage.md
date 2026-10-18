@@ -332,6 +332,7 @@ Nodes were not checked against a cluster. A dry run contacts nothing unless give
 
 Run id     20260924-200229-ca532a
 Namespace  dokimi-iperf2
+Cluster    lab-fra-1
 Images
   iperf2        ghcr.io/dokimi-io/iperf2@sha256:... (release-default)
   orchestrator  ghcr.io/dokimi-io/orchestrator@sha256:... (release-default)
@@ -769,8 +770,18 @@ letter or digit, at most 63 characters. Anything else is refused rather than rew
 `Prod-EU` never quietly becomes someone else's `prod-eu`. Like the images, `submit` writes
 it into the Job (`DOKIMI_CLUSTER`), and `--dry-run` shows it.
 
+**It only names the cluster; it doesn't choose it.** Unlike kubectl's `--cluster`, it never
+selects which cluster the run goes to: `--kubeconfig` and `--context` do that (see
+[Installation](installation.md#cluster-credentials)). So `--cluster prod` with a staging context
+runs on staging and labels the results `prod`, and nothing notices.
+
 It is what you called the cluster, not an identity dokimi checks: two people can name one
-cluster differently, and nothing notices. Pick one name per cluster and keep it.
+cluster differently, and nothing notices. Pick one name per cluster and keep it. Surrounding
+spaces are trimmed, so `" prod "` is `prod`; anything inside the name is checked as given.
+
+**Where it shows today:** `submit` writes it into the Job, and the run prints it in phase 2.
+The exporters label their series with it from M1-10, and the result artifact gets it as a
+column with M1-14.
 
 ## Cleaning up
 

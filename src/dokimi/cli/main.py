@@ -191,7 +191,8 @@ def _add_cluster_name_argument(parser: argparse.ArgumentParser) -> None:
         "--cluster",
         dest="cluster_name",
         help=f"the name results are labelled with, overriding ${CLUSTER_ENV_VAR}; required, "
-        "with no default: lowercase letters, digits and hyphens",
+        "with no default: lowercase letters, digits and hyphens. It only names the cluster; "
+        "--kubeconfig and --context choose which one the run goes to",
     )
 
 
