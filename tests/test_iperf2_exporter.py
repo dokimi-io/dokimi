@@ -8,9 +8,13 @@ iperf 2.2.1's ``-y C`` output from a run on kind (dokimi#35, adrs#45).
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import signal
+import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -108,7 +112,8 @@ def results(tmp_path: Path, role: str, csv: str | None = None, **files: str) -> 
         f"role={role}\nwarmup_seconds=10\nmeasurement_source_port={MEASUREMENT_SOURCE_PORT}\n"
     )
     if csv is not None:
-        (tmp_path / "iperf2.csv").write_text(csv)
+        # iperf2 ends every report with a newline; a test of a line cut short writes its own.
+        (tmp_path / "iperf2.csv").write_text(csv if csv.endswith("\n") else csv + "\n")
     for name, content in files.items():
         (tmp_path / f"iperf2.{name}").write_text(content)
     return tmp_path
@@ -144,7 +149,7 @@ def test_the_server_reports_the_measured_connection_and_nothing_else(tmp_path: P
     assert value(series, "dokimi_execution_errors_total") == 0
     # The measurement's line, not the warm-up's and not the sum.
     assert value(series, "dokimi_throughput_bits_per_second") == 49983531
-    assert value(series, "dokimi_iperf2_transferred_bytes") == 31249260
+    assert value(series, "dokimi_transferred_bytes") == 31249260
     assert value(series, "dokimi_iperf2_datagrams") == 21258
 
 
@@ -158,7 +163,7 @@ def test_units_are_converted_to_base_units_on_write(tmp_path: Path) -> None:
     assert value(series, "dokimi_packet_loss_percent") == pytest.approx(100 * 356 / 85010)
     assert value(series, "dokimi_iperf2_lost_datagrams") == 356
     assert value(series, "dokimi_iperf2_out_of_order_datagrams") == 3
-    assert value(series, "dokimi_iperf2_interval_seconds") == 10
+    assert value(series, "dokimi_test_duration_seconds") == 10
 
 
 def test_every_series_carries_the_full_required_label_set(tmp_path: Path) -> None:
@@ -275,6 +280,29 @@ def test_lines_that_are_not_reports_are_counted_not_guessed_at(tmp_path: Path) -
     assert value(series, "dokimi_test_completed") == 1
 
 
+def test_a_line_still_being_written_is_not_a_result(tmp_path: Path) -> None:
+    # The server writes while it runs; M1-12 reads right as the connection ends. A TCP line
+    # cut inside its last field still has nine fields.
+    directory = results(tmp_path, "server")
+    (directory / "iperf2.csv").write_text(WARMUP_LINE + "\n" + TCP_LINE[:-6])
+
+    series = scrape(directory, "server")
+
+    assert value(series, "dokimi_test_completed") == 0
+    assert "dokimi_throughput_bits_per_second" not in series
+    assert value(series, "dokimi_iperf2_unparsed_lines") == 0
+
+
+def test_a_line_counts_once_its_newline_arrives(tmp_path: Path) -> None:
+    directory = results(tmp_path, "server")
+    (directory / "iperf2.csv").write_text(WARMUP_LINE + "\r\n" + SERVER_LINE + "\r\n")
+
+    series = scrape(directory, "server")
+
+    assert value(series, "dokimi_test_completed") == 1
+    assert value(series, "dokimi_throughput_bits_per_second") == 49983531
+
+
 # -- labels ----------------------------------------------------------------------------------
 
 
@@ -331,6 +359,28 @@ def test_only_metrics_is_served(served: tuple[Path, str]) -> None:
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(f"{url}/", timeout=5)
     assert refused.value.code == 404
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is a POSIX signal")
+def test_it_exits_at_once_on_sigterm(tmp_path: Path) -> None:
+    # As a pod's PID 1 without a handler it would ignore SIGTERM, and every test pod would
+    # wait out its grace period.
+    process = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "--results", str(tmp_path), "--port", "0"],
+        env={**os.environ, **ENV, "DOKIMI_POD_IP": CLIENT_IP},
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stderr is not None
+        assert "serving /metrics" in process.stderr.readline()
+        started = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=5) == 0
+        assert time.monotonic() - started < 2
+    finally:
+        process.kill()
+        process.wait()
 
 
 # -- the pod spec ----------------------------------------------------------------------------

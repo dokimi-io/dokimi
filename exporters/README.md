@@ -4,7 +4,7 @@ One dedicated exporter per test type, running as a sidecar alongside the test wo
 one per test pod (ADR-02-02).
 
 An exporter parses its tool's native output, exposes the normalized metric set with the
-required labels (ADR-02-03, ADR-02-04), may expose tool-specific metrics under a clearly
+required labels (ADR-02-03, ADR-02-07), may expose tool-specific metrics under a clearly
 separated prefix, and reports completion state explicitly via
 `dokimi_test_completed` so that "test failed", "test never ran" and "metric
 absent" stay distinguishable.
@@ -24,7 +24,8 @@ It is Python, standard library only, and ships in the iperf2 image as
 once the pod's other containers have exited, and the exporter has to keep serving the
 completed result after iperf2 has (ADR-03-01). It reads the files on every request, so it
 serves the result for as long as the pod exists. A finished client's pod therefore stays
-`Running` until the run removes it.
+`Running` until the run removes it. The exporter exits at once on SIGTERM, so removing the
+pod doesn't wait out its grace period.
 
 **Each pod exports its own view**, labelled by `direction`:
 
@@ -35,7 +36,7 @@ serves the result for as long as the pod exists. A finished client's pod therefo
 | `dokimi_throughput_bits_per_second` | what it sent | what it received |
 | `dokimi_packet_loss_percent` | — | UDP, from the datagram counts |
 | `dokimi_jitter_seconds` | — | UDP, converted from milliseconds |
-| `dokimi_iperf2_transferred_bytes`, `dokimi_iperf2_interval_seconds` | ✓ | ✓ |
+| `dokimi_transferred_bytes`, `dokimi_test_duration_seconds` | ✓ | ✓ |
 | `dokimi_iperf2_datagrams`, `…_lost_datagrams`, `…_out_of_order_datagrams` | — | UDP |
 | `dokimi_iperf2_unparsed_lines` | ✓ | ✓ |
 
@@ -56,7 +57,8 @@ them from the first connection it receives.
   the client's warm-up pass writes elsewhere. The server's has one line per connection it
   received, the warm-up's included, plus a sum line over all of them (connection id `-1`).
   Only the server's lines carry packet loss and jitter: a UDP client's own summary has
-  `nan` jitter and `-1` datagrams.
+  `nan` jitter and `-1` datagrams. A line counts only once it ends in a newline, because
+  the server writes while it runs and a line cut short can still look like a report.
 - **`iperf2.meta`**: `role`, `warmup_seconds` and `measurement_source_port`. The client
   sends the warm-up and the measurement from two fixed source ports, so on the server the
   measured connection is the line whose source port (the third field) is

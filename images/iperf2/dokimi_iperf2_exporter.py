@@ -30,7 +30,8 @@ both, it serves no ``dokimi_`` series at all, which reads as "no result", never 
 **What the files are** (images/iperf2/dokimi-iperf2-*.sh):
 
 * ``iperf2.meta``: ``role``, ``warmup_seconds`` and ``measurement_source_port``;
-* ``iperf2.csv``: ``iperf -y C`` lines. Fields, in order: time, source address and port,
+* ``iperf2.csv``: ``iperf -y C`` lines, read only once a line ends in a newline: a line
+  still being written is not a result yet. Fields, in order: time, source address and port,
   destination address and port, connection id, interval, bytes, bits per second, and for
   UDP jitter in milliseconds, lost and total datagrams, loss percent, out of order. The
   measurement is the line whose source port is ``measurement_source_port``; the warm-up's
@@ -44,6 +45,9 @@ nothing, so ``completed`` stays 0 and ``dokimi_execution_errors_total`` counts 1
 server is complete once its measurement line exists: for UDP that line is the only proof
 anything arrived, since a client against nothing still exits 0.
 
+**It stops at once on SIGTERM.** As a pod's PID 1 without a handler it would ignore the
+signal, and every test pod would wait out its grace period before it is removed.
+
 Usage::
 
     dokimi-iperf2-exporter --results DIR --port N
@@ -54,6 +58,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import signal
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -86,6 +91,7 @@ LABEL_ENVIRONMENT: Mapping[str, str] = {
     "protocol": "DOKIMI_PROTOCOL",
 }
 #: This pod's own address, from the downward API: what it knows before any traffic.
+#: ``status.podIP`` is the pod's primary address, which is enough for Milestone-01's IPv4.
 POD_IP_ENVIRONMENT = "DOKIMI_POD_IP"
 
 _DIRECTION = {"client": "outbound", "server": "inbound"}
@@ -172,10 +178,16 @@ def labels_from_environment(env: Mapping[str, str]) -> Labels:
 
 
 def parse_reports(text: str) -> tuple[list[Report], int]:
-    """Every ``iperf -y C`` line in *text*, and how many lines were not one."""
+    """Every complete ``iperf -y C`` line in *text*, and how many lines were not one.
+
+    A last line without its newline is still being written. It is neither a report nor
+    unparsed yet: a TCP line cut inside its last field would otherwise read as a
+    measurement of whatever digits had arrived.
+    """
     reports: list[Report] = []
     unparsed = 0
-    for line in text.splitlines():
+    complete, _, _still_being_written = text.rpartition("\n")
+    for line in complete.splitlines():
         if not line.strip():
             continue
         report = _parse_line(line.strip())
@@ -366,17 +378,17 @@ def _results(lines: list[str], series: Mapping[str, str], report: Report) -> Non
         )
     _metric(
         lines,
-        "dokimi_iperf2_transferred_bytes",
+        "dokimi_transferred_bytes",
         "gauge",
-        "Bytes iperf2 reports for the measurement",
+        "Bytes the measurement transferred",
         series,
         report.bytes,
     )
     _metric(
         lines,
-        "dokimi_iperf2_interval_seconds",
+        "dokimi_test_duration_seconds",
         "gauge",
-        "The interval iperf2's report covers, in seconds",
+        "How long the measurement ran, in seconds",
         series,
         report.interval_seconds,
     )
@@ -456,7 +468,12 @@ def _handler(results: Path, labels: Labels) -> type[BaseHTTPRequestHandler]:
 
 def serve(results: Path, port: int, labels: Labels) -> ThreadingHTTPServer:
     """A server for ``/metrics`` on *port*, not yet started."""
+    # IPv4 only, as Milestone-01 is: the address family's default for an empty host.
     return ThreadingHTTPServer(("", port), _handler(results, labels))
+
+
+def _stop(signum: int, frame: object) -> None:
+    raise SystemExit(0)
 
 
 def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -469,6 +486,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     except ExporterConfigError as error:
         print(f"dokimi-iperf2-exporter: {error}", file=sys.stderr)
         return 64
+    signal.signal(signal.SIGTERM, _stop)
     server = serve(args.results, args.port, labels)
     print(f"exporter: serving /metrics on {args.port} from {args.results}", file=sys.stderr)
     try:
