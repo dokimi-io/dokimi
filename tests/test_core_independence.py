@@ -28,6 +28,7 @@ CORE_MODULES = [
     "dokimi.k8s.namespaces",
     "dokimi.k8s.ownership",
     "dokimi.k8s.resources",
+    "dokimi.measurement",
     "dokimi.metrics",
     "dokimi.metrics.managed",
     "dokimi.metrics.prometheus",

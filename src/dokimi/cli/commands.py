@@ -20,6 +20,7 @@ from dokimi.cli.exit_codes import ExitCode
 from dokimi.cluster_name import cluster_from_job_environment, resolve_cluster
 from dokimi.execution import (
     ARTIFACTS_ROOT,
+    PairExecution,
     RobotRunner,
     RunArtifacts,
     SubprocessRobotRunner,
@@ -43,8 +44,11 @@ from dokimi.k8s.ownership import (
 )
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
+from dokimi.measurement import Measurement, ScrapeReport, confirm_scrape, read_measurement
 from dokimi.metrics.managed import (
     NODE_EXPORTER_COMPONENT,
+    SCRAPE_INTERVAL_SECONDS,
+    ManagedPrometheus,
     NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
@@ -92,6 +96,10 @@ ROBOT_RUNNER: Callable[[], RobotRunner] = SubprocessRobotRunner
 #: The plugin phase 4 probes the cluster with; ``None`` is the run's own. A module
 #: attribute so that a test can replace its pods with ones that are already Ready.
 PREFLIGHT_PLUGIN: Probes | None = None
+
+#: How long phase 7 waits for Prometheus to hold a test's series: ``None`` is
+#: ADR-03-01's three scrape intervals, at least 60 s. Module-level so a test can shorten it.
+SCRAPE_CONFIRMATION_TIMEOUT_SECONDS: float | None = None
 
 #: How long phase 4 waits for the run's Prometheus to answer a query. Module-level so a
 #: test can shorten it without a real clock.
@@ -322,7 +330,11 @@ def execute(
 
     With *preflight_only* the run stops after phase 4 and exits 0: ``dokimi preflight``.
 
-    Not built yet: measurement (M1-12, #47), validation
+    Phase 7's direct read happens in each pair's Robot process, which writes what it read
+    next to its output; the Job then confirms Prometheus holds the same values, before
+    anything is torn down (ADR-03-01).
+
+    Not built yet: validation
     (M1-13, #48), the result artifact (M1-14, #49), and cleanup and the real exit code
     (M1-16, #51). Rather than exit 0 and let a submitter read that as a passing run, this
     reports an orchestrator error and names what is missing.
@@ -481,13 +493,14 @@ def execute(
                 f"{pair.target.name}, one Robot Framework process"
             ),
         )
+        _confirm_measurements(console, prometheus, executions, artifacts)
         merge_reports(executions, artifacts, ROBOT_RUNNER())
         console.say(f"phase 9a (reporting): {artifacts.log}, {artifacts.report}")
         console.say()
         console.warn(
-            "the rest of phases 7 to 11 is not implemented in this build: measurement "
-            "(#47), validation (#48), results (#49), cleanup and outcome (#51). The run "
-            "stops here without a verdict; Robot's report says which steps ran."
+            "the rest of phases 8 to 11 is not implemented in this build: validation "
+            "(#48), results (#49), cleanup and outcome (#51). The run stops here without "
+            "a verdict; Robot's report says which steps ran."
         )
         return ExitCode.INTERNAL
     finally:
@@ -519,6 +532,82 @@ def execute(
         _return_artifacts(console, artifacts)
         if removed:
             _finish(console, resources, resolved_run_id, resolved_namespace, now)
+
+
+MEASUREMENT_REPORT = "measurement.json"
+
+
+def _confirm_measurements(
+    console: Console,
+    prometheus: ManagedPrometheus,
+    executions: Sequence[PairExecution],
+    artifacts: RunArtifacts,
+) -> None:
+    """Phase 7, the Job's half: does Prometheus hold what each test's direct read found?
+
+    Before teardown, while the exporters still serve (ADR-03-01). A test whose series
+    never arrive is a warning naming it, and a value that differs is a diagnostic of its
+    own; neither changes the verdict, which is the direct read's. Never raises.
+    """
+    measurements: list[Measurement] = []
+    for execution in executions:
+        found = read_measurement(execution.output.parent, execution.pair.test_id)
+        if found is None:
+            console.warn(
+                f"phase 7 (measurement): {execution.pair.test_id} has no measurement: its "
+                "test ended before its result was read, and Robot's report says why"
+            )
+        else:
+            measurements.append(found)
+    if not measurements:
+        return
+    for measurement in measurements:
+        values = ", ".join(
+            f"{name.removeprefix('dokimi_')} {value:g}"
+            for name, value in sorted(measurement.values.items())
+        )
+        console.say(
+            f"phase 7 (measurement): {measurement.test_id}, read directly from its "
+            f"exporters ({measurement.direction}): {values}"
+        )
+    try:
+        report = confirm_scrape(
+            PrometheusClient(prometheus.endpoint).query,
+            measurements,
+            scrape_interval=SCRAPE_INTERVAL_SECONDS,
+            timeout=SCRAPE_CONFIRMATION_TIMEOUT_SECONDS,
+        )
+        _report_scrape(console, report)
+        artifacts.directory.mkdir(parents=True, exist_ok=True)
+        (artifacts.directory / MEASUREMENT_REPORT).write_text(
+            report.to_json(measurements), encoding="utf-8"
+        )
+    except Exception as error:  # the verdict is the direct read's, whatever happens here
+        console.warn(f"phase 7 (measurement): could not confirm the scrape: {error}")
+    console.say()
+
+
+def _report_scrape(console: Console, report: ScrapeReport) -> None:
+    if report.confirmed:
+        console.say(
+            "phase 7 (measurement): Prometheus holds the series of "
+            + ", ".join(sorted(report.confirmed))
+        )
+    if report.missing:
+        console.warn(
+            f"HISTORY NOT CAPTURED for {', '.join(report.missing)}: Prometheus did not hold "
+            f"its series after {report.timeout:g}s"
+            + (f" ({report.error})" if report.error else "")
+            + ". The verdict comes from the direct read and stands; only the history in "
+            "Prometheus is missing"
+        )
+    for disagreement in report.disagreements:
+        console.warn(
+            f"phase 7 (measurement): {disagreement.test_id} {disagreement.metric}: the direct "
+            f"read found {disagreement.direct!r} and Prometheus holds "
+            f"{disagreement.prometheus!r}. The verdict uses the direct read; the difference "
+            "is a delivery problem worth a look"
+        )
 
 
 #: A test's pods, by their component label. Only these are removed before the claim is

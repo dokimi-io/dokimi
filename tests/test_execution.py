@@ -45,6 +45,7 @@ from dokimi.testtypes.lifecycle import (
     ReadinessGateError,
     WorkloadLostError,
 )
+from tests.fake_exporter import pair_serves
 from tests.fake_resources import FakeResources
 from tests.fake_robot import FakeRobotRunner
 
@@ -337,6 +338,7 @@ def run(
     *,
     context: RunContext | None = None,
     plugin: Any = None,
+    read_metrics: Any = None,
     **overrides: str,
 ) -> Any:
     clock = Clock()
@@ -357,6 +359,13 @@ def run(
         plugin=plugin or Iperf2(image=IMAGES["iperf2"], trigger=trigger),
         clock=clock,
         sleep=clock.sleep,
+        read_metrics=read_metrics
+        or pair_serves(
+            run_id=RUN_ID,
+            protocol=arguments["protocol"],
+            server_ip=SERVER_IP,
+            client_ip=CLIENT_IP,
+        ),
         **arguments,
     )
 

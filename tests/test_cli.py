@@ -7,8 +7,10 @@ as values rather than as "non-zero".
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -91,6 +93,8 @@ class FakePrometheus:
         self.answers = answers
         self.urls: list[str] = []
         self.targets: list[dict[str, object]] = [SCRAPED]
+        #: What a query for a test's series returns: Prometheus's vector, as JSON.
+        self.series: list[dict[str, Any]] = []
 
     def transport(self, url: str) -> Response:
         self.urls.append(url)
@@ -101,7 +105,9 @@ class FakePrometheus:
         if "/api/v1/targets" in url:
             data = {"activeTargets": self.targets}
             return Response(200, json.dumps({"status": "success", "data": data}).encode())
-        return Response(200, b'{"status":"success","data":{"resultType":"vector","result":[]}}')
+        result = self.series if "dokimi_" in urllib.parse.unquote(url) else []
+        body = {"status": "success", "data": {"resultType": "vector", "result": result}}
+        return Response(200, json.dumps(body).encode())
 
     def client(self, endpoint: str) -> PrometheusClient:
         return PrometheusClient(endpoint, transport=self.transport)
@@ -369,7 +375,7 @@ def test_execute_parses_then_plans(
     # Phases 7 to 11 do not exist yet, and a run that stops early must not look like one
     # that passed.
     assert code == ExitCode.INTERNAL
-    assert "the rest of phases 7 to 11 is not implemented" in out.err
+    assert "the rest of phases 8 to 11 is not implemented" in out.err
 
 
 def test_execute_marks_its_run_finished_so_the_next_one_can_start(
@@ -1306,6 +1312,94 @@ def left_pod(fake: FakeCluster, name: str, component: str = "client") -> None:
             }
         },
     )
+
+
+MEASURED = {
+    "dokimi_throughput_bits_per_second": 49983531.0,
+    "dokimi_packet_loss_percent": 0.0,
+}
+
+
+def held_by_prometheus(values: dict[str, float]) -> list[dict[str, Any]]:
+    labels = {"run_id": RUN_ID, "test_id": "pair-001", "direction": "inbound"}
+    return [
+        {"metric": {"__name__": name, **labels}, "value": [0, repr(value)]}
+        for name, value in values.items()
+    ]
+
+
+def test_phase_7_confirms_prometheus_holds_what_the_direct_read_found(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    prometheus: FakePrometheus,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    robot.measures = MEASURED
+    prometheus.series = held_by_prometheus(MEASURED)
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert "phase 7 (measurement): pair-001, read directly from its exporters (inbound)" in out
+    assert "phase 7 (measurement): Prometheus holds the series of pair-001" in out
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "measurement.json").read_text())
+    assert report["scrape_interval_seconds"] == 5
+    (test,) = report["tests"]
+    assert test["source"] == "direct"
+    assert test["history_captured"] is True
+    assert test["prometheus"] == MEASURED
+
+
+def test_a_blocked_scrape_warns_and_the_run_goes_on(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Acceptance criterion: a deliberately blocked scrape is a warning, and the run
+    # completes. Prometheus holds nothing of the test here.
+    robot.measures = MEASURED
+    monkeypatch.setattr(commands, "SCRAPE_CONFIRMATION_TIMEOUT_SECONDS", 0.0)
+
+    code = main(EXECUTE)
+
+    captured = capsys.readouterr()
+    assert "HISTORY NOT CAPTURED for pair-001" in captured.err
+    assert "The verdict comes from the direct read and stands" in captured.err
+    # The run went on to its reports, as before this phase existed.
+    assert "phase 9a (reporting)" in captured.out
+    assert code == ExitCode.INTERNAL
+    report = json.loads((tmp_path / "artifacts" / RUN_ID / "measurement.json").read_text())
+    assert report["tests"][0]["history_captured"] is False
+
+
+def test_a_value_prometheus_holds_differently_is_reported(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    prometheus: FakePrometheus,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    robot.measures = MEASURED
+    prometheus.series = held_by_prometheus(
+        {**MEASURED, "dokimi_throughput_bits_per_second": 40_000_000.0}
+    )
+
+    main(EXECUTE)
+
+    err = capsys.readouterr().err
+    assert "pair-001 dokimi_throughput_bits_per_second: the direct read found 49983531.0" in err
+    assert "Prometheus holds 40000000.0" in err
+
+
+def test_a_pair_without_a_measurement_is_named(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Its test ended before the direct read, by an error Robot's report names.
+    main(EXECUTE)
+
+    assert "pair-001 has no measurement" in capsys.readouterr().err
 
 
 def test_execute_removes_the_test_pods_then_releases_the_cluster(

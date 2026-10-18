@@ -37,7 +37,8 @@ nodes against the cluster, plans the pair, claims the cluster, starts its own Pr
 with a node-exporter when the cluster has none, and checks that it answers. It checks that
 the cluster can run the pair, and then **runs the test through Robot Framework**: it renders
 the suite, deploys the pair's pods, waits until both are Ready, starts the measurement and
-waits for it to finish. Then it stops:
+waits for it to finish. It reads the result directly from the pair's exporters and confirms
+Prometheus holds the same values. Then it stops:
 
 ```
 run 20261002-120000-a1b2c3
@@ -63,11 +64,14 @@ phase 4 (preflight): the cluster is ready
 phase 5 (suite rendering): /work/artifacts/20261002-120000-a1b2c3/suite.robot
 phase 6 (execution): pair-001  worker-01 -> worker-02, one Robot Framework process
 ...
+phase 7 (measurement): pair-001, read directly from its exporters (inbound): jitter_seconds 1.1e-05, packet_loss_percent 0, test_duration_seconds 30, throughput_bits_per_second 9.49e+08, transferred_bytes 3.56e+09
+phase 7 (measurement): Prometheus holds the series of pair-001
+
 phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../report.html
 
-the rest of phases 7 to 11 is not implemented in this build: measurement (#47),
-validation (#48), results (#49), cleanup and outcome (#51). The run stops here without a
-verdict; Robot's report says which steps ran.
+the rest of phases 8 to 11 is not implemented in this build: validation (#48), results
+(#49), cleanup and outcome (#51). The run stops here without a verdict; Robot's report
+says which steps ran.
 phase 11 (cleanup): removed 2 test pod(s)
 phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-exporter
 ```
@@ -77,8 +81,17 @@ node that is missing or cannot take a test pod stops it earlier, in phase 3, wit
 cluster that cannot run the pair stops it in phase 4, with `4`, before any test: see
 [preflight](#preflight).
 
-Four things to know about a run today:
+Five things to know about a run today:
 
+- **The result is read directly from the exporters, and Prometheus only confirms it.**
+  Once a test has finished, each of its pods' exporters is read over `/metrics`, the same
+  surface Prometheus scrapes. The receiver's view, `direction="inbound"`, is the result.
+  An exporter that serves no completed result fails the test as `metrics_missing`, one
+  that serves something unreadable as `exporter_parse`; neither is ever a pass. Then the
+  run asks Prometheus for the same series, for up to a minute (three scrape intervals, at
+  least 60 s). If they never arrive, the run warns `HISTORY NOT CAPTURED` and goes on: the
+  result stands, only its history in Prometheus is missing. A value Prometheus holds
+  differently is reported on its own. Both land in `measurement.json`.
 - **Every pass criterion fails, and says it was not checked.** Evaluating criteria
   arrives with M1-13, so `Throughput Should Be At Least 950 megabits per second` fails with
   "was not checked" rather than passing, or being skipped, without anything compared.
@@ -139,15 +152,18 @@ dokimi.
 
 The grant widens as later phases land, one commented rule per phase.
 
-A test also needs two network paths inside `dokimi-iperf2`. If a NetworkPolicy applies
-there, it has to allow both (ADR-05-03):
+A test also needs three network paths inside `dokimi-iperf2`. If a NetworkPolicy applies
+there, it has to allow all three (ADR-05-03):
 
 - **the Job to each client pod on 5101/TCP.** That is how a test is started: the Job
   connects and sends the server's address, instead of running a command inside the pod;
-- **the client pod to the server pod on 5001,** over the test's protocol, UDP or TCP.
+- **the client pod to the server pod on 5001,** over the test's protocol, UDP or TCP;
+- **the Job to each test pod's exporter on 9101/TCP.** That is how the result is read in
+  phase 7. Phase 4 cannot check this path, because the probe's pods run without the
+  exporter, so a cluster that blocks it fails every test as `metrics_missing`.
 
 Test traffic uses the pod network and IPv4, so a pod network without IPv4 cannot run a
-test. Phase 4 checks both paths and the address family before any test runs, and that a
+test. Phase 4 checks the first two paths and the address family before any test runs, and that a
 pod can resolve a cluster name through the cluster's DNS: see [preflight](#preflight).
 
 The run's managed Prometheus adds three more: the Job to the Prometheus on 9090/TCP, the
@@ -465,7 +481,9 @@ results/20261002-120000-a1b2c3/
   report.html    its report
   output.xml     every pair's results, merged by rebot
   suite.robot    the suite that ran, byte for byte what dokimi convert prints
-  pairs/         one output.xml per pair
+  pairs/         one output.xml per pair, and what its test read directly
+                 (<test-id>.measurement.json)
+  measurement.json  every test's directly read values, and what Prometheus held of them
 ```
 
 `attach` reads `results.directory` from the definition the run was submitted with. A
