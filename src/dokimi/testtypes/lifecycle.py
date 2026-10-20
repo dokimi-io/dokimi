@@ -206,13 +206,15 @@ def await_ready(
     Fails early, rather than at the timeout, for a pod that can no longer become
     ``Ready`` — one that has terminated or been deleted — and for one that cannot get its
     image: after :data:`IMAGE_PULL_ATTEMPTS` failed pulls, or at once for a reference no
-    retry can fix. A failed pull is counted each time the pod's reason returns to a
-    pull failure. One the polls miss is not counted, which only makes the gate wait
-    longer, never shorter.
+    retry can fix. A failed pull is counted each time a container's reason returns to a
+    pull failure, per container: two containers of one pod pulling the same image share
+    the kubelet's back-off, so one can sit in ``ImagePullBackOff`` while the other shows
+    each failure. A pod has failed as often as its most-failed container. One the polls
+    miss is not counted, which only makes the gate wait longer, never shorter.
     """
     deadline = clock() + timeout
-    failed_pulls: dict[Role, int] = {}
-    last_reasons: dict[Role, str] = {}
+    failed_pulls: dict[tuple[Role, str], int] = {}
+    last_reasons: dict[tuple[Role, str], str] = {}
     while True:
         pods: dict[Role, Manifest] = {}
         blocked: dict[Role, str] = {}
@@ -235,18 +237,33 @@ def await_ready(
                 if reason in _IMAGE_PULL_REASONS
                 else ErrorCategory.SCHEDULING
             )
-            if reason in _PULL_FAILED_REASONS and last_reasons.get(role) != reason:
-                failed_pulls[role] = failed_pulls.get(role, 0) + 1
-            last_reasons[role] = reason
+            waiting_reasons = _waiting_reasons(pod)
+            for container, container_reason in waiting_reasons.items():
+                key = (role, container)
+                if (
+                    container_reason in _PULL_FAILED_REASONS
+                    and last_reasons.get(key) != container_reason
+                ):
+                    failed_pulls[key] = failed_pulls.get(key, 0) + 1
+                last_reasons[key] = container_reason
+            pulls = max((n for (r, _), n in failed_pulls.items() if r is role), default=0)
+            unpullable = [
+                f"{container}: {container_reason}"
+                for container, container_reason in waiting_reasons.items()
+                if container_reason in _UNPULLABLE_REASONS
+            ]
+            if unpullable:
+                categories[role] = ErrorCategory.IMAGE_PULL
             phase = (pod.get("status") or {}).get("phase")
             if phase in _TERMINAL_PHASES:
                 blocked[role] = f"pod {name} ended ({phase}) before it was Ready: {why}"
-            elif reason in _UNPULLABLE_REASONS:
-                blocked[role] = f"pod {name} has an image no retry can pull: {why}"
-            elif failed_pulls.get(role, 0) >= IMAGE_PULL_ATTEMPTS:
+            elif unpullable:
                 blocked[role] = (
-                    f"pod {name} failed to pull its image {failed_pulls[role]} times: {why}"
+                    f"pod {name} has an image no retry can pull: {'; '.join(unpullable)}"
                 )
+            elif pulls >= IMAGE_PULL_ATTEMPTS:
+                categories[role] = ErrorCategory.IMAGE_PULL
+                blocked[role] = f"pod {name} failed to pull its image {pulls} times: {why}"
             else:
                 waiting[role] = f"pod {name} not Ready after {timeout:g}s: {why}"
 
@@ -301,6 +318,16 @@ def _only(
 ) -> dict[Role, ErrorCategory]:
     """*categories* for the pods the error is about, not the one that was merely waiting."""
     return {role: categories[role] for role in roles}
+
+
+def _waiting_reasons(pod: Manifest) -> dict[str, str]:
+    """Each container's waiting reason, by container name, for those that are waiting."""
+    reasons: dict[str, str] = {}
+    for container in (pod.get("status") or {}).get("containerStatuses") or []:
+        waiting = (container.get("state") or {}).get("waiting") or {}
+        if waiting.get("reason"):
+            reasons[str(container.get("name"))] = str(waiting["reason"])
+    return reasons
 
 
 def _why(pod: Manifest) -> tuple[str, str]:
