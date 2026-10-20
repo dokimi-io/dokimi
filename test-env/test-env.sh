@@ -7,6 +7,8 @@
 #   test-env/test-env.sh check              verify it provides what a run needs
 #   test-env/test-env.sh nodes              print the schedulable worker names
 #   test-env/test-env.sh load IMAGE         side-load a locally built image into every node
+#   test-env/test-env.sh images             build and load the images a source build runs, and
+#                                           print the exports: out=$(test-env/test-env.sh images) && eval "$out"
 #   test-env/test-env.sh down               delete it and verify nothing was left behind
 #
 # A profile is a tool and a CNI: kind-kindnet, kind-calico, kind-cilium, kind-flannel,
@@ -344,6 +346,41 @@ cmd_load() {
   say "loaded $image into every node of $profile"
 }
 
+# Every image a run from a source checkout needs and cannot pull, because nothing of this
+# code is published (ADR-04-08, ADR-05-08): the tag, its Dockerfile, and the variable that
+# points dokimi at it. tests/test_test_env.py holds this list to the CLI's own registry.
+DEV_IMAGES=(
+  "orchestrator:dev images/orchestrator/Dockerfile DOKIMI_ORCHESTRATOR_IMAGE"
+  "iperf2:dev images/iperf2/Dockerfile DOKIMI_IPERF2_IMAGE"
+)
+
+# The cluster name `images` sets too: a DNS label, as submit requires (ADR-02-07).
+DEV_CLUSTER_NAME=test-env
+
+# Build each of them from this checkout, load it into every node, and print the exports
+# that choose them, so that the whole setup is one line:
+#   out=$(test-env/test-env.sh images) && eval "$out"
+# Assigned first, because eval of an empty string succeeds: a failed build would leave the
+# previous exports in place. Only the exports go to stdout, so that eval sees nothing else;
+# progress goes to stderr.
+cmd_images() {
+  local entry image dockerfile variable exports=""
+  active_profile >/dev/null
+  command -v docker >/dev/null || die "docker is needed to build the images"
+  for entry in "${DEV_IMAGES[@]}"; do
+    read -r image dockerfile variable <<<"$entry"
+    say "building $image from $dockerfile" >&2
+    docker build -f "$repo/$dockerfile" -t "$image" "$repo" >&2 || die "building $image failed"
+    cmd_load "$image" >&2
+    exports="$exports $variable=$image"
+  done
+  # The name every result from this environment is labelled with. submit refuses to run
+  # without one, and this environment has only the one cluster.
+  exports="$exports DOKIMI_CLUSTER=$DEV_CLUSTER_NAME"
+  echo "export${exports}"
+  say "done. eval this output to set:${exports}" >&2
+}
+
 # -- check ---------------------------------------------------------------------------------
 
 failures=0
@@ -527,7 +564,8 @@ case "${1:-}" in
   check) cmd_check ;;
   nodes) cmd_nodes ;;
   load) shift; cmd_load "$@" ;;
+  images) cmd_images ;;
   down) cmd_down ;;
   profiles) cmd_profiles ;;
-  *) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
