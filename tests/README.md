@@ -1,6 +1,6 @@
 # The test suite
 
-777 tests, none of which need a cluster, a network or a container runtime. Everything runs
+785 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -30,7 +30,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_namespaces.py`](test_namespaces.py) | 7 | Per-test-type namespace naming |
 | [`test_testtype_interface.py`](test_testtype_interface.py) | 14 | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
 | [`test_iperf2.py`](test_iperf2.py) | 42 | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, and both role scripts' contracts |
-| [`test_lifecycle.py`](test_lifecycle.py) | 24 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
+| [`test_lifecycle.py`](test_lifecycle.py) | 32 | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | 7 | The Prometheus client, and phase 4's query-access check |
 | [`test_managed_prometheus.py`](test_managed_prometheus.py) | 49 | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
 | [`test_execution.py`](test_execution.py) | 27 | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
