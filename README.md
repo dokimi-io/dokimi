@@ -1,6 +1,7 @@
 # dokimi
 
-Test orchestration framework for functional and non-functional validation of Kubernetes clusters.
+Performance testing for Kubernetes clusters, against pass criteria written into the test.
+What it measures today is network performance between two nodes.
 
 A run deploys a pair of workloads onto two chosen nodes, generates traffic between them, collects
 normalized metrics, evaluates human-readable pass criteria against those metrics, writes a result

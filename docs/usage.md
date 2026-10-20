@@ -31,9 +31,10 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 ## What a run does today
 
 Milestone-01 is not finished. A submitted run parses its definition, resolves its two
-nodes against the cluster, plans the pair, claims the cluster, and then **runs the test
-through Robot Framework**: it renders the suite, deploys the pair's pods, waits until both
-are Ready, starts the measurement and waits for it to finish. Then it stops:
+nodes against the cluster, plans the pair, claims the cluster, starts its own Prometheus,
+with a node-exporter when the cluster has none, and checks that it answers. Then it **runs
+the test through Robot Framework**: it renders the suite, deploys the pair's pods, waits
+until both are Ready, starts the measurement and waits for it to finish. Then it stops:
 
 ```
 run 20261002-120000-a1b2c3
@@ -42,6 +43,14 @@ phase 2 (ingestion): definition parsed
 phase 3 (planning): 1 test, sequential
   pair-001  worker-01 -> worker-02
 phase 4 (preflight): cluster claimed for this run until 2026-10-02T12:20:30Z
+phase 4 (preflight): monitoring mode managed (requested)
+  Prometheus  http://run-20261002-120000-a1b2c3-prometheus.dokimi-iperf2.svc:9090
+  node_exporter       deployed by this run (dokimi-iperf2/run-20261002-120000-a1b2c3-node-exporter)
+  kube_state_metrics  absent
+phase 4 (preflight): Prometheus answers queries
+  node-exporter pods  4 of 4 pods ready
+  kept after the run (ADR-03-02); remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
+  query it from your machine with: kubectl port-forward -n dokimi-iperf2 service/run-20261002-120000-a1b2c3-prometheus 9090:9090
 phase 4 (preflight): the cluster checks are not implemented in this build (M1-07, #42); the run continues without them
 
 phase 5 (suite rendering): /work/artifacts/20261002-120000-a1b2c3/suite.robot
@@ -52,12 +61,14 @@ phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../repor
 the rest of phases 7 to 11 is not implemented in this build: measurement (#47),
 validation (#48), results (#49), cleanup and outcome (#51). The run stops here without a
 verdict; Robot's report says which steps ran.
+phase 11 (cleanup): removed 2 test pod(s)
+phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-exporter
 ```
 
 It exits `5`, not `0`. A run that stops early must not look like a run that passed. A
 node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`.
 
-Three things to know about a run today:
+Four things to know about a run today:
 
 - **Every pass criterion fails, and says it was not checked.** Evaluating criteria
   arrives with M1-13, so `Throughput Should Be At Least 950 megabits per second` fails with
@@ -76,6 +87,9 @@ Three things to know about a run today:
   'dokimi.io/run-id=<run-id>,app.kubernetes.io/component in (client,server)'`, then delete the
   run's owner, `run-<run-id>-owner`, which clears the claim and removes the rest of the run.
   Fetch its reports with `dokimi attach` first if you still need them.
+- **Its Prometheus stays after the run,** with the node metrics it scraped while the run was
+  on; the node-exporter the run deployed is removed with the test pods. Phase 4 prints how
+  to query the Prometheus and how to remove it; see [Cleaning up](#cleaning-up).
 
 Everything else on this page — validation, conversion, dry-run rendering, node
 resolution, submission, streaming, reattachment, exit-code propagation — works now.
@@ -124,8 +138,7 @@ there, it has to allow both (ADR-05-03):
 - **the client pod to the server pod on 5001,** over the test's protocol, UDP or TCP.
 
 Test traffic uses the pod network and IPv4, so a pod network without IPv4 cannot run a
-test. Both paths and the address family are what a test needs once a run deploys its test
-pods. No run does that yet.
+test. Every run's test needs both paths and the address family.
 
 The service account exists only in `dokimi-iperf2`, the namespace
 `deploy/rbac.yaml` creates. A run never creates a namespace, so one submitted with
