@@ -14,7 +14,9 @@ this module is where every test type is held to the same order:
 4. :func:`wait_for_completion` polls ``is_complete()``.
 
 A pod that never becomes ``Ready`` is an error for that test — not absent data, and not
-a network failure. Which error is a machine-readable :class:`ErrorCategory`, not only
+a network failure. A pod whose image failed to pull :data:`IMAGE_PULL_ATTEMPTS` times, or
+whose image reference no retry can fix, fails the gate then, rather than at its timeout.
+Which error is a machine-readable :class:`ErrorCategory`, not only
 text: a pod whose image cannot be pulled is ``image_pull``, ADR-05-05's own category,
 and anything else is ``scheduling``. "Unschedulable: node(s) had untolerated taint" and
 "ImagePullBackOff" point at different fixes, and ADR-05-07's preflight, which reuses
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "DEFAULT_READINESS_TIMEOUT_SECONDS",
+    "IMAGE_PULL_ATTEMPTS",
     "Completes",
     "CompletionTimeoutError",
     "ErrorCategory",
@@ -77,6 +80,22 @@ _IMAGE_PULL_REASONS = frozenset(
         "SignatureValidationFailed",
     }
 )
+
+
+#: How many failed pulls of a pod's image the gate sits through before it gives up. The
+#: kubelet retries a failed pull with a back-off that doubles from 10 s; measured on kind,
+#: the third failure came 50 s after the first, and each stayed visible for about 12 s.
+#: An image that failed three times is very unlikely to arrive in what is left of the
+#: timeout.
+IMAGE_PULL_ATTEMPTS = 3
+
+#: The waiting reasons that mean a pull was just tried and failed. ``ImagePullBackOff`` is
+#: the wait between two tries, so a pod whose pulls keep failing alternates between it
+#: and one of these, and each return to one of these is one more failed attempt.
+_PULL_FAILED_REASONS = frozenset({"ErrImagePull", "RegistryUnavailable"})
+
+#: The reasons no retry can fix: a malformed reference, or a pull the pod forbids.
+_UNPULLABLE_REASONS = frozenset({"InvalidImageName", "ErrImageNeverPull"})
 
 
 class ErrorCategory(enum.Enum):
@@ -185,9 +204,17 @@ def await_ready(
     """The per-test readiness gate: both pods ``Ready``, or :class:`ReadinessGateError`.
 
     Fails early, rather than at the timeout, for a pod that can no longer become
-    ``Ready`` — one that has terminated or been deleted.
+    ``Ready`` — one that has terminated or been deleted — and for one that cannot get its
+    image: after :data:`IMAGE_PULL_ATTEMPTS` failed pulls, or at once for a reference no
+    retry can fix. A failed pull is counted each time a container's reason returns to a
+    pull failure, per container: two containers of one pod pulling the same image share
+    the kubelet's back-off, so one can sit in ``ImagePullBackOff`` while the other shows
+    each failure. A pod has failed as often as its most-failed container. One the polls
+    miss is not counted, which only makes the gate wait longer, never shorter.
     """
     deadline = clock() + timeout
+    failed_pulls: dict[tuple[Role, str], int] = {}
+    last_reasons: dict[tuple[Role, str], str] = {}
     while True:
         pods: dict[Role, Manifest] = {}
         blocked: dict[Role, str] = {}
@@ -210,9 +237,33 @@ def await_ready(
                 if reason in _IMAGE_PULL_REASONS
                 else ErrorCategory.SCHEDULING
             )
+            waiting_reasons = _waiting_reasons(pod)
+            for container, container_reason in waiting_reasons.items():
+                key = (role, container)
+                if (
+                    container_reason in _PULL_FAILED_REASONS
+                    and last_reasons.get(key) != container_reason
+                ):
+                    failed_pulls[key] = failed_pulls.get(key, 0) + 1
+                last_reasons[key] = container_reason
+            pulls = max((n for (r, _), n in failed_pulls.items() if r is role), default=0)
+            unpullable = [
+                f"{container}: {container_reason}"
+                for container, container_reason in waiting_reasons.items()
+                if container_reason in _UNPULLABLE_REASONS
+            ]
+            if unpullable:
+                categories[role] = ErrorCategory.IMAGE_PULL
             phase = (pod.get("status") or {}).get("phase")
             if phase in _TERMINAL_PHASES:
                 blocked[role] = f"pod {name} ended ({phase}) before it was Ready: {why}"
+            elif unpullable:
+                blocked[role] = (
+                    f"pod {name} has an image no retry can pull: {'; '.join(unpullable)}"
+                )
+            elif pulls >= IMAGE_PULL_ATTEMPTS:
+                categories[role] = ErrorCategory.IMAGE_PULL
+                blocked[role] = f"pod {name} failed to pull its image {pulls} times: {why}"
             else:
                 waiting[role] = f"pod {name} not Ready after {timeout:g}s: {why}"
 
@@ -267,6 +318,16 @@ def _only(
 ) -> dict[Role, ErrorCategory]:
     """*categories* for the pods the error is about, not the one that was merely waiting."""
     return {role: categories[role] for role in roles}
+
+
+def _waiting_reasons(pod: Manifest) -> dict[str, str]:
+    """Each container's waiting reason, by container name, for those that are waiting."""
+    reasons: dict[str, str] = {}
+    for container in (pod.get("status") or {}).get("containerStatuses") or []:
+        waiting = (container.get("state") or {}).get("waiting") or {}
+        if waiting.get("reason"):
+            reasons[str(container.get("name"))] = str(waiting["reason"])
+    return reasons
 
 
 def _why(pod: Manifest) -> tuple[str, str]:
