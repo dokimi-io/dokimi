@@ -1,6 +1,6 @@
 # The test suite
 
-772 tests, none of which need a cluster, a network or a container runtime. Everything runs
+773 tests, none of which need a cluster, a network or a container runtime. Everything runs
 in about a second.
 
 ```console
@@ -44,7 +44,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_images.py`](test_images.py) | 15 | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | 25 | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | 22 | Both Dockerfiles and the release wiring keep their promises |
-| [`test_test_env.py`](test_test_env.py) | 27 | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_test_env.py`](test_test_env.py) | 28 | The test environment's configs, scripts, README and CI workflow agree with each other |
 | [`test_workflows.py`](test_workflows.py) | 4 | Every GitHub Action the workflows use is pinned to a commit |
 | [`test_rbac.py`](test_rbac.py) | 12 | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | 26 | The prescribed package layout exists and imports |

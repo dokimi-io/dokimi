@@ -9,8 +9,10 @@ script, the workflow and the README, and that the scripts still run on macOS's b
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import subprocess
 from typing import Any
 
 import pytest
@@ -242,6 +244,36 @@ def test_the_only_sudo_is_behind_load_modules() -> None:
     assert 'if [[ "$1" != yes ]]; then' in function
     assert "die " in function.split('if [[ "$1" != yes ]]; then', 1)[1]
     assert (TEST_ENV / "install-tools.sh").read_text().count("sudo") == 0
+
+
+def test_a_failed_up_says_what_it_kept_and_how_to_remove_it(tmp_path: pathlib.Path) -> None:
+    # #49: the EXIT trap named a local of cmd_up, gone by the time the trap ran, so
+    # `set -u` aborted it with "profile: unbound variable" and its message was lost.
+    # Stubs stand in for the tools; `kind create cluster` is the step that fails. The
+    # bug shows with bash 5, which CI runs; macOS's bash 3.2 happens to hide it here.
+    state = tmp_path / "state"
+    (state / "bin").mkdir(parents=True)
+    # docker prints a line, as the host's kernel snapshot would: an empty one stops `up`
+    # under pipefail before it reaches the cluster.
+    stubs = {"docker": "echo kernel/stub=1", "kubectl": "exit 0", "kind": "exit 1"}
+    for tool, body in stubs.items():
+        stub = state / "bin" / tool
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "up", "kind-kindnet"],
+        env={**os.environ, "TEST_ENV_STATE": str(state)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "unbound variable" not in result.stderr
+    assert "bringing up kind-kindnet failed" in result.stderr
+    assert "test-env/test-env.sh down" in result.stderr
+    assert (state / "profile").read_text().strip() == "kind-kindnet"
 
 
 def test_up_records_the_profile_before_it_creates_anything() -> None:
