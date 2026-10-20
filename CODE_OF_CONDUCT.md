@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at the maintainers, [@floehden](https://github.com/floehden) and [@TheCreeek](https://github.com/TheCreeek). GitHub has no private messages, so to reach us privately, open an issue titled "Code of conduct: private contact" without any details, and one of us will reply with a private channel. If the report concerns one of us, address the other. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement, the maintainers [@floehden](https://github.com/floehden) and [@TheCreeek](https://github.com/TheCreeek). GitHub has no private messages, so to reach us privately, open an issue titled "Code of conduct: private contact" without any details, and one of us will reply with a private channel. If the report concerns one of us, address the other. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
