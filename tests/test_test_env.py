@@ -9,8 +9,10 @@ script, the workflow and the README, and that the scripts still run on macOS's b
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import subprocess
 from typing import Any
 
 import pytest
@@ -244,6 +246,36 @@ def test_the_only_sudo_is_behind_load_modules() -> None:
     assert (TEST_ENV / "install-tools.sh").read_text().count("sudo") == 0
 
 
+def test_a_failed_up_says_what_it_kept_and_how_to_remove_it(tmp_path: pathlib.Path) -> None:
+    # #49: the EXIT trap named a local of cmd_up, gone by the time the trap ran, so
+    # `set -u` aborted it with "profile: unbound variable" and its message was lost.
+    # Stubs stand in for the tools; `kind create cluster` is the step that fails. The
+    # bug shows with bash 5, which CI runs; macOS's bash 3.2 happens to hide it here.
+    state = tmp_path / "state"
+    (state / "bin").mkdir(parents=True)
+    # docker prints a line, as the host's kernel snapshot would: an empty one stops `up`
+    # under pipefail before it reaches the cluster.
+    stubs = {"docker": "echo kernel/stub=1", "kubectl": "exit 0", "kind": "exit 1"}
+    for tool, body in stubs.items():
+        stub = state / "bin" / tool
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "up", "kind-kindnet"],
+        env={**os.environ, "TEST_ENV_STATE": str(state)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "unbound variable" not in result.stderr
+    assert "bringing up kind-kindnet failed" in result.stderr
+    assert "test-env/test-env.sh down" in result.stderr
+    assert (state / "profile").read_text().strip() == "kind-kindnet"
+
+
 def test_up_records_the_profile_before_it_creates_anything() -> None:
     # `down` tears down whichever profile is recorded. Recorded only after creation, a
     # failure inside the create command left a cluster that `down` refused to touch.
@@ -274,3 +306,63 @@ def test_up_announces_the_kernel_settings_the_readme_lists() -> None:
     assert announced
     assert announced == tabled
     assert 'announce_kernel_changes "$profile"' in SCRIPT.read_text()
+
+
+# -- images -----------------------------------------------------------------------------
+
+
+def _dev_images() -> list[tuple[str, str, str]]:
+    """``DEV_IMAGES`` from test-env.sh, as (tag, Dockerfile, variable)."""
+    text = (TEST_ENV / "test-env.sh").read_text()
+    block = re.search(r"^DEV_IMAGES=\(\n(.*?)^\)", text, re.S | re.M)
+    assert block, "test-env.sh no longer defines DEV_IMAGES"
+    entries = re.findall(r'^\s+"(\S+) (\S+) (\S+)"$', block.group(1), re.M)
+    return [(tag, dockerfile, variable) for tag, dockerfile, variable in entries]
+
+
+def test_images_builds_every_image_a_source_build_must_provide() -> None:
+    # An image dokimi builds itself (a new test type, an exporter of its own) has no
+    # default in a checkout, so it must join this list, or `eval "$(test-env.sh images)"`
+    # would leave a source build refused. An upstream image pinned in code needs nothing.
+    from dokimi.run_images import COMPONENTS  # noqa: PLC0415
+
+    variables = {variable for _, _, variable in _dev_images()}
+    unpublished = {c.env_var for c in COMPONENTS.values() if c.release_default() is None}
+
+    assert unpublished, "a checkout has release defaults; the generated digests are set"
+    assert variables == unpublished
+    for _, dockerfile, _ in _dev_images():
+        assert (TEST_ENV.parent / dockerfile).is_file(), dockerfile
+
+
+def test_images_also_names_the_cluster() -> None:
+    # submit refuses to run without a cluster name, and this environment has one cluster:
+    # `eval "$(test-env.sh images)"` sets it with the images, so a first run needs nothing else.
+    text = (TEST_ENV / "test-env.sh").read_text()
+    name = re.search(r"^DEV_CLUSTER_NAME=(\S+)$", text, re.M)
+    assert name, "test-env.sh no longer defines DEV_CLUSTER_NAME"
+    # A DNS label, as submit requires of every cluster name.
+    assert re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", name.group(1))
+    body = re.search(r"^cmd_images\(\) \{\n(.*?)^\}", text, re.S | re.M)
+    assert body, "test-env.sh no longer defines cmd_images"
+    assert "DOKIMI_CLUSTER=$DEV_CLUSTER_NAME" in body.group(1)
+
+
+def test_images_prints_nothing_but_the_exports_on_stdout() -> None:
+    # Its output is meant for eval. Anything else on stdout would be run as a command.
+    text = (TEST_ENV / "test-env.sh").read_text()
+    body = re.search(r"^cmd_images\(\) \{\n(.*?)^\}", text, re.S | re.M)
+    assert body, "test-env.sh no longer defines cmd_images"
+    for line in body.group(1).splitlines():
+        if re.search(r"\b(say|cmd_load|docker build)\b", line):
+            assert ">&2" in line, f"cmd_images writes to stdout: {line.strip()}"
+    assert 'echo "export${exports}"' in body.group(1)
+
+
+def test_the_help_shows_the_whole_header_comment() -> None:
+    # The usage text is the header comment, printed by line range. It used to stop one
+    # line short, cutting the sentence that says what the environment cannot show.
+    lines = (TEST_ENV / "test-env.sh").read_text().splitlines()
+    last_comment = next(i for i, line in enumerate(lines) if not line.startswith("#"))
+    printed = re.search(r"sed -n '2,(\d+)p'", "\n".join(lines))
+    assert printed and int(printed.group(1)) == last_comment

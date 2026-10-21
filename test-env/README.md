@@ -57,6 +57,7 @@ not because a run needs them.
 | `check` | Verify the cluster provides what a run needs — see below |
 | `nodes` | Print the schedulable workers, one per line, for use in a test definition |
 | `load IMAGE` | Side-load a locally built image into every node |
+| `images` | Build the orchestrator and `iperf2` images from this checkout, load them into every node, and print the exports that point dokimi at them and name the cluster `test-env` (`DOKIMI_CLUSTER`). Use it as `out=$(test-env/test-env.sh images) && eval "$out"`, so a failed build stops there |
 | `down` | Delete the cluster, then fail if any Docker container, volume or network labelled with it remains |
 | `profiles` | List the profiles |
 
@@ -180,10 +181,7 @@ the job summary, where a reader of a green run will see it.
 
 ```console
 $ test-env/test-env.sh up kind-kindnet
-$ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
-$ docker build -f images/iperf2/Dockerfile -t iperf2:dev .
-$ test-env/test-env.sh load orchestrator:dev
-$ test-env/test-env.sh load iperf2:dev
+$ out=$(test-env/test-env.sh images) && eval "$out"  # build, load, set both images and DOKIMI_CLUSTER
 $ kubectl apply -f deploy/rbac.yaml
 $ test-env/test-env.sh nodes
 dokimi-worker
@@ -194,8 +192,7 @@ dokimi-worker3
 Put two of those names in the definition's `placement`, then submit:
 
 ```console
-$ export KUBECONFIG=.test-env/kubeconfig DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
-$ export DOKIMI_CLUSTER=test-env  # the name every result is labelled with
+$ export KUBECONFIG=.test-env/kubeconfig
 $ uv run dokimi submit test.yaml --dry-run --kubeconfig .test-env/kubeconfig
 $ uv run dokimi submit test.yaml --service-account dokimi
 ```

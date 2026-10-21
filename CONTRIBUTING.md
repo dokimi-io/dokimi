@@ -4,6 +4,10 @@ Thank you for considering it. dokimi is young: the first release, 0.1, is still 
 things move quickly. This page says how we work, and what we hold every change to, including our
 own.
 
+Everyone who takes part follows our [code of conduct](CODE_OF_CONDUCT.md). A security problem
+goes to the maintainers privately, as [SECURITY.md](SECURITY.md) describes, never into a public
+issue.
+
 ## Before you start
 
 - **A small fix** (a typo, a wrong message, a missing test) can go straight to a pull request.

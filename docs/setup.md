@@ -99,20 +99,20 @@ every distribution shares, and last until `wsl --shutdown` rather than a reboot.
 is in [what it changes on your machine](../test-env/README.md#what-it-changes-on-your-machine).
 
 The cluster needs the orchestrator image and the `iperf2` workload image, and a local build
-is in no registry it can reach — so build both and load them in directly:
+is in no registry it can reach. One command builds both from your checkout, loads them into
+every node, and sets the variables that point dokimi at them:
 
 ```console
-$ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
-$ docker build -f images/iperf2/Dockerfile -t iperf2:dev .
-$ test-env/test-env.sh load orchestrator:dev
-$ test-env/test-env.sh load iperf2:dev
-$ export DOKIMI_IMAGE=orchestrator:dev DOKIMI_IPERF2_IMAGE=iperf2:dev
-$ export DOKIMI_CLUSTER=test-env
+$ out=$(test-env/test-env.sh images) && eval "$out"
 ```
 
-A source checkout has no default for either, so `submit` refuses without them
-([Usage](usage.md#choosing-the-images-a-run-deploys)). The cluster's name has no default
-anywhere: it labels every result ([Usage](usage.md#naming-the-cluster)).
+Not `eval "$(…)"` on its own: if a build fails, that `eval` runs an empty string and succeeds,
+the shell keeps the previous exports, and the next run quietly uses the previous build. This
+form stops at the failure. That is `orchestrator:dev` as `DOKIMI_ORCHESTRATOR_IMAGE` and `iperf2:dev` as
+`DOKIMI_IPERF2_IMAGE`. A source checkout has no default for either, so `submit` refuses
+without them ([Usage](usage.md#choosing-the-images-a-run-deploys)). It also names the
+cluster `test-env` (`DOKIMI_CLUSTER`), the name every result from it is labelled with. Run
+it again after changing the code, to rebuild what the cluster runs.
 
 Create the namespaces and grant the run's Job what it needs, once:
 

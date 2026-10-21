@@ -1,6 +1,7 @@
 # dokimi
 
-Test orchestration framework for functional and non-functional validation of Kubernetes clusters.
+Performance testing for Kubernetes clusters, against pass criteria written into the test.
+What it measures today is network performance between two nodes.
 
 A run deploys a pair of workloads onto two chosen nodes, generates traffic between them, collects
 normalized metrics, evaluates human-readable pass criteria against those metrics, writes a result
@@ -508,9 +509,11 @@ rather than a separate synthetic pod. A failure aborts the run immediately with 
 not ready" error, before any test pair is attempted.
 
 **Per-test readiness gate** (inside phase 6), before `start()` is called: both client and server
-pods confirmed `Ready` via the Kubernetes API, with an explicit timeout. A pod that never becomes
-`Ready` is a `scheduling` error for that specific test — not silently absent data, and not confused
-with a genuine network failure.
+pods confirmed `Ready` via the Kubernetes API, within 300 s. A pod that never becomes `Ready` is an
+error for that specific test — not silently absent data, and not confused with a genuine network
+failure: `image_pull` if it could not get its image, `scheduling` otherwise. The gate gives up on an
+image after three failed pulls, about a minute, and at once on a reference no retry can fix, rather
+than waiting out the 300 s.
 
 **Post-run diagnostic snapshot** (phase 10), after the last test and before cleanup, while
 everything still exists: pod-to-node placement for every run-owned pod, each pod's final status,
