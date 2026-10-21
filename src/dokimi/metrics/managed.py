@@ -584,8 +584,9 @@ def remove_node_exporter(cluster: ResourceClient, exporter: NodeExporter) -> boo
     """Delete the node-exporter this run deployed. False if it was not this run's.
 
     A run cleans up what it created and nothing else: the cluster's own node-exporter, or
-    one a crashed run left, stays. Deleted by its uid, so a same-named DaemonSet created
-    since is never hit. Its pods go with it, through the garbage collector.
+    one a crashed run left, stays. Its uid is read just before the delete and required by
+    it, which covers only the moment between the two calls; the name is the run's own, so
+    nothing else is expected under it. Its pods go with it, through the garbage collector.
 
     Raises:
         ClusterError: if the API server refused the deletion.
