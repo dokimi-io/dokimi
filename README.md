@@ -370,6 +370,7 @@ Every framework metric carries:
 
 | Label | Meaning |
 | --- | --- |
+| `cluster` | What the operator called the cluster at submission, `--cluster` or `DOKIMI_CLUSTER`: a DNS label, required, never derived (ADR-02-07) |
 | `run_id` | Unique per run, generated at setup, stable for the whole run. Format is `YYYYMMDD-HHMMSS-xxxxxx` — a UTC timestamp, then six characters of `[0-9a-z]` (ADR-02-08) — not a UUID: it stays readable in a log line, orders naturally in the result artifact, and is spelled the same way in every label, object name and row |
 | `test_id` | Unique per test within a run; one source/target/parameter combination. Stable across repetitions |
 | `repetition` | A separate label rather than folded into `test_id`, so aggregating a pair's repetitions is a plain `avg by (test_id)` |
@@ -816,9 +817,10 @@ Recorded here so they are not mistaken for oversights:
 - **Configuration source precedence.** Which source wins when several disagree, whether conflicts
   warn, whether a strict mode makes them an error, and where secrets live — neither YAML in a
   repository nor Robot variables are acceptable homes for a Prometheus credential.
-- **Whether a `cluster` label joins the required set**, and how a stable cluster identifier would be
-  derived. Context names are local to a kubeconfig and differ between engineers, so they are poor
-  stable identity; the `kube-system` namespace UID is the common alternative.
+- **How a stable cluster identifier would be derived.** `cluster` is a required label, given by the
+  operator at submission (ADR-02-07); it records what they called the cluster, not an identity.
+  Context names are local to a kubeconfig and differ between engineers, so they are poor stable
+  identity; the `kube-system` namespace UID is the common alternative.
 - **Multi-cluster connectivity strategy** — pod IP, Service, NodePort, LoadBalancer, host network,
   multi-cluster CNI, or external interfaces.
 
