@@ -44,6 +44,7 @@ from dokimi.k8s.ownership import (
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import Submission, follow, plan_submission, submit
 from dokimi.metrics.managed import (
+    NODE_EXPORTER_COMPONENT,
     NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
@@ -61,6 +62,7 @@ from dokimi.metrics.prometheus import (
 )
 from dokimi.model import DEFAULT_RESULTS_DIRECTORY, ConfigError, Criterion, TestDefinition, TestType
 from dokimi.planning import Plan, discover, plan_run
+from dokimi.preflight import check_cluster, node_exporter_reachability
 from dokimi.run_identity import RunId
 from dokimi.run_images import (
     COMPONENTS,
@@ -70,12 +72,26 @@ from dokimi.run_images import (
     resolve_run_images,
 )
 from dokimi.testtypes.interface import Role, WorkloadImage
+from dokimi.testtypes.probe import Probes
 
-__all__ = ["Console", "attach", "convert", "execute", "show_image", "submit_run", "validate"]
+__all__ = [
+    "Console",
+    "attach",
+    "convert",
+    "execute",
+    "preflight",
+    "show_image",
+    "submit_run",
+    "validate",
+]
 
 #: How phase 6 runs Robot Framework. A module attribute so that a test can replace
 #: the subprocess with a fake without a real Robot or a real cluster.
 ROBOT_RUNNER: Callable[[], RobotRunner] = SubprocessRobotRunner
+
+#: The plugin phase 4 probes the cluster with; ``None`` is the run's own. A module
+#: attribute so that a test can replace its pods with ones that are already Ready.
+PREFLIGHT_PLUGIN: Probes | None = None
 
 #: How long phase 4 waits for the run's Prometheus to answer a query. Module-level so a
 #: test can shorten it without a real clock.
@@ -140,9 +156,12 @@ def submit_run(
     kubeconfig: str | None = None,
     context: str | None = None,
     follow_logs: bool = True,
+    preflight_only: bool = False,
     connect_to: Callable[..., ClusterClient] | None = None,
 ) -> int:
     """Validate locally, then either render the run or create it.
+
+    *preflight_only* submits the same run, whose Job stops after phase 4 (:func:`preflight`).
 
     Every image is resolved here, before anything else happens: the orchestrator's, and
     the ones the run deploys (ADR-04-08). A source build given no override for one of them
@@ -168,6 +187,7 @@ def submit_run(
         run_id=run_id,
         namespace=namespace,
         service_account=service_account,
+        preflight_only=preflight_only,
     )
 
     if dry_run:
@@ -195,6 +215,50 @@ def submit_run(
         submission.namespace,
         submission.run_id,
         Path(definition.results_directory),
+        expect_artifacts=not preflight_only,
+    )
+
+
+def preflight(
+    console: Console,
+    *,
+    path: Path,
+    namespace: str | None = None,
+    run_id: str | None = None,
+    image_override: str | None = None,
+    images: Sequence[str] = (),
+    service_account: str | None = None,
+    cluster_name: str | None = None,
+    kubeconfig: str | None = None,
+    context: str | None = None,
+    follow_logs: bool = True,
+    connect_to: Callable[..., ClusterClient] | None = None,
+) -> int:
+    """Check the cluster for *path*'s run, and run no test: the standalone preflight.
+
+    The same run as :func:`submit_run` submits, whose Job stops after phase 4. So it is
+    the same code as a run's own preflight, not a second implementation of it (ADR-05-07):
+    it claims the cluster, provisions the run's Prometheus, deploys the first pair in probe
+    mode, and removes the pair again. It exits 0 if every check passed and 4 if one failed.
+
+    Not a preview: ``--dry-run`` renders what a run would create and creates nothing,
+    while this creates and schedules real pods, because that is the only way to see
+    whether they schedule and connect.
+    """
+    return submit_run(
+        console,
+        path=path,
+        namespace=namespace,
+        run_id=run_id,
+        image_override=image_override,
+        images=images,
+        service_account=service_account,
+        cluster_name=cluster_name,
+        kubeconfig=kubeconfig,
+        context=context,
+        follow_logs=follow_logs,
+        preflight_only=True,
+        connect_to=connect_to,
     )
 
 
@@ -238,6 +302,7 @@ def execute(
     env: Mapping[str, str] | None = None,
     artifacts_root: Path | None = None,
     robot_directory: Path | None = None,
+    preflight_only: bool = False,
 ) -> int:
     """The in-cluster entry point: what the submitted Job runs.
 
@@ -248,12 +313,16 @@ def execute(
     Phases 2 and 3 are implemented, and phase 4 begins with the run-exclusivity claim
     (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). Phase 4 then provisions
     the run's managed Prometheus, with a node-exporter when the cluster has none, and
-    verifies it answers queries (ADR-03-02), before any workload exists; a Prometheus
-    that cannot be queried exits 4 as well. Phases 5, 6 and 9a render the suite, run it
-    through Robot Framework once per pair, and merge the reports into the run's artifact
+    verifies it answers queries (ADR-03-02), before any workload exists. Then the cluster
+    checks (ADR-05-07, :mod:`dokimi.preflight`): the planned nodes, and the first pair in
+    probe mode, which is removed again before phase 5. A failed check exits 4 as well,
+    and nothing in the matrix runs. Phases 5, 6 and 9a render the suite, run it through
+    Robot Framework once per pair, and merge the reports into the run's artifact
     directory (ADR-01-08).
 
-    Not built yet: preflight's checks (M1-07, #42), measurement (M1-12, #47), validation
+    With *preflight_only* the run stops after phase 4 and exits 0: ``dokimi preflight``.
+
+    Not built yet: measurement (M1-12, #47), validation
     (M1-13, #48), the result artifact (M1-14, #49), and cleanup and the real exit code
     (M1-16, #51). Rather than exit 0 and let a submitter read that as a passing run, this
     reports an orchestrator error and names what is missing.
@@ -348,13 +417,53 @@ def execute(
             "  kept after the run (ADR-03-02); remove it with: " + removal_command(prometheus)
         )
         console.say("  query it from your machine with: " + port_forward_command(prometheus))
+
+        # ADR-05-07: the cluster checks, against the nodes as they are now rather than at
+        # planning, and the first pair in probe mode. A failure raises and exits 4.
+        report = check_cluster(
+            definition,
+            plan,
+            discover(cluster),
+            resources=resources,
+            run_id=str(resolved_run_id),
+            namespace=resolved_namespace,
+            cluster=run_cluster,
+            images=run_images,
+            plugin=PREFLIGHT_PLUGIN,
+        )
+        console.say(f"phase 4 (preflight): nodes {', '.join(report.nodes)} accept test pods")
+        console.say(
+            f"phase 4 (preflight): {report.pair.test_id} scheduled, pulled its image and "
+            f"connected, as {', '.join(sorted(report.pods.values()))}"
+        )
+        console.say(f"  {report.probe}")
+        if node_exporter is not None or any(
+            exporter.kind == NODE_EXPORTER_COMPONENT for exporter in supporting
+        ):
+            # Late in the phase, so that Prometheus has had its first scrapes. A warning:
+            # node metrics explain a result, they never decide one (ADR-03-02).
+            unreachable = node_exporter_reachability(
+                PrometheusClient(prometheus.endpoint), NODE_EXPORTER_COMPONENT
+            )
+            if unreachable is not None:
+                console.warn(
+                    f"node-exporter: {unreachable}. The run continues without node metrics"
+                )
+        # The probe is never next to a test: its pods go before phase 5, and phase 6
+        # deploys the pair afresh.
+        if not _remove_test_pods(
+            console, resources, resolved_run_id, resolved_namespace, phase="phase 4 (preflight)"
+        ):
+            raise ClusterError(
+                "the preflight's probe pods could not be removed, so no test starts next to them"
+            )
         # A phase line, so on the same stream as the others: stdout and stderr reach the
         # Job's log through separate pipes, and lines microseconds apart can swap.
-        console.say(
-            "phase 4 (preflight): the cluster checks are not implemented in this build "
-            "(M1-07, #42); the run continues without them"
-        )
+        console.say("phase 4 (preflight): the cluster is ready")
         console.say()
+        if preflight_only:
+            console.say("preflight only: the run stops before any test, as asked")
+            return ExitCode.PASS
 
         suite = render_suite(definition, artifacts)
         console.say(f"phase 5 (suite rendering): {suite}")
@@ -435,6 +544,7 @@ def _remove_test_pods(
     run_id: RunId,
     namespace: str,
     *,
+    phase: str = "phase 11 (cleanup)",
     timeout: float | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -469,7 +579,7 @@ def _remove_test_pods(
         console.warn(f"could not remove run {run_id}'s test pods: {error}")
         return False
     if report.deleted:
-        console.say(f"phase 11 (cleanup): removed {len(report.deleted)} test pod(s)")
+        console.say(f"{phase}: removed {len(report.deleted)} test pod(s)")
     return True
 
 
@@ -549,7 +659,13 @@ def show_image(
 
 
 def _follow(
-    console: Console, cluster: ClusterClient, namespace: str, run_id: str, results: Path
+    console: Console,
+    cluster: ClusterClient,
+    namespace: str,
+    run_id: str,
+    results: Path,
+    *,
+    expect_artifacts: bool = True,
 ) -> int:
     """Stream the run, keep its artifacts out of what is printed, and extract them.
 
@@ -576,7 +692,8 @@ def _follow(
         )
         return ExitCode.INTERRUPTED
     finally:
-        _store_artifacts(console, receiver, results / run_id, ended=ended)
+        # A preflight writes no artifacts, so their absence is not worth a note.
+        _store_artifacts(console, receiver, results / run_id, ended=ended and expect_artifacts)
 
 
 def _store_artifacts(

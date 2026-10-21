@@ -16,10 +16,17 @@
 # from the pod's status, and the full output stays in the results directory for the
 # exporter sidecar to parse (ADR-02-02).
 #
+# With --probe-dns NAME the client is the run-level preflight's probe (ADR-05-07): the
+# same pod, started the same way, but instead of warming up and measuring it makes a
+# one-second exchange with the server and resolves NAME, the two checks only a pod can
+# make. It reports both as key=value lines in the termination message and exits 0 if both
+# passed, 69 if no traffic reached the server, 68 if only the name did not resolve.
+#
 # Usage:
 #   dokimi-iperf2-client --protocol udp|tcp --port N --trigger-port N \
 #       --source-port N --warmup-source-port N \
-#       --bandwidth BITS_PER_SECOND --duration SECONDS --warmup SECONDS --results DIR
+#       --bandwidth BITS_PER_SECOND --duration SECONDS --warmup SECONDS --results DIR \
+#       [--probe-dns NAME]
 
 set -eu
 
@@ -46,7 +53,7 @@ valid_ipv4() {
 }
 
 protocol="" port="" trigger_port="" source_port="" warmup_source_port=""
-bandwidth="" duration="" warmup="" results=""
+bandwidth="" duration="" warmup="" results="" probe_dns=""
 while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || usage "$1 needs a value"
     case $1 in
@@ -59,6 +66,7 @@ while [ $# -gt 0 ]; do
         --duration) duration=$2 ;;
         --warmup) warmup=$2 ;;
         --results) results=$2 ;;
+        --probe-dns) probe_dns=$2 ;;
         *) usage "unknown argument $1" ;;
     esac
     shift 2
@@ -97,6 +105,35 @@ printf '%s\n' "$server" >"$results/iperf2.peer"
 # and a client reported NotReady for its whole measurement would be skipped by anything
 # that selects Ready endpoints, the exporter's scrape among them.
 : >/tmp/dokimi-started
+
+if [ -n "$probe_dns" ]; then
+    connectivity=failed dns=skipped
+    # Low and short: the probe proves the path carries traffic, not what it carries.
+    # KILL, because iperf2 sits out a dropped TCP connect for minutes and ignores TERM.
+    # shellcheck disable=SC2086
+    timeout -s KILL 15 iperf -c "$server" -p "$port" $udp -b 10000000 -t 1 \
+        >/tmp/probe.log 2>&1 || true
+    cat /tmp/probe.log >&2
+    # iperf2 exits 0 even when nothing arrived, so its output decides. Over UDP only the
+    # server's report, sent back at the end, proves the datagrams reached it; over TCP
+    # the connection line is printed once the handshake has completed.
+    case $protocol in
+        udp) evidence="Server Report:" ;;
+        *) evidence=" connected with " ;;
+    esac
+    if grep -q "$evidence" /tmp/probe.log; then
+        connectivity=ok
+        # Only once the pod network works: without it the cluster's DNS is unreachable
+        # too, and reporting dns would point at the wrong fix.
+        if timeout -s KILL 15 getent hosts "$probe_dns" >&2; then dns=ok; else dns=failed; fi
+    fi
+    echo "probe: connectivity=$connectivity dns=$dns" >&2
+    printf 'server=%s\nconnectivity=%s\ndns=%s\n' "$server" "$connectivity" "$dns" \
+        2>/dev/null >/dev/termination-log || true
+    [ "$connectivity" = ok ] || exit 69
+    [ "$dns" = ok ] || exit 68
+    exit 0
+fi
 
 # The discarded warm-up pass (ADR-04-04): same path and parameters, output thrown away.
 # Its failure is reported, not fatal - the measurement that follows is what counts.

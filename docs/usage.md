@@ -9,6 +9,7 @@ $ dokimi validate test.yaml          # parse and check, no cluster involved
 $ dokimi convert test.yaml           # print the Robot suite a run executes
 $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
+$ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
 ```
 
@@ -17,6 +18,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [validate](#validate)
 - [convert](#convert)
 - [submit](#submit)
+- [preflight](#preflight)
 - [attach](#attach)
 - [image](#image)
 - [The run's reports](#the-runs-reports)
@@ -32,9 +34,10 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 
 Milestone-01 is not finished. A submitted run parses its definition, resolves its two
 nodes against the cluster, plans the pair, claims the cluster, starts its own Prometheus,
-with a node-exporter when the cluster has none, and checks that it answers. Then it **runs
-the test through Robot Framework**: it renders the suite, deploys the pair's pods, waits
-until both are Ready, starts the measurement and waits for it to finish. Then it stops:
+with a node-exporter when the cluster has none, and checks that it answers. It checks that
+the cluster can run the pair, and then **runs the test through Robot Framework**: it renders
+the suite, deploys the pair's pods, waits until both are Ready, starts the measurement and
+waits for it to finish. Then it stops:
 
 ```
 run 20261002-120000-a1b2c3
@@ -51,7 +54,11 @@ phase 4 (preflight): Prometheus answers queries
   node-exporter pods  4 of 4 pods ready
   kept after the run (ADR-03-02); remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
   query it from your machine with: kubectl port-forward -n dokimi-iperf2 service/run-20261002-120000-a1b2c3-prometheus 9090:9090
-phase 4 (preflight): the cluster checks are not implemented in this build (M1-07, #42); the run continues without them
+phase 4 (preflight): nodes worker-01, worker-02 accept test pods
+phase 4 (preflight): pair-001 scheduled, pulled its image and connected, as run-20261002-120000-a1b2c3-pair-001-preflight-client, run-20261002-120000-a1b2c3-pair-001-preflight-server
+  UDP to the server pod at 10.244.2.7:5001 arrived, and kubernetes.default.svc resolved
+phase 4 (preflight): removed 2 test pod(s)
+phase 4 (preflight): the cluster is ready
 
 phase 5 (suite rendering): /work/artifacts/20261002-120000-a1b2c3/suite.robot
 phase 6 (execution): pair-001  worker-01 -> worker-02, one Robot Framework process
@@ -66,7 +73,9 @@ phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-export
 ```
 
 It exits `5`, not `0`. A run that stops early must not look like a run that passed. A
-node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`.
+node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`. A
+cluster that cannot run the pair stops it in phase 4, with `4`, before any test: see
+[preflight](#preflight).
 
 Four things to know about a run today:
 
@@ -138,7 +147,14 @@ there, it has to allow both (ADR-05-03):
 - **the client pod to the server pod on 5001,** over the test's protocol, UDP or TCP.
 
 Test traffic uses the pod network and IPv4, so a pod network without IPv4 cannot run a
-test. Every run's test needs both paths and the address family.
+test. Phase 4 checks both paths and the address family before any test runs, and that a
+pod can resolve a cluster name through the cluster's DNS: see [preflight](#preflight).
+
+The run's managed Prometheus adds three more: the Job to the Prometheus on 9090/TCP, the
+Prometheus to each test pod's exporter on 9101/TCP, and the Prometheus to the
+node-exporter on 9137/TCP on each node's own address, if the run deployed one. Phase 4
+checks the first and warns about the last; node metrics explain a result and never decide
+one, so a run continues without them.
 
 The service account exists only in `dokimi-iperf2`, the namespace
 `deploy/rbac.yaml` creates. A run never creates a namespace, so one submitted with
@@ -349,6 +365,49 @@ This is not special handling so much as the absence of it. The Job is a server-s
 Kubernetes resource; nothing about it is tied to the client's connection. Killing the CLI
 outright has the same effect.
 
+## preflight
+
+```console
+$ dokimi preflight test.yaml --service-account dokimi
+```
+
+Checks that the cluster can run the definition's tests, and runs none of them. It submits
+the same run `submit` would, whose Job stops after phase 4, so it checks exactly what a run
+checks, with the same code (ADR-05-07). It exits `0` if the cluster is ready and `4` if not,
+with the check that failed:
+
+```
+dokimi: cluster not ready (connectivity): the probe of pair-001 (worker-01 -> worker-02): no UDP to the server pod at 10.244.2.7:5001 arrived
+```
+
+Phase 4 runs these checks in this order, in every run, and stops at the first that fails:
+
+| Check | What failed | Where to look |
+| --- | --- | --- |
+| `run_already_active` | another run holds the cluster | [One run at a time](#one-run-at-a-time) |
+| `prometheus_unreachable` | the run's Prometheus did not answer a query within 180 s | its pod, and the Job's path to it on 9090/TCP |
+| `node_count` | a node the plan needs is gone, or no longer takes a test pod, since phase 3 read it | `kubectl get nodes` |
+| `scheduling` | a pod of the first pair could not be placed | its events: resources, taints, quotas |
+| `image_pull` | a pod of the first pair was placed, and could not get its image | the image reference, the registry, the pull credentials |
+| `connectivity` | the Job could not reach the client pod, or no traffic from the client reached the server | NetworkPolicies, the CNI, an IPv4 pod network |
+| `dns` | the pod network works, and `kubernetes.default.svc` did not resolve inside the client pod | the cluster's DNS |
+
+The scheduling, image and network checks reuse the run's first pair: its two pods, on its
+two nodes, from its image. The only difference is the client's start: instead of
+warming up and measuring, it sends one second of traffic at 10 Mbit/s to the server and
+resolves `kubernetes.default.svc`. Both pods are removed before phase 5, and the test
+deploys the pair afresh, so the probe never runs next to a test.
+
+`dokimi preflight` is not a preview. `submit --dry-run` renders what a run would create and
+creates nothing; this creates real pods, because whether they schedule and connect can
+only be seen by trying. It claims the cluster while it runs, provisions the run's managed
+Prometheus, which is kept as every run's is, and removes everything else it deployed.
+
+A passed preflight is a floor, not a guarantee: one pair, under no load, says nothing about
+what the full matrix will meet.
+
+`preflight` takes the same flags as `submit`, except `--dry-run`.
+
 ## attach
 
 ```console
@@ -439,7 +498,7 @@ implementation detail (ADR-01-08).
 | `1` | run completed, at least one non-optional pair failed |
 | `2` | at least one non-optional pair errored, or a post-run anomaly |
 | `3` | invalid request — a bad definition, run id or flag — detected before anything was created |
-| `4` | run-level preflight failure, including another run being active (`run_already_active`) |
+| `4` | run-level preflight failure: another run being active (`run_already_active`), or a cluster check (`cluster not ready (<check>)`, see [preflight](#preflight)) |
 | `5` | internal or unexpected orchestrator error |
 | `130` | you pressed Ctrl-C |
 
@@ -503,8 +562,10 @@ The cluster's nodes are: control-plane, worker-01, worker-02
 All of these are `config_error`, exit `3`, and happen before anything is deployed.
 
 Whether a node has *room* for the pod is a different question — it depends on requests,
-other workloads and timing — and belongs to preflight (M1-07), which asks the scheduler
-rather than guessing on its behalf.
+other workloads and timing — and phase 4 answers it by asking the scheduler rather than
+guessing on its behalf: it deploys the first pair once ([preflight](#preflight)). Phase 4
+also reads the nodes again, so a node lost between planning and the tests is a
+`node_count` failure, exit `4`, rather than a test that never starts.
 
 The plan is recorded in the run's metadata: the placement mode (`explicit`), the
 concurrency (`sequential`), and each pair's `test_id` and nodes. Test ids are

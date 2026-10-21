@@ -157,10 +157,11 @@ rules:
     resources: ["daemonsets"]
     verbs: ["create", "get", "list", "delete"]
   # Phase 6 creates each pair's client and server pods, and reads them for the readiness
-  # gate and for completion (ADR-05-07, ADR-02-01). Phase 11 lists and deletes them before
-  # the run releases the cluster, so that no test can still be sending (ADR-05-13). No
-  # pods/exec: a test starts over its trigger port, and completion is read from the
-  # pod's status.
+  # gate and for completion (ADR-05-07, ADR-02-01). Phase 4 does the same for the first
+  # pair in probe mode, and deletes those pods before phase 5. Phase 11 lists and deletes
+  # them before the run releases the cluster, so that no test can still be sending
+  # (ADR-05-13). No pods/exec: a test starts over its trigger port, and completion is read
+  # from the pod's status.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["create", "get", "list", "delete"]

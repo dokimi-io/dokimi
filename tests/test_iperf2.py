@@ -21,6 +21,7 @@ from dokimi.k8s.resources import POD, Manifest
 from dokimi.model import ConfigError, Duration
 from dokimi.testtypes.images import WorkloadImageError
 from dokimi.testtypes.interface import (
+    EXPORTER_PORT_NAME,
     Capability,
     ClusterFacts,
     DeployedWorkload,
@@ -33,6 +34,7 @@ from dokimi.testtypes.iperf2 import (
     CONTAINER_NAME,
     IPERF_PORT,
     MEASUREMENT_SOURCE_PORT,
+    PROBE_DNS_NAME,
     TRIGGER_PORT,
     WARMUP_SOURCE_PORT,
     Completion,
@@ -41,6 +43,7 @@ from dokimi.testtypes.iperf2 import (
     tcp_trigger,
 )
 from dokimi.testtypes.lifecycle import NotReadyError, WorkloadLostError
+from dokimi.testtypes.probe import PROBE_SECONDS, ProbeCheck, ProbeResult, Probes
 from tests.fake_resources import FakeResources
 
 DIGEST = "sha256:" + "b" * 64
@@ -330,8 +333,9 @@ def test_each_script_accepts_exactly_the_flags_the_plugin_passes(
     # The scripts are the contract between the orchestrator and the pod, and they live in
     # the image. Nothing else would notice the two drifting apart until a real run.
     accepted = set(re.findall(r"^\s+(--[a-z-]+)\)", script.read_text(), re.MULTILINE))
+    passed = container(Iperf2(image=IMAGE).probe(params(), PLACEMENT).pods[role])["args"]
 
-    assert accepted == set(role_args(role))
+    assert accepted == set(role_args(role)) | set(passed[::2])
 
 
 def test_a_started_client_stays_ready() -> None:
@@ -499,3 +503,108 @@ def test_the_tcp_trigger_gives_up_after_its_attempts() -> None:
     with pytest.raises(ConnectionError, match="could not start the client"):
         tcp_trigger("127.0.0.1", port, b"x", attempts=3, timeout=1, sleep=slept.append)
     assert slept == [1.0, 1.0]
+
+
+# -- the probe (ADR-05-07) ---------------------------------------------------------------
+
+
+def test_iperf2_has_a_probe_mode() -> None:
+    assert isinstance(Iperf2(), Probes)
+
+
+def test_the_probe_is_the_pair_itself_with_one_argument_more_and_no_exporter() -> None:
+    # Same nodes, same image, same parameters: what the preflight schedules, pulls and
+    # connects is exactly what the test will. Only the client's arguments and the exporter
+    # differ.
+    plugin = Iperf2(image=IMAGE)
+    test = plugin.workload(params(), PLACEMENT)
+    probe = plugin.probe(params(), PLACEMENT)
+
+    for role in Role:
+        probe_pod, test_pod = probe.pods[role], test.pods[role]
+        assert {**probe_pod, "spec": {}} == {**test_pod, "spec": {}}
+        assert {**probe_pod["spec"], "containers": []} == {**test_pod["spec"], "containers": []}
+    assert container(probe.pods[Role.SERVER]) == container(test.pods[Role.SERVER])
+    assert container(probe.pods[Role.CLIENT])["args"] == [
+        *container(test.pods[Role.CLIENT])["args"],
+        "--probe-dns",
+        PROBE_DNS_NAME,
+    ]
+    # The probe skips the warm-up, and the test it was built from is left as it was.
+    assert probe.warmup_seconds == 0
+    assert "--probe-dns" not in container(test.pods[Role.CLIENT])["args"]
+
+
+def test_the_probe_sends_for_as_long_as_the_preflight_budgets() -> None:
+    assert f"-t {PROBE_SECONDS:g} " in CLIENT_SCRIPT.read_text()
+
+
+def _probe_status(message: str, exit_code: int = 0) -> DeployedWorkload:
+    terminated = {"exitCode": exit_code, "reason": "Completed", "message": message}
+    return _client_status(FakeResources(), {"terminated": terminated})
+
+
+def test_a_probe_that_exchanged_and_resolved_passes() -> None:
+    result = Iperf2().probe_result(_probe_status("server=10.0.2.7\nconnectivity=ok\ndns=ok\n"))
+
+    assert result is not None
+    assert result.passed
+    assert "10.0.2.7:5001 arrived" in result.detail
+
+
+def test_a_probe_whose_traffic_never_arrived_is_connectivity() -> None:
+    result = Iperf2().probe_result(
+        _probe_status("server=10.0.2.7\nconnectivity=failed\ndns=skipped\n", exit_code=69)
+    )
+
+    assert result == ProbeResult(
+        ProbeCheck.CONNECTIVITY, "no UDP to the server pod at 10.0.2.7:5001 arrived"
+    )
+
+
+def test_a_probe_whose_name_did_not_resolve_is_dns() -> None:
+    result = Iperf2().probe_result(
+        _probe_status("server=10.0.2.7\nconnectivity=ok\ndns=failed\n", exit_code=68)
+    )
+
+    assert result is not None
+    assert result.failed is ProbeCheck.DNS
+    assert PROBE_DNS_NAME in result.detail
+
+
+def test_a_probe_sent_elsewhere_proves_nothing_about_this_path() -> None:
+    result = Iperf2().probe_result(_probe_status("server=10.9.9.9\nconnectivity=ok\ndns=ok\n"))
+
+    assert result is not None
+    assert result.failed is ProbeCheck.CONNECTIVITY
+    assert "'10.9.9.9', not the server pod at 10.0.2.7" in result.detail
+
+
+def test_a_probe_that_exited_without_a_report_failed() -> None:
+    result = Iperf2().probe_result(_probe_status("", exit_code=64))
+
+    assert result is not None
+    assert result.failed is ProbeCheck.CONNECTIVITY
+    assert "exited 64" in result.detail
+
+
+def test_a_running_probe_has_no_result_yet() -> None:
+    workload = _client_status(FakeResources(), {"running": {"startedAt": "now"}})
+
+    assert Iperf2().probe_result(workload) is None
+
+
+def test_the_probe_runs_the_tool_alone_so_nothing_scrapes_it() -> None:
+    # A probe is not a test: with an exporter, the run's Prometheus would keep a "test"
+    # that never completed. The image is still pulled, by the tool's own container.
+    plugin = Iperf2(image=IMAGE)
+    test = plugin.workload(params(), PLACEMENT)
+    probe = plugin.probe(params(), PLACEMENT)
+
+    for role in Role:
+        assert exporter(test.pods[role])["ports"][0]["name"] == EXPORTER_PORT_NAME
+        containers = probe.pods[role]["spec"]["containers"]
+        assert [c["name"] for c in containers] == [CONTAINER_NAME]
+        assert EXPORTER_PORT_NAME not in [
+            p.get("name") for c in containers for p in c.get("ports", [])
+        ]

@@ -108,6 +108,7 @@ def plan_submission(
     run_id: str | None = None,
     namespace: str | None = None,
     service_account: str | None = None,
+    preflight_only: bool = False,
 ) -> Submission:
     """Render everything a run needs, without contacting anything.
 
@@ -131,6 +132,7 @@ def plan_submission(
         images=images,
         cluster=cluster,
         service_account=service_account,
+        preflight_only=preflight_only,
     )
     return Submission(
         run_id=resolved_run_id,

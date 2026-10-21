@@ -30,10 +30,17 @@ the exporter picks the measured connection by its port rather than by its positi
 discarded, for :data:`~dokimi.k8s.deadlines.DEFAULT_WARMUP_SECONDS`. It is never silent —
 ``warmup_duration_seconds`` is in the workload's run metadata, ``0`` when disabled — and
 the ``warmup`` parameter disables it per test.
+
+**The probe** ([ADR-05-07]) is the same pair with one argument more: the client, started
+by the same trigger, makes a one-second exchange with the server and resolves
+:data:`PROBE_DNS_NAME`, instead of warming up and measuring. The run-level preflight
+deploys it for the first planned pair (:mod:`dokimi.testtypes.probe`).
 """
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import socket
 import time
 from collections.abc import Callable
@@ -63,6 +70,7 @@ from dokimi.testtypes.interface import (
     WorkloadSpec,
 )
 from dokimi.testtypes.lifecycle import NotReadyError, WorkloadLostError, pod_is_ready
+from dokimi.testtypes.probe import ProbeCheck, ProbeResult
 
 __all__ = [
     "CONTAINER_NAME",
@@ -70,6 +78,7 @@ __all__ = [
     "IPERF_PORT",
     "MEASUREMENT_SOURCE_PORT",
     "REPETITION",
+    "PROBE_DNS_NAME",
     "TRIGGER_PORT",
     "WARMUP_SOURCE_PORT",
     "Completion",
@@ -90,6 +99,9 @@ TRIGGER_PORT = 5101
 MEASUREMENT_SOURCE_PORT = 5102
 #: The client's source port for the discarded warm-up pass.
 WARMUP_SOURCE_PORT = 5103
+#: The name the probe resolves: the API server's Service, which every cluster has, by its
+#: short name so that the pod's search path supplies whatever the cluster domain is.
+PROBE_DNS_NAME = "kubernetes.default.svc"
 #: Present once the client has been started; its readiness probe passes on it from then.
 _STARTED_MARKER = "/tmp/dokimi-started"
 #: The tool writes its native output here, and the exporter parses it from here.
@@ -281,6 +293,28 @@ class Iperf2:
                 "workload_image_source": image.source.value,
             },
         )
+
+    def probe(self, params: TestParameters, placement: Placement) -> WorkloadSpec:
+        """The pair's own workload, with its client in probe mode ([ADR-05-07]).
+
+        Built by :meth:`workload` and changed in two ways only, so the preflight schedules,
+        pulls and connects exactly what the test will: the client gets one argument more,
+        and both pods run the tool alone. The exporter goes, because a probe is not a test:
+        its pods would otherwise be scraped, and the run's Prometheus would keep a "test"
+        that never completed. The image is still pulled, by the tool's container.
+        """
+        spec = self.workload(params, placement)
+        pods = {}
+        for role, pod in spec.pods.items():
+            probe_pod = copy.deepcopy(pod)
+            containers = [c for c in probe_pod["spec"]["containers"] if c["name"] == CONTAINER_NAME]
+            if role is Role.CLIENT:
+                for container in containers:
+                    container["args"] = [*container["args"], "--probe-dns", PROBE_DNS_NAME]
+            probe_pod["spec"]["containers"] = containers
+            pods[role] = probe_pod
+        # The probe skips the warm-up pass, so its workload does not claim one.
+        return dataclasses.replace(spec, pods=pods, warmup_seconds=0)
 
     def _server(self, protocol: Protocol, warmup: Duration) -> dict[str, Any]:
         return {
@@ -482,33 +516,62 @@ class Iperf2:
 
     def completion(self, deployed: DeployedWorkload) -> Completion | None:
         """How the client finished, or ``None`` while it is still running."""
-        name = deployed.spec.pod_name(Role.CLIENT)
-        try:
-            pod = deployed.cluster.get(POD, deployed.namespace, name)
-        except NotFoundError:
-            raise WorkloadLostError(
-                f"the client pod {name} disappeared before it finished"
-            ) from None
-        for status in (pod.get("status") or {}).get("containerStatuses") or []:
-            if status.get("name") != CONTAINER_NAME:
-                continue
-            terminated = (status.get("state") or {}).get("terminated")
-            if terminated is None:
-                return None
-            completion = Completion(
-                exit_code=int(terminated.get("exitCode", -1)),
-                summary=(terminated.get("message") or "").strip(),
-                reason=terminated.get("reason") or "",
+        terminated = _client_terminated(deployed)
+        if terminated is None:
+            return None
+        completion = Completion(
+            exit_code=int(terminated.get("exitCode", -1)),
+            summary=(terminated.get("message") or "").strip(),
+            reason=terminated.get("reason") or "",
+        )
+        server = deployed.pod_ip(Role.SERVER)
+        if completion.summary and completion.destination != server:
+            raise UnexpectedTargetError(
+                f"{deployed.spec.test_id}: the client measured against "
+                f"{completion.destination}, not the server pod at {server}. Something "
+                f"other than start() reached its trigger port {TRIGGER_PORT} first"
             )
-            server = deployed.pod_ip(Role.SERVER)
-            if completion.summary and completion.destination != server:
-                raise UnexpectedTargetError(
-                    f"{deployed.spec.test_id}: the client measured against "
-                    f"{completion.destination}, not the server pod at {server}. Something "
-                    f"other than start() reached its trigger port {TRIGGER_PORT} first"
-                )
-            return completion
-        return None
+        return completion
+
+    def probe_result(self, deployed: DeployedWorkload) -> ProbeResult | None:
+        """How the probe ended, or ``None`` while it is still running.
+
+        Read from the report the client writes to its termination message, not from its
+        exit status alone: the report also names the server it was sent to, which is
+        checked as :meth:`completion` checks a summary's destination. Every failure is a
+        :class:`~dokimi.testtypes.probe.ProbeResult`, never an exception.
+        """
+        terminated = _client_terminated(deployed)
+        if terminated is None:
+            return None
+        message = terminated.get("message") or ""
+        report = dict(line.split("=", 1) for line in message.splitlines() if "=" in line)
+        if "connectivity" not in report:
+            return ProbeResult(
+                ProbeCheck.CONNECTIVITY,
+                f"the probe client exited {terminated.get('exitCode', '?')} "
+                f"({terminated.get('reason') or 'no reason given'}) without reporting",
+            )
+        server = deployed.pod_ip(Role.SERVER)
+        if report.get("server") != server:
+            # What completion() raises as UnexpectedTargetError. Here it is a finding: the
+            # preflight cannot vouch for a path it did not probe.
+            return ProbeResult(
+                ProbeCheck.CONNECTIVITY,
+                f"the probe client was sent {report.get('server')!r}, not the server pod at "
+                f"{server}: something other than start() reached its trigger port "
+                f"{TRIGGER_PORT} first",
+            )
+        protocol = str(deployed.spec.run_metadata.get("protocol", "")).upper()
+        path = f"{protocol} to the server pod at {server}:{IPERF_PORT}"
+        if report["connectivity"] != "ok":
+            return ProbeResult(ProbeCheck.CONNECTIVITY, f"no {path} arrived")
+        if report.get("dns") != "ok":
+            return ProbeResult(
+                ProbeCheck.DNS,
+                f"{PROBE_DNS_NAME} did not resolve inside the client pod, although {path} arrived",
+            )
+        return ProbeResult(None, f"{path} arrived, and {PROBE_DNS_NAME} resolved")
 
     def cleanup(self, deployed: DeployedWorkload) -> None:
         """Nothing beyond generic pod deletion: iperf2 leaves no state outside its pods."""
@@ -525,6 +588,20 @@ def _container_security() -> dict[str, Any]:
 
 def _pod_name(placement: Placement, role: Role) -> str:
     return f"run-{placement.run_id}-{placement.test_id}-{role.value}"
+
+
+def _client_terminated(deployed: DeployedWorkload) -> dict[str, Any] | None:
+    """The client container's ``terminated`` state, or ``None`` while it runs."""
+    name = deployed.spec.pod_name(Role.CLIENT)
+    try:
+        pod = deployed.cluster.get(POD, deployed.namespace, name)
+    except NotFoundError:
+        raise WorkloadLostError(f"the client pod {name} disappeared before it finished") from None
+    for status in (pod.get("status") or {}).get("containerStatuses") or []:
+        if status.get("name") == CONTAINER_NAME:
+            terminated: dict[str, Any] | None = (status.get("state") or {}).get("terminated")
+            return terminated
+    return None
 
 
 def tcp_trigger(

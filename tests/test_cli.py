@@ -6,6 +6,7 @@ as values rather than as "non-zero".
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -29,7 +30,10 @@ from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD
 from dokimi.metrics.prometheus import PrometheusClient, Response
 from dokimi.run_identity import RunId
 from dokimi.run_images import COMPONENTS
+from dokimi.testtypes.interface import Role
+from dokimi.testtypes.probe import ProbeCheck, ProbeResult
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
+from tests.fake_probe import FakeProbe
 from tests.fake_robot import FakeRobotRunner
 
 DIGEST = "sha256:" + "ab" * 32
@@ -72,12 +76,21 @@ def given_images(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(component.source_env_var, "release-default")
 
 
+#: One node-exporter target, scraped.
+SCRAPED: dict[str, object] = {
+    "scrapePool": "node-exporter",
+    "health": "up",
+    "labels": {"node": "worker-01"},
+}
+
+
 class FakePrometheus:
     """The run's Prometheus over the real client, answering from a script, offline."""
 
     def __init__(self, *, answers: bool = True) -> None:
         self.answers = answers
         self.urls: list[str] = []
+        self.targets: list[dict[str, object]] = [SCRAPED]
 
     def transport(self, url: str) -> Response:
         self.urls.append(url)
@@ -85,6 +98,9 @@ class FakePrometheus:
             raise ConnectionRefusedError("connection refused")
         if url.endswith("/-/ready"):
             return Response(200, b"Prometheus Server is Ready.")
+        if "/api/v1/targets" in url:
+            data = {"activeTargets": self.targets}
+            return Response(200, json.dumps({"status": "success", "data": data}).encode())
         return Response(200, b'{"status":"success","data":{"resultType":"vector","result":[]}}')
 
     def client(self, endpoint: str) -> PrometheusClient:
@@ -133,6 +149,14 @@ def robot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeRobotRunner:
     fake = FakeRobotRunner()
     monkeypatch.setattr(commands, "ROBOT_RUNNER", lambda: fake)
     monkeypatch.setattr(commands, "ARTIFACTS_ROOT", tmp_path / "artifacts")
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def probe(monkeypatch: pytest.MonkeyPatch) -> FakeProbe:
+    """Phase 4's probe, with pods that are Ready as soon as they exist, and pass."""
+    fake = FakeProbe()
+    monkeypatch.setattr(commands, "PREFLIGHT_PLUGIN", fake)
     return fake
 
 
@@ -338,7 +362,9 @@ def test_execute_parses_then_plans(
     assert "phase 2 (ingestion): definition parsed" in out.out
     assert "phase 3 (planning): 1 test, sequential" in out.out
     assert "pair-001  worker-01 -> worker-02" in out.out
-    assert job_cluster.node_reads == 1
+    # Once to plan, and once more in phase 4, to check the plan against the nodes as they
+    # are when the tests are about to start.
+    assert job_cluster.node_reads == 2
     assert "phase 4 (preflight): cluster claimed for this run until" in out.out
     # Phases 7 to 11 do not exist yet, and a run that stops early must not look like one
     # that passed.
@@ -430,6 +456,161 @@ def test_an_unqueryable_prometheus_fails_phase_4_before_any_workload(
     # However phase 4 ends, the run stops holding the cluster (ADR-05-13).
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+# -- phase 4's cluster checks (ADR-05-07) ----------------------------------------------
+
+
+def test_execute_checks_the_cluster_with_the_first_pair_and_removes_it_before_phase_5(
+    job_cluster: FakeCluster,
+    probe: FakeProbe,
+    robot: FakeRobotRunner,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pods_at_phase_6: list[list[str]] = []
+    robot.on_run = lambda: pods_at_phase_6.append(
+        [pod["metadata"]["name"] for pod in job_cluster.store.list(POD, "", "dokimi-iperf2")]
+    )
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    # The first pair, on its own nodes, with the client in probe mode.
+    (spec,) = probe.specs
+    assert spec.test_id == "pair-001-preflight"
+    client = spec.pods[Role.CLIENT]["spec"]["containers"][0]
+    assert client["args"][-2:] == ["--probe-dns", "kubernetes.default.svc"]
+    assert len(probe.started) == 1
+    assert "phase 4 (preflight): nodes worker-01, worker-02 accept test pods" in out
+    assert "phase 4 (preflight): pair-001 scheduled, pulled its image and connected" in out
+    assert "phase 4 (preflight): removed 2 test pod(s)" in out
+    assert "phase 4 (preflight): the cluster is ready" in out
+    assert out.index("the cluster is ready") < out.index("phase 5 (suite rendering)")
+    # Phase 6 starts with the probe gone: its pods are never next to a test's.
+    assert not [name for name in pods_at_phase_6[0] if "preflight" in name]
+
+
+def test_a_failed_cluster_check_exits_4_and_runs_nothing(
+    job_cluster: FakeCluster,
+    probe: FakeProbe,
+    robot: FakeRobotRunner,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The acceptance criteria: its own named error, no test workload left running, and
+    # no test results.
+    probe.result = ProbeResult(ProbeCheck.DNS, "kubernetes.default.svc did not resolve")
+
+    code = main(EXECUTE)
+
+    assert code == ExitCode.PREFLIGHT_FAILURE
+    err = capsys.readouterr().err
+    assert "cluster not ready (dns): the probe of pair-001 (worker-01 -> worker-02)" in err
+    assert "Traceback" not in err
+    assert robot.runs == []
+    assert not (tmp_path / "artifacts").exists()
+    assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_a_node_lost_since_planning_is_node_count(
+    job_cluster: FakeCluster, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Phase 3 read both nodes; by phase 4 one of them is cordoned.
+    reads = iter(
+        [
+            [node("worker-01"), node("worker-02")],
+            [node("worker-01"), node("worker-02", cordoned=True)],
+        ]
+    )
+    job_cluster.list_nodes = lambda: next(reads)  # type: ignore[method-assign]
+
+    code = main(EXECUTE)
+
+    assert code == ExitCode.PREFLIGHT_FAILURE
+    err = capsys.readouterr().err
+    assert "cluster not ready (node_count)" in err
+    assert "worker-02 no longer accepts a test pod" in err
+    assert probe.specs == []
+
+
+def test_a_node_exporter_prometheus_cannot_scrape_is_a_warning_only(
+    job_cluster: FakeCluster, prometheus: FakePrometheus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prometheus.targets = [
+        {**SCRAPED, "health": "down", "lastError": "context deadline exceeded"},
+    ]
+
+    main(EXECUTE)
+
+    captured = capsys.readouterr()
+    assert (
+        "node-exporter: Prometheus cannot scrape 1 of 1 node-exporter target(s): "
+        "worker-01: context deadline exceeded" in captured.err
+    )
+    assert "phase 5 (suite rendering)" in captured.out
+
+
+def test_execute_preflight_only_stops_after_phase_4_and_exits_0(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main([*EXECUTE, "--preflight-only"])
+
+    out = capsys.readouterr().out
+    assert code == ExitCode.PASS
+    assert "phase 4 (preflight): the cluster is ready" in out
+    assert "preflight only: the run stops before any test" in out
+    assert "phase 5" not in out
+    assert robot.runs == []
+    assert job_cluster.store.list(POD, f"dokimi.io/run-id={RUN_ID}", "dokimi-iperf2") == []
+    owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
+
+
+def test_the_preflight_command_submits_a_run_that_stops_after_phase_4(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # One implementation, two entry points: the same Job, told to stop.
+    code = main(["preflight", str(EXAMPLE)])
+
+    assert code == ExitCode.PASS
+    assert cluster.created_kinds == ["ConfigMap", "ConfigMap", "Job"]
+    job = cluster.created[-1]
+    assert job["spec"]["template"]["spec"]["containers"][0]["args"][-1] == "--preflight-only"
+    # A preflight writes no artifacts, and says nothing about their absence.
+    assert "carried no artifacts" not in capsys.readouterr().err
+
+
+def test_the_preflight_command_takes_the_cluster_name(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A preflight is a run, so it needs the cluster's name like any run, and without the
+    # variable it must offer the flag its refusal points to.
+    monkeypatch.delenv("DOKIMI_CLUSTER")
+
+    code = main(["preflight", str(EXAMPLE), "--cluster", "lab-fra-1"])
+
+    assert code == ExitCode.PASS
+    env = cluster.created[-1]["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert {"name": "DOKIMI_CLUSTER", "value": "lab-fra-1"} in env
+
+
+def test_a_preflight_without_a_cluster_name_creates_nothing(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("DOKIMI_CLUSTER")
+
+    assert main(["preflight", str(EXAMPLE)]) == ExitCode.CONFIG_ERROR
+    assert "--cluster <name> or DOKIMI_CLUSTER" in capsys.readouterr().err
+    assert cluster.created == []
+
+
+def test_a_submitted_run_does_not_stop_after_preflight(cluster: FakeCluster) -> None:
+    main(["submit", str(EXAMPLE)])
+
+    job = cluster.created[-1]
+    assert "--preflight-only" not in job["spec"]["template"]["spec"]["containers"][0]["args"]
 
 
 def test_existing_monitoring_is_refused_before_the_cluster_is_touched(
@@ -1128,12 +1309,15 @@ def left_pod(fake: FakeCluster, name: str, component: str = "client") -> None:
 
 
 def test_execute_removes_the_test_pods_then_releases_the_cluster(
-    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from dokimi.k8s.resources import POD  # noqa: PLC0415
 
-    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
-    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-server", component="server")
+    def phase_6() -> None:
+        left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
+        left_pod(job_cluster, f"run-{RUN_ID}-pair-001-server", component="server")
+
+    robot.on_run = phase_6
 
     main(EXECUTE)
 
@@ -1150,16 +1334,16 @@ def test_execute_removes_the_test_pods_then_releases_the_cluster(
 
 
 def test_only_the_test_pods_are_removed_before_the_claim_is_released(
-    job_cluster: FakeCluster,
+    job_cluster: FakeCluster, robot: FakeRobotRunner
 ) -> None:
     # A kept Prometheus's pod or a DaemonSet's carries the run's labels too. Neither is test
     # traffic: deleting one loses the history it is kept for, or is undone by its controller,
     # and waiting for it to go would hold the cluster until the claim expires.
     from dokimi.k8s.resources import POD  # noqa: PLC0415
 
-    left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
     left_pod(job_cluster, f"run-{RUN_ID}-prometheus-abc12", component="prometheus")
     left_pod(job_cluster, f"run-{RUN_ID}-node-exporter-x7k2p", component="node-exporter")
+    robot.on_run = lambda: left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
 
     main(EXECUTE)
 

@@ -7,7 +7,7 @@ writes is tested where Robot is installed (``test_robot_execution.py``).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,11 +26,15 @@ class FakeRobotRunner:
     merges: list[list[Path]] = field(default_factory=list)
     #: Set to make a pair's process write nothing, as a crashed one would.
     writes_output: bool = True
+    #: Called as each pair's process runs: what its test does to the cluster.
+    on_run: Callable[[], object] | None = None
 
     def run(
         self, suite: Path, *, output: Path, environment: Mapping[str, str], pythonpath: Path
     ) -> None:
         self.runs.append(RunCall(suite, output, dict(environment), pythonpath))
+        if self.on_run is not None:
+            self.on_run()
         if self.writes_output:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text("<robot/>", encoding="utf-8")

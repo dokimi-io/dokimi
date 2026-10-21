@@ -154,6 +154,7 @@ executed.
 $ dokimi validate test.yaml          # parse and check, no cluster involved
 $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
+$ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
 ```
 
@@ -506,7 +507,9 @@ distinct signal from a scheduling failure — "can't be placed" and "was placed 
 image" point at different fixes), and that the number of selectable nodes matches what the planned
 matrix needs. The schedule, connectivity and image-pull checks reuse the first scheduled test pair
 rather than a separate synthetic pod. A failure aborts the run immediately with one clear "cluster
-not ready" error, before any test pair is attempted.
+not ready" error, before any test pair is attempted, and names its check: `node_count`,
+`scheduling`, `image_pull`, `connectivity`, `dns` or `prometheus_unreachable`. `dokimi preflight`
+runs the same phase on its own, and stops after it.
 
 **Per-test readiness gate** (inside phase 6), before `start()` is called: both client and server
 pods confirmed `Ready` via the Kubernetes API, within 300 s. A pod that never becomes `Ready` is an

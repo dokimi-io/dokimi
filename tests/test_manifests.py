@@ -220,6 +220,26 @@ def test_the_definition_travels_with_the_run(
     ]
 
 
+def test_a_preflight_is_the_same_job_told_to_stop_after_phase_4(
+    definition: TestDefinition, manifests: list[dict[str, Any]]
+) -> None:
+    # `dokimi preflight`: one implementation, so one Job, and one argument more.
+    preflight = render_manifests(
+        definition,
+        source="apiVersion: dokimi.io/v1alpha1\n",
+        source_suffix=".yaml",
+        run_id=RUN_ID,
+        image=IMAGE,
+        images=RUN_IMAGES,
+        namespace="dokimi-iperf2",
+        cluster="test-cluster",
+        preflight_only=True,
+    )
+
+    assert _container(preflight)["args"] == [*_container(manifests)["args"], "--preflight-only"]
+    assert preflight[1] == manifests[1]
+
+
 def test_a_robot_suite_stays_a_robot_suite(definition: TestDefinition) -> None:
     # The in-cluster parse picks its format from the suffix exactly as the local one does.
     manifests = render_manifests(
