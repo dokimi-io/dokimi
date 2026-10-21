@@ -92,7 +92,7 @@ just a review.
 ### Documentation
 
 - **Documentation changes with the behaviour, in the same pull request.** That includes the README,
-  [`docs/`](docs/README.md), and the tables and counts in the [test suite README](tests/README.md).
+  [`docs/`](docs/README.md), and, for a new test file, its row in the [test suite README](tests/README.md).
 - **Describe only what exists.** Anything planned is marked as planned. A reader must be able to
   trust that what the documentation says works today really does.
 - **Every example parses.** Test definitions in the documentation are checked by the test suite.
