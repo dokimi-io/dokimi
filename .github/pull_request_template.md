@@ -20,8 +20,8 @@ left as follow-up, and where it will be done. -->
 
 - [ ] Tests come with the change, and `uv run ruff check .`, `uv run ruff format --check .`,
       `uv run mypy` and `uv run pytest` pass locally
-- [ ] The documentation changed with the behaviour: the README, `docs/`, and the counts in
-      `tests/README.md`
+- [ ] The documentation changed with the behaviour: the README, `docs/`, and the table in
+      `tests/README.md` for a new test file
 - [ ] Tried on the test environment, naming the profile, or said here why not
 - [ ] **dokimi.io:** the website needs no change, or a pull request in
       [dokimi-website](https://github.com/dokimi-io/dokimi-website) is linked here
