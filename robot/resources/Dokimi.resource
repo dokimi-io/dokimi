@@ -6,7 +6,6 @@ Documentation       Shared keywords for dokimi suites.
 ...                 itself (ADR-01-03, kept by ADR-04-05 as the Robot format's design).
 ...
 ...                 The library provides ``Run Network Test`` and the criterion keywords,
-...                 such as ``Throughput Should Be``. Evaluating criteria arrives with
-...                 M1-13: until then every criterion keyword fails and says so.
+...                 such as ``Throughput Should Be``, which check what the test measured.
 
 Library             ../libraries/DokimiLibrary.py

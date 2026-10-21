@@ -14,8 +14,8 @@ everything else, so a caller of the library without Robot runs exactly the same 
 7. the measurement, read directly from both pods' exporters ([ADR-03-01], phase 7): the
    receiver's view is the result, and a result not served is an error, never a pass.
 
-Evaluating it is phase 8 (M1-13). The pods stay until the run ends: ``dokimi execute``
-removes them before it frees the cluster.
+Evaluating it is phase 8, :mod:`dokimi.validation`. The pods stay until the run ends:
+``dokimi execute`` removes them before it frees the cluster.
 """
 
 from __future__ import annotations

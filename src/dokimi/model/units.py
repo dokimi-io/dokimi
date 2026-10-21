@@ -12,7 +12,7 @@ Throughput prefixes are **decimal**, 10³ per step — stated explicitly in ADR-
 because a reader may assume binary prefixes, while networking throughput is decimal.
 
 The conversion factors are recorded here but not applied here. ADR-02-03 puts conversion
-"at the edges": the validation layer converts on read (M1-13, adrs#48). The model keeps
+"at the edges": the validation layer, :mod:`dokimi.validation`, converts on read. The model keeps
 the value and the unit the user wrote, which is also what lets ``render_robot`` reproduce
 the user's own words.
 """
@@ -62,7 +62,7 @@ class Unit(enum.Enum):
     def base_factor(self) -> Decimal:
         """Multiplier to this unit's base unit: bits per second, percent, or seconds.
 
-        Recorded for the validation layer; nothing in the model applies it.
+        Applied by the validation layer; nothing in the model applies it.
         """
         return _BASE_FACTORS[self]
 

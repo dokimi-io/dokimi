@@ -67,11 +67,15 @@ phase 6 (execution): pair-001  worker-01 -> worker-02, one Robot Framework proce
 phase 7 (measurement): pair-001, read directly from its exporters (inbound): jitter_seconds 1.1e-05, packet_loss_percent 0, test_duration_seconds 30, throughput_bits_per_second 9.49e+08, transferred_bytes 3.56e+09
 phase 7 (measurement): Prometheus holds the series of pair-001
 
+phase 8 (validation): pair-001 fail, 2 criterion(s)
+  fail  Throughput Should Be At Least 950 megabits per second: 949 megabits per second
+  pass  Packet Loss Should Be At Most 0 percent: 0 percent
+
 phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../report.html
 
-the rest of phases 8 to 11 is not implemented in this build: validation (#48), results
-(#49), cleanup and outcome (#51). The run stops here without a verdict; Robot's report
-says which steps ran.
+the rest of phases 9b to 11 is not implemented in this build: results (#49), cleanup and
+outcome (#51). So the exit code is not the run's verdict yet: each test's outcome is in
+phase 8 above and in Robot's report.
 phase 10 (diagnostics): 5 pod(s), 1 pair(s), none down
   run-20261002-120000-a1b2c3-pair-001-client on worker-01: Running
   run-20261002-120000-a1b2c3-pair-001-server on worker-02: Running
@@ -83,9 +87,10 @@ phase 11 (cleanup): removed 2 test pod(s)
 phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-exporter
 ```
 
-It exits `5`, not `0`. A run that stops early must not look like a run that passed. A
-node that is missing or cannot take a test pod stops it earlier, in phase 3, with `3`. A
-cluster that cannot run the pair stops it in phase 4, with `4`, before any test: see
+It exits `5`, not `0`, whatever phase 8 found: the run's verdict as an exit code is not
+built yet, and a run that stops early must not look like a run that passed. A node that
+is missing or cannot take a test pod stops it earlier, in phase 3, with `3`. A cluster
+that cannot run the pair stops it in phase 4, with `4`, before any test: see
 [preflight](#preflight).
 
 Five things to know about a run today:
@@ -99,9 +104,17 @@ Five things to know about a run today:
   least 60 s). If they never arrive, the run warns `HISTORY NOT CAPTURED` and goes on: the
   result stands, only its history in Prometheus is missing. A value Prometheus holds
   differently is reported on its own. Both land in `measurement.json`.
-- **Every pass criterion fails, and says it was not checked.** Evaluating criteria
-  arrives with M1-13, so `Throughput Should Be At Least 950 megabits per second` fails with
-  "was not checked" rather than passing, or being skipped, without anything compared.
+- **Every pass criterion is checked against what the pair measured** (phase 8), in the
+  unit you wrote it in: `950 megabits per second` is compared with a throughput measured in
+  bits per second, and throughput prefixes are decimal. A criterion that doesn't hold
+  fails, naming the pair and its value in your unit. One that couldn't be checked fails as
+  `ERROR` with its category, which is never a pass and never a finding about the network:
+  `metrics_missing` if the pair has no such value, `exporter_parse` if it isn't a number,
+  and a metric the test type never produces, such as packet loss over TCP, is said once.
+  Every criterion is checked and listed, not only the first. Robot's report tags each test
+  `outcome:pass`, `outcome:fail` or `outcome:error`, an error also `error:<category>`, and
+  each test's outcome is in `pairs/<test-id>.validation.json`, with the PromQL that
+  reproduces it from the run's Prometheus.
 - **Robot's report comes back to you.** `submit` and `attach` extract it into
   `<results.directory>/<run-id>/`: `log.html`, `report.html`, the merged `output.xml`, and
   `suite.robot`, the exact suite that ran. See [The run's reports](#the-runs-reports).
@@ -501,8 +514,9 @@ results/20261002-120000-a1b2c3/
   report.html    its report
   output.xml     every pair's results, merged by rebot
   suite.robot    the suite that ran, byte for byte what dokimi convert prints
-  pairs/         one output.xml per pair, and what its test read directly
-                 (<test-id>.measurement.json)
+  pairs/         one output.xml per pair, what its test read directly
+                 (<test-id>.measurement.json), and what its criteria came to
+                 (<test-id>.validation.json)
   measurement.json  every test's directly read values, and what Prometheus held of them
   diagnostics.json  where every pod ran, how it ended, and any anomaly (phase 10)
 ```

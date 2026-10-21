@@ -13,10 +13,16 @@ what is Robot's: argument passing, the log, and how a failure reads in ``log.htm
   to confirm Prometheus holds the same values.
 * The criterion keywords are exactly the ones the Robot format's parser accepts, from
   the same table (:func:`dokimi.formats.robot_suite.criterion_keyword_names`), so a
-  keyword the parser reads is always one this library implements. Evaluating them is
-  phase 8, which arrives with M1-13. Until then each one **fails**, naming the criterion
-  it could not check, and the test with it: a run must never look as if it passed when
-  nothing was compared.
+  keyword the parser reads is always one this library implements. Each is phase 8,
+  :func:`dokimi.validation.evaluate`, over the pair the plan gave this process. The
+  library classifies; this adapter only renders: a ``fail`` is a failed keyword naming
+  the pairs and values, an ``error`` one whose message starts with ``ERROR``, so that it
+  never reads as a finding about the network. Either way the test goes on to its next
+  criterion, so every one of them is in ``log.html``. What was decided is written next to
+  ``output.xml`` as ``<test-id>.validation.json``.
+* Each test is tagged with its outcome as it is known so far: ``outcome:pass``,
+  ``outcome:fail`` or ``outcome:error``, and for an error ``error:<category>``. The tags
+  come from the same classification as the file, never from Robot's status.
 """
 
 from __future__ import annotations
@@ -34,13 +40,20 @@ from dokimi.formats.robot_suite import (
     criterion_keyword_names,
 )
 from dokimi.measurement import Measurement, write_measurement
-from dokimi.validation import NotEvaluatedError, evaluate
+from dokimi.validation import Evaluation, ExpectedPair, Outcome, evaluate, write_validation
 
 _RUN_NETWORK_TEST_ARGUMENTS = ["type", "protocol", "source", "target", "bandwidth", "duration"]
 
 
-class CriterionNotEvaluated(AssertionError):
-    """A criterion keyword this build cannot evaluate yet. Continues, so all are listed."""
+class CriterionFailed(AssertionError):
+    """A criterion that does not hold: a finding. Continues, so all are listed."""
+
+    ROBOT_CONTINUE_ON_FAILURE = True
+    ROBOT_SUPPRESS_NAME = True
+
+
+class CriterionError(AssertionError):
+    """A criterion that could not be evaluated: an error, never a pass. Continues too."""
 
     ROBOT_CONTINUE_ON_FAILURE = True
     ROBOT_SUPPRESS_NAME = True
@@ -59,8 +72,12 @@ class DokimiLibrary:
     ROBOT_LIBRARY_VERSION = __version__
 
     def __init__(self) -> None:
-        #: Each test's measurement, by test id: what the criteria are evaluated on (M1-13).
+        #: Each test's measurement, by test id: what the criteria are evaluated on.
         self.measurements: dict[str, Measurement] = {}
+        #: Each test's evaluated criteria, by test id, in the order they ran.
+        self.evaluations: dict[str, list[Evaluation]] = {}
+        #: Each test's outcome so far, by test id: what its tags say.
+        self.outcomes: dict[str, Outcome] = {}
 
     def get_keyword_names(self) -> list[str]:
         return [RUN_NETWORK_TEST, *criterion_keyword_names()]
@@ -77,8 +94,9 @@ class DokimiLibrary:
                 "for it to finish. The arguments come from the suite's variables."
             )
         return (
-            f"Pass criterion: ``{name} <comparison> <value> <unit>``. Evaluating criteria "
-            "arrives with M1-13; until then this keyword fails and says so."
+            f"Pass criterion: ``{name} <comparison> <value> <unit>``, checked against what "
+            "the test measured. Fails naming the pairs and values that violate it, and "
+            "fails as ``ERROR`` if a pair could not be measured, which is never a pass."
         )
 
     def run_keyword(self, name: str, args: list[Any], kwargs: dict[str, Any]) -> None:
@@ -94,17 +112,22 @@ class DokimiLibrary:
             f"{named['source']} -> {named['target']}, {named['bandwidth']} for "
             f"{named['duration']}"
         )
-        # Through the module, not a name bound at import: the library's own tests replace
-        # it, and nothing else may.
-        result = execution.run_network_test(
-            context,
-            test_type=named["type"],
-            protocol=named["protocol"],
-            source=named["source"],
-            target=named["target"],
-            bandwidth=named["bandwidth"],
-            duration=named["duration"],
-        )
+        try:
+            # Through the module, not a name bound at import: the library's own tests
+            # replace it, and nothing else may.
+            result = execution.run_network_test(
+                context,
+                test_type=named["type"],
+                protocol=named["protocol"],
+                source=named["source"],
+                target=named["target"],
+                bandwidth=named["bandwidth"],
+                duration=named["duration"],
+            )
+        except Exception as error:
+            # Nothing was validly measured, whatever the reason: an error, not a finding.
+            self._tag(context.test_id, Outcome.ERROR, (_category(error),))
+            raise
         for role, pod in sorted(result.pods.items(), key=lambda item: item[0].value):
             logger.info(f"{role.value} pod: {pod}")
         for key, value in result.run_metadata.items():
@@ -117,18 +140,70 @@ class DokimiLibrary:
             logger.info(
                 f"measured ({measurement.direction}, {measurement.source}): {metric} = {value:g}"
             )
-        # Next to output.xml, where the Job looks: ${OUTPUT FILE}'s directory. Not
-        # ${OUTPUT DIR}, which is --outputdir, the working directory unless given.
-        output_file = BuiltIn().get_variable_value("${OUTPUT FILE}")
-        if output_file and str(output_file).upper() != "NONE":
-            write_measurement(measurement, Path(str(output_file)).parent)
+        directory = _output_directory()
+        if directory is not None:
+            write_measurement(measurement, directory)
+        # Measured: a pass until a criterion says otherwise. With no criteria, it stays one.
+        self.evaluations[measurement.test_id] = []
+        self._record(measurement.test_id)
+        self._tag(measurement.test_id, Outcome.PASS)
 
     def _criterion(self, name: str, args: list[str]) -> None:
         criterion = criterion_from_keyword(name, args)
-        try:
-            evaluate(criterion, " ".join([name, *args]))
-        except NotEvaluatedError as error:
-            raise CriterionNotEvaluated(str(error)) from error
+        context = execution.RunContext.from_environment()
+        # The pair the plan gave this process, not whatever was measured: a criterion is
+        # quantified over what was expected, so a missing result can't pass.
+        expected = [ExpectedPair(context.test_id, context.source_node, context.target_node)]
+        evaluation = evaluate(
+            criterion,
+            self.measurements,
+            expected,
+            written=" ".join([name, *args]),
+            run_id=context.run_id,
+        )
+        logger.debug(f"PromQL equivalent, not what was evaluated: {evaluation.promql_equivalent}")
+        self.evaluations.setdefault(context.test_id, []).append(evaluation)
+        self._record(context.test_id)
+        self._tag(context.test_id, evaluation.outcome, evaluation.categories)
+        if evaluation.outcome is Outcome.ERROR:
+            raise CriterionError(evaluation.message())
+        if evaluation.outcome is Outcome.FAIL:
+            raise CriterionFailed(evaluation.message())
+        logger.info(evaluation.message())
+
+    def _record(self, test_id: str) -> None:
+        """Write the test's criteria so far next to its output, where the Job reads them."""
+        directory = _output_directory()
+        if directory is not None:
+            write_validation(test_id, self.evaluations.get(test_id, []), directory)
+
+    def _tag(self, test_id: str, outcome: Outcome, categories: tuple[str, ...] = ()) -> None:
+        """Tag the running test with its worst outcome so far, and an error's categories."""
+        worst = max(outcome, self.outcomes.get(test_id, Outcome.PASS), key=lambda o: o.rank)
+        self.outcomes[test_id] = worst
+        builtin = BuiltIn()
+        builtin.remove_tags("outcome:*")
+        builtin.set_tags(f"outcome:{worst.value}")
+        if outcome is Outcome.ERROR:
+            builtin.set_tags(*(f"error:{category}" for category in categories if category))
+
+
+def _output_directory() -> Path | None:
+    """Where the Job looks: ``${OUTPUT FILE}``'s directory, if there is an output file.
+
+    Not ``${OUTPUT DIR}``, which is ``--outputdir``, the working directory unless given.
+    """
+    output_file = BuiltIn().get_variable_value("${OUTPUT FILE}")
+    if not output_file or str(output_file).upper() == "NONE":
+        return None
+    return Path(str(output_file)).parent
+
+
+def _category(error: Exception) -> str:
+    """An exception's error category, as the library spells it, if it has one."""
+    category = getattr(error, "category", None)
+    value = getattr(category, "value", category)
+    return value if isinstance(value, str) else ""
 
 
 def _named(args: list[Any], kwargs: dict[str, Any]) -> dict[str, str]:

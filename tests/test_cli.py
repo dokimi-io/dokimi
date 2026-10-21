@@ -18,6 +18,7 @@ from dokimi import _image_digest, images
 from dokimi.cli import commands
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import main
+from dokimi.formats import parse_file
 from dokimi.images import IMAGE_REPOSITORY
 from dokimi.k8s.exclusivity import claim_run
 from dokimi.k8s.manifests import resource_name
@@ -29,11 +30,13 @@ from dokimi.k8s.ownership import (
     ownership_labels,
 )
 from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD
+from dokimi.measurement import Measurement
 from dokimi.metrics.prometheus import PrometheusClient, Response
 from dokimi.run_identity import RunId
 from dokimi.run_images import COMPONENTS
 from dokimi.testtypes.interface import Role
 from dokimi.testtypes.probe import ProbeCheck, ProbeResult
+from dokimi.validation import ExpectedPair, evaluate
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 from tests.fake_probe import FakeProbe
 from tests.fake_robot import FakeRobotRunner
@@ -373,10 +376,10 @@ def test_execute_parses_then_plans(
     # nodes are still Ready (phase 10).
     assert job_cluster.node_reads == 3
     assert "phase 4 (preflight): cluster claimed for this run until" in out.out
-    # Phases 7 to 11 do not exist yet, and a run that stops early must not look like one
+    # Phases 9b to 11 do not exist yet, and a run that stops early must not look like one
     # that passed.
     assert code == ExitCode.INTERNAL
-    assert "the rest of phases 8 to 11 is not implemented" in out.err
+    assert "the rest of phases 9b to 11 is not implemented" in out.err
 
 
 def test_execute_marks_its_run_finished_so_the_next_one_can_start(
@@ -1420,6 +1423,40 @@ def test_a_pair_without_a_measurement_is_named(
     main(EXECUTE)
 
     assert "pair-001 has no measurement" in capsys.readouterr().err
+
+
+def test_phase_8_prints_each_tests_outcome_as_its_robot_process_decided_it(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pair = ExpectedPair("pair-001", "worker-01", "worker-02")
+    measurement = Measurement("pair-001", "inbound", MEASURED, {})
+    robot.validates = [
+        evaluate(criterion, {"pair-001": measurement}, [pair])
+        for criterion in parse_file(EXAMPLE).criteria
+    ]
+
+    code = main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert "phase 8 (validation): pair-001 fail, 2 criterion(s)" in out
+    assert (
+        "  fail  Throughput Should Be At Least 950 megabits per second: "
+        "49.98353 megabits per second" in out
+    )
+    assert "  pass  Packet Loss Should Be At Most 0 percent: 0 percent" in out
+    # Phase 8 decides each test's outcome; the run's exit code is still M1-16's.
+    assert code == ExitCode.INTERNAL
+
+
+def test_a_test_that_ended_before_its_criteria_has_no_phase_8_outcome(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(EXECUTE)
+
+    assert (
+        "phase 8 (validation): pair-001 has no outcome: its test ended before its criteria"
+        in capsys.readouterr().err
+    )
 
 
 def pair_pods(fake: FakeCluster) -> None:
