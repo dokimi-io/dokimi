@@ -62,7 +62,9 @@ SERVER_IP, CLIENT_IP = "10.244.1.5", "10.244.2.7"
 
 
 def test_a_robot_process_reads_back_the_context_it_was_started_with() -> None:
-    context = RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", IMAGES)
+    context = RunContext(
+        RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", "test-cluster", IMAGES
+    )
 
     assert RunContext.from_environment(context.environment()) == context
 
@@ -109,6 +111,7 @@ def test_phase_6_runs_one_robot_process_per_pair(artifacts: RunArtifacts) -> Non
         runner=runner,
         robot_directory=Path("/opt/dokimi/robot"),
         namespace=NAMESPACE,
+        cluster="test-cluster",
         images=IMAGES,
     )
 
@@ -132,6 +135,7 @@ def test_a_pair_whose_process_wrote_nothing_stops_the_run(artifacts: RunArtifact
             runner=runner,
             robot_directory=Path("robot"),
             namespace=NAMESPACE,
+            cluster="test-cluster",
             images=IMAGES,
         )
 
@@ -345,7 +349,10 @@ def run(
         "duration": "5s",
     } | overrides
     return run_network_test(
-        context or RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", IMAGES),
+        context
+        or RunContext(
+            RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", "test-cluster", IMAGES
+        ),
         cluster=kubelet,
         plugin=plugin or Iperf2(image=IMAGES["iperf2"], trigger=trigger),
         clock=clock,
@@ -426,7 +433,9 @@ def test_a_suite_cannot_run_another_pair_than_the_planned_one() -> None:
 def test_a_run_without_an_image_for_its_test_type_resolves_none_of_its_own() -> None:
     # submit resolves every image (ADR-04-08); a default chosen here nobody would have seen.
     kubelet = owned(Kubelet())
-    context = RunContext(RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", {})
+    context = RunContext(
+        RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", "test-cluster", {}
+    )
 
     with pytest.raises(ConfigError, match="this run has no image for iperf2"):
         run_network_test(

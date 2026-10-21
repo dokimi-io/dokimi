@@ -334,6 +334,9 @@ class Placement:
     test_id: str
     source_node: str
     target_node: str
+    #: What the operator called the cluster: a required label on every result
+    #: ([ADR-02-07]), so the exporter is given it when the pod is created.
+    cluster: str
 
     def node_for(self, role: Role) -> str:
         """The client sends, so it runs on the source; the server on the target."""

@@ -59,7 +59,7 @@ IMAGES = {
 def run_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """What phase 6 starts each Robot process with."""
     context = execution.RunContext(
-        RUN_ID, "dokimi-iperf2", "pair-001", "worker-01", "worker-02", IMAGES
+        RUN_ID, "dokimi-iperf2", "pair-001", "worker-01", "worker-02", "test-cluster", IMAGES
     )
     for name, value in context.environment().items():
         monkeypatch.setenv(name, value)
@@ -178,6 +178,7 @@ def test_robot_runs_as_its_own_process_and_rebot_merges_the_report(
         runner=runner,
         robot_directory=default_robot_directory(),
         namespace="dokimi-iperf2",
+        cluster="test-cluster",
         images=IMAGES,
     )
     merge_reports(executions, artifacts, runner)

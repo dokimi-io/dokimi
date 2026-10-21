@@ -365,6 +365,7 @@ def execute(
             runner=ROBOT_RUNNER(),
             robot_directory=robot_directory or default_robot_directory(),
             namespace=resolved_namespace,
+            cluster=run_cluster,
             images=run_images,
             on_pair=lambda pair: console.say(
                 f"phase 6 (execution): {pair.test_id}  {pair.source.name} -> "

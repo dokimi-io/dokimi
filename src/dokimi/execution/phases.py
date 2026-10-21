@@ -52,6 +52,7 @@ def execute_pairs(
     runner: RobotRunner,
     robot_directory: Path,
     namespace: str,
+    cluster: str,
     images: Mapping[str, WorkloadImage],
     on_pair: Callable[[PlannedPair], None] = lambda _pair: None,
 ) -> list[PairExecution]:
@@ -75,6 +76,7 @@ def execute_pairs(
                 pair.test_id,
                 pair.source.name,
                 pair.target.name,
+                cluster,
                 images,
             )
             runner.run(

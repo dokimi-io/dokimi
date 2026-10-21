@@ -3,3 +3,5 @@
 # in versions.env it silently corrupts every pinned value the scripts source from it.
 *.sh  text eol=lf
 *.env text eol=lf
+# The exporter runs through its shebang, where a CRLF would name the interpreter python3\r.
+images/iperf2/*.py text eol=lf

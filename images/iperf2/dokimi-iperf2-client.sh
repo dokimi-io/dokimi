@@ -91,6 +91,8 @@ if ! valid_ipv4 "$server"; then
     echo "dokimi-iperf2-client: start sent '$server', not an IPv4 address" >&2
     exit 65
 fi
+# The server's address, for the exporter: the pair's target, known from now on.
+printf '%s\n' "$server" >"$results/iperf2.peer"
 # The readiness probe passes on this from now on: started is as ready as listening was,
 # and a client reported NotReady for its whole measurement would be skipped by anything
 # that selects Ready endpoints, the exporter's scrape among them.
@@ -115,6 +117,10 @@ status=0
 # shellcheck disable=SC2086
 iperf -c "$server" -p "$port" -B "0.0.0.0:$source_port" $udp -b "$bandwidth" \
     -t "$duration" -y C >"$results/iperf2.csv" 2>"$results/iperf2.stderr" || status=$?
+
+# iperf2's own exit status, for the exporter: a run that ended without a measurement is
+# an execution error, not merely a result that has not arrived yet.
+printf '%s\n' "$status" >"$results/iperf2.status"
 
 cat "$results/iperf2.csv"
 cat "$results/iperf2.stderr" >&2

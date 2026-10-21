@@ -51,6 +51,7 @@ PLACEMENT = Placement(
     test_id="pair-001",
     source_node="worker-01",
     target_node="worker-02",
+    cluster="test-cluster",
 )
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "images" / "iperf2"
 CLIENT_SCRIPT = SCRIPTS / "dokimi-iperf2-client.sh"
@@ -63,11 +64,14 @@ def params(**overrides: str) -> TestParameters:
     return Iperf2().parameter_schema().validate(raw)
 
 
-def container(pod: Manifest) -> dict[str, Any]:
-    (only,) = pod["spec"]["containers"]
-    assert only["name"] == CONTAINER_NAME
-    result: dict[str, Any] = only
+def container(pod: Manifest, name: str = CONTAINER_NAME) -> dict[str, Any]:
+    (found,) = [each for each in pod["spec"]["containers"] if each["name"] == name]
+    result: dict[str, Any] = found
     return result
+
+
+def exporter(pod: Manifest) -> dict[str, Any]:
+    return container(pod, "exporter")
 
 
 def role_args(role: Role, **overrides: str) -> dict[str, str]:
@@ -241,15 +245,16 @@ def test_the_server_is_created_before_the_client() -> None:
 def test_pods_are_minimal_and_non_root() -> None:
     for pod in Iperf2(image=IMAGE).workload(params(), PLACEMENT).pods.values():
         spec = pod["spec"]
-        security = container(pod)["securityContext"]
 
         assert spec["securityContext"]["runAsNonRoot"] is True
         assert spec["automountServiceAccountToken"] is False
         assert spec["restartPolicy"] == "Never"
-        assert security["readOnlyRootFilesystem"] is True
-        assert security["allowPrivilegeEscalation"] is False
-        assert security["capabilities"] == {"drop": ["ALL"]}
         assert "hostNetwork" not in spec  # ADR-05-03: pod network only
+        for each in (container(pod), exporter(pod)):
+            security = each["securityContext"]
+            assert security["readOnlyRootFilesystem"] is True
+            assert security["allowPrivilegeEscalation"] is False
+            assert security["capabilities"] == {"drop": ["ALL"]}
 
 
 def test_pod_names_are_valid_object_names() -> None:

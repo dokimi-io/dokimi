@@ -204,6 +204,65 @@ jobs:
           printf '%s\n' "$reports" | grep -Eq '^[0-9]{14}(\.[0-9]+)?,[0-9.]+,5103,' \
             || { echo "no server report for the warm-up's source port 5103"; exit 1; }
 
+      # M1-10's acceptance criteria in the real image: each pod's exporter serves its own
+      # view with every required label, and keeps serving after the tool has exited. The
+      # client has exited by now; its results are copied out and served read-only, as the
+      # pod's exporter container would serve them from the shared volume.
+      - name: The exporter serves each pod's result after the tool has exited
+        run: |
+          set -eu
+          labels() {
+            printf '%s\n' -e DOKIMI_CLUSTER=ci -e DOKIMI_RUN_ID=20261013-120000-ci0000 \
+              -e DOKIMI_TEST_ID=pair-001 -e DOKIMI_REPETITION=1 -e DOKIMI_TEST_TYPE=iperf2 \
+              -e DOKIMI_SOURCE_NODE=node-a -e DOKIMI_TARGET_NODE=node-b \
+              -e DOKIMI_SOURCE_POD=client -e DOKIMI_TARGET_POD=server -e DOKIMI_PROTOCOL=udp \
+              -e "DOKIMI_POD_IP=$1"
+          }
+          address() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+
+          # shellcheck disable=SC2046 # one flag per line, deliberately
+          docker exec -d $(labels "$(address server)") server \
+            dokimi-iperf2-exporter --results /tmp --port 9101
+          mkdir -p client-results
+          docker cp client:/tmp/. client-results/
+          # shellcheck disable=SC2046
+          docker run -d --name client-exporter --network dokimi-ci --read-only \
+            -v "$PWD/client-results:/results:ro" $(labels 10.0.0.2) iperf2:ci \
+            dokimi-iperf2-exporter --results /results --port 9101
+
+          scrape() {
+            for _ in $(seq 20); do
+              if docker exec "$1" python3 -c "import urllib.request,sys; sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:9101/metrics', timeout=2).read().decode())" >"$1.prom" 2>/dev/null \
+                && grep -q '^dokimi_test_completed{' "$1.prom"; then
+                cat "$1.prom"; return 0
+              fi
+              sleep 1
+            done
+            echo "$1 served no result"; cat "$1.prom" || true; exit 1
+          }
+          scrape server
+          scrape client-exporter
+
+          for pod in server client-exporter; do
+            grep -Eq '^dokimi_test_completed\{.*\} 1$' "$pod.prom" \
+              || { echo "$pod: the test is not complete"; exit 1; }
+            grep -Eq '^dokimi_throughput_bits_per_second\{.*\} [0-9]' "$pod.prom" \
+              || { echo "$pod: no throughput"; exit 1; }
+            for label in cluster run_id test_id repetition test_type source_node target_node \
+              source_pod target_pod source_ip target_ip protocol direction; do
+              if grep '^dokimi_' "$pod.prom" | grep -v "[{,]$label=\"[^\"]\+\"" | grep -q .; then
+                echo "$pod: a series without $label"; exit 1
+              fi
+            done
+          done
+          grep -Eq '^dokimi_packet_loss_percent\{.*direction="inbound".*\} ' server.prom \
+            || { echo "the server reports no packet loss"; exit 1; }
+          grep -Eq '^dokimi_jitter_seconds\{.*direction="inbound".*\} ' server.prom \
+            || { echo "the server reports no jitter"; exit 1; }
+          if grep -q '^dokimi_packet_loss_percent' client-exporter.prom; then
+            echo "the client reports loss it cannot observe"; exit 1
+          fi
+
   prometheus-config:
     name: The managed Prometheus configuration is valid for its pinned image
     runs-on: ubuntu-latest

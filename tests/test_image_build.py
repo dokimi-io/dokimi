@@ -224,6 +224,29 @@ def test_the_iperf2_package_is_pinned_to_an_exact_version() -> None:
     assert 'apk add --no-cache "iperf=${IPERF_VERSION}"' in _iperf2_instructions()
 
 
+def test_the_exporters_python_is_pinned_and_the_exporter_installed() -> None:
+    # The exporter ships in the tool's image (ADR-02-02), and runs on this Python only.
+    dockerfile = IPERF2_DOCKERFILE.read_text()
+    instructions = _iperf2_instructions()
+
+    assert re.search(r"^ARG PYTHON_VERSION=\d+\.\d+\.\d+-r\d+$", dockerfile, re.M)
+    assert '"python3=${PYTHON_VERSION}"' in instructions
+    assert (
+        "COPY --chmod=0755 images/iperf2/dokimi_iperf2_exporter.py "
+        "/usr/local/bin/dokimi-iperf2-exporter"
+    ) in instructions
+    # The pods' root filesystem is read-only.
+    assert "ENV PYTHONDONTWRITEBYTECODE=1" in instructions
+    # .dockerignore excludes everything by default.
+    ignore = (REPOSITORY_ROOT / ".dockerignore").read_text().splitlines()
+    assert "!images/iperf2/dokimi_iperf2_exporter.py" in ignore
+    # It runs through its shebang, which a CRLF would break.
+    exporter = (REPOSITORY_ROOT / "images" / "iperf2" / "dokimi_iperf2_exporter.py").read_bytes()
+    assert exporter.startswith(b"#!/usr/bin/env python3\n")
+    attributes = (REPOSITORY_ROOT / ".gitattributes").read_text().splitlines()
+    assert "images/iperf2/*.py text eol=lf" in attributes
+
+
 def test_the_iperf2_image_runs_as_a_non_root_user() -> None:
     user_lines = [
         line for line in IPERF2_DOCKERFILE.read_text().splitlines() if line.startswith("USER ")

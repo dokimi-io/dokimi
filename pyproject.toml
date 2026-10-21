@@ -63,7 +63,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.14"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "images/iperf2/dokimi_iperf2_exporter.py"]
 
 # The official `kubernetes` distribution ships no py.typed marker and no stubs, and the
 # available third-party stubs lag its releases. Everything that touches it is confined to
