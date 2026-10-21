@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dokimi.measurement import Measurement, write_measurement
+
 
 @dataclass
 class RunCall:
@@ -28,6 +30,9 @@ class FakeRobotRunner:
     writes_output: bool = True
     #: Called as each pair's process runs: what its test does to the cluster.
     on_run: Callable[[], object] | None = None
+    #: What a pair's ``Run Network Test`` read directly from its exporters (phase 7), by
+    #: metric name; written next to its output as the real library does. ``None``: none.
+    measures: Mapping[str, float] | None = None
 
     def run(
         self, suite: Path, *, output: Path, environment: Mapping[str, str], pythonpath: Path
@@ -38,6 +43,16 @@ class FakeRobotRunner:
         if self.writes_output:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text("<robot/>", encoding="utf-8")
+        if self.measures is not None:
+            test_id = output.stem
+            labels = {
+                "run_id": environment.get("DOKIMI_RUN_ID", ""),
+                "test_id": test_id,
+                "direction": "inbound",
+            }
+            write_measurement(
+                Measurement(test_id, "inbound", dict(self.measures), labels), output.parent
+            )
 
     def merge(self, outputs: Sequence[Path], *, output: Path, log: Path, report: Path) -> None:
         self.merges.append(list(outputs))

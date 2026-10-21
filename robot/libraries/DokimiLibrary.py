@@ -7,7 +7,10 @@ Everything a keyword does is a call into :mod:`dokimi`. What this adapter adds i
 what is Robot's: argument passing, the log, and how a failure reads in ``log.html``.
 
 * ``Run Network Test`` is :func:`dokimi.execution.run_network_test`, with the run's
-  identity from the environment phase 6 starts this process with.
+  identity from the environment phase 6 starts this process with. Its measurement, read
+  directly from the exporters (phase 7), is kept for the criteria and written next to
+  this process's ``output.xml`` as ``<test-id>.measurement.json``, where the Job reads it
+  to confirm Prometheus holds the same values.
 * The criterion keywords are exactly the ones the Robot format's parser accepts, from
   the same table (:func:`dokimi.formats.robot_suite.criterion_keyword_names`), so a
   keyword the parser reads is always one this library implements. Evaluating them is
@@ -18,9 +21,11 @@ what is Robot's: argument passing, the log, and how a failure reads in ``log.htm
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from robot.api import logger
+from robot.libraries.BuiltIn import BuiltIn
 
 from dokimi import __version__, execution
 from dokimi.formats.robot_suite import (
@@ -28,6 +33,7 @@ from dokimi.formats.robot_suite import (
     criterion_from_keyword,
     criterion_keyword_names,
 )
+from dokimi.measurement import Measurement, write_measurement
 from dokimi.validation import NotEvaluatedError, evaluate
 
 _RUN_NETWORK_TEST_ARGUMENTS = ["type", "protocol", "source", "target", "bandwidth", "duration"]
@@ -51,6 +57,10 @@ class DokimiLibrary:
 
     ROBOT_LIBRARY_SCOPE = "GLOBAL"
     ROBOT_LIBRARY_VERSION = __version__
+
+    def __init__(self) -> None:
+        #: Each test's measurement, by test id: what the criteria are evaluated on (M1-13).
+        self.measurements: dict[str, Measurement] = {}
 
     def get_keyword_names(self) -> list[str]:
         return [RUN_NETWORK_TEST, *criterion_keyword_names()]
@@ -101,6 +111,17 @@ class DokimiLibrary:
             logger.info(f"{key}: {value}")
         if result.summary:
             logger.info(f"summary: {result.summary}")
+        measurement = result.measurement
+        self.measurements[measurement.test_id] = measurement
+        for metric, value in sorted(measurement.values.items()):
+            logger.info(
+                f"measured ({measurement.direction}, {measurement.source}): {metric} = {value:g}"
+            )
+        # Next to output.xml, where the Job looks: ${OUTPUT FILE}'s directory. Not
+        # ${OUTPUT DIR}, which is --outputdir, the working directory unless given.
+        output_file = BuiltIn().get_variable_value("${OUTPUT FILE}")
+        if output_file and str(output_file).upper() != "NONE":
+            write_measurement(measurement, Path(str(output_file)).parent)
 
     def _criterion(self, name: str, args: list[str]) -> None:
         criterion = criterion_from_keyword(name, args)

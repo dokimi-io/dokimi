@@ -31,6 +31,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_testtype_interface.py`](test_testtype_interface.py) | The test-type interface: parameter schemas, capabilities, workload images, and the plugin registry |
 | [`test_iperf2.py`](test_iperf2.py) | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, the probe mode, and both role scripts' contracts |
 | [`test_iperf2_exporter.py`](test_iperf2_exporter.py) | The iperf2 exporter: each pod's own view, every required label, base units, served after the tool exited |
+| [`test_measurement.py`](test_measurement.py) | Phase 7: the direct read of the exporters, what is `metrics_missing` or `exporter_parse`, and Prometheus's confirmation, its timeout and a disagreement |
 | [`test_lifecycle.py`](test_lifecycle.py) | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | The Prometheus client, and phase 4's query-access check |
 | [`test_preflight.py`](test_preflight.py) | Phase 4's cluster checks: each failure by the check it names, the first pair in probe mode, the node-exporter warning, and the time phase 4 may take |

@@ -31,6 +31,7 @@ from dokimi.execution import (
 from dokimi.formats import parse_file
 from dokimi.formats.robot_suite import criterion_keyword_names
 from dokimi.images import ImageSource
+from dokimi.measurement import Measurement, read_measurement
 from dokimi.planning import NodeFacts, Plan, PlannedPair
 from dokimi.testtypes.interface import Role, WorkloadImage
 
@@ -77,6 +78,12 @@ def network_test(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
             pods={Role.SERVER: "server-pod", Role.CLIENT: "client-pod"},
             run_metadata={"address_family": "IPv4"},
             summary="20261002120010,10.0.0.3,5102,10.0.0.2,5001,1,0.0-5.0,1,1",
+            measurement=Measurement(
+                context.test_id,
+                "inbound",
+                {"dokimi_throughput_bits_per_second": 49983531.0},
+                {"run_id": context.run_id, "test_id": context.test_id, "direction": "inbound"},
+            ),
         )
 
     monkeypatch.setattr(execution, "run_network_test", completes)
@@ -138,6 +145,22 @@ def test_a_yaml_test_runs_through_its_rendered_suite_like_a_robot_one(
             "duration": "30s",
         }
     )
+
+
+def test_the_measurement_is_written_next_to_the_pairs_output(
+    tmp_path: Path, run_environment: None, network_test: list[dict[str, Any]]
+) -> None:
+    # Phase 7: what the direct read found reaches the Job, which confirms Prometheus
+    # holds the same values.
+    artifacts = RunArtifacts(tmp_path, RUN_ID)
+    suite = render_suite(parse_file(EXAMPLES / "worker-01-to-worker-02-udp.yaml"), artifacts)
+
+    run_in_process(suite, artifacts.directory)
+
+    measurement = read_measurement(artifacts.directory, "pair-001")
+    assert measurement is not None
+    assert measurement.direction == "inbound"
+    assert measurement.values == {"dokimi_throughput_bits_per_second": 49983531.0}
 
 
 def test_every_criterion_fails_and_says_it_was_not_evaluated(

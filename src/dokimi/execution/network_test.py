@@ -10,10 +10,12 @@ everything else, so a caller of the library without Robot runs exactly the same 
 4. the per-test readiness gate, then ``start()`` ([ADR-05-07]);
 5. waiting for completion through the plugin, never by reading a pod directly. For
    ``iperf2`` that is the only place a spoofed trigger shows (``UnexpectedTargetError``);
-6. a tool that ran but measured nothing fails the test here, rather than look complete.
+6. a tool that ran but measured nothing fails the test here, rather than look complete;
+7. the measurement, read directly from both pods' exporters ([ADR-03-01], phase 7): the
+   receiver's view is the result, and a result not served is an error, never a pass.
 
-Measuring the result is phase 7 (M1-12), and evaluating it phase 8 (M1-13). The pods stay
-until the run ends: ``dokimi execute`` removes them before it frees the cluster.
+Evaluating it is phase 8 (M1-13). The pods stay until the run ends: ``dokimi execute``
+removes them before it frees the cluster.
 """
 
 from __future__ import annotations
@@ -23,9 +25,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from dokimi.k8s.deadlines import workload_budget
+from dokimi.k8s.deadlines import DEFAULT_DIRECT_READ_SECONDS, workload_budget
 from dokimi.k8s.ownership import RunOwnership
 from dokimi.k8s.resources import KubernetesResources, ResourceClient
+from dokimi.measurement import Measurement, fetch_metrics, measure
 from dokimi.model import ConfigError, Duration, TestType
 from dokimi.run_identity import RunId
 from dokimi.testtypes import plugin_for
@@ -76,6 +79,8 @@ class NetworkTestResult:
     run_metadata: Mapping[str, str]
     #: The tool's own summary of its run, if the plugin reports one.
     summary: str
+    #: The result, read directly from the exporters: what the verdict is evaluated on.
+    measurement: Measurement
 
 
 def run_network_test(
@@ -91,10 +96,12 @@ def run_network_test(
     plugin: TestTypePlugin | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    read_metrics: Callable[[str], str] = fetch_metrics,
 ) -> NetworkTestResult:
-    """Deploy one pair, pass its readiness gate, start it, and wait for it to finish.
+    """Deploy one pair, pass its readiness gate, start it, wait for it, and read its result.
 
-    *cluster* and *plugin* are the real ones unless given, which only tests do.
+    *cluster*, *plugin* and *read_metrics* are the real ones unless given, which only
+    tests do.
 
     Raises:
         ConfigError: on a parameter the test type does not accept.
@@ -102,6 +109,8 @@ def run_network_test(
         CompletionTimeoutError: the test did not finish in time.
         ToolFailedError: it finished, and measured nothing.
         UnexpectedTargetError: for ``iperf2``, it measured another address than the server's.
+        MetricsMissingError: its exporters served no completed result (``metrics_missing``).
+        ExporterParseError: they served one dokimi cannot read (``exporter_parse``).
     """
     if (source, target) != (context.source_node, context.target_node):
         raise PairMismatchError(
@@ -157,9 +166,25 @@ def run_network_test(
             + ("" if completion is not None and completion.summary else " without a summary line")
             + ", so it measured nothing"
         )
+    # Phase 7: the same /metrics Prometheus scrapes, read directly, from both pods.
+    exporter = plugin.exporter()
+    measurement = measure(
+        [
+            f"http://{deployed.pod_ip(role)}:{exporter.port}{exporter.path}"
+            for role in (Role.SERVER, Role.CLIENT)
+        ],
+        run_id=context.run_id,
+        test_id=context.test_id,
+        protocol=params.written["protocol"],
+        read=read_metrics,
+        timeout=DEFAULT_DIRECT_READ_SECONDS,
+        clock=clock,
+        sleep=sleep,
+    )
     return NetworkTestResult(
         test_id=context.test_id,
         pods={role: spec.pod_name(role) for role in spec.pods},
         run_metadata=dict(spec.run_metadata),
         summary=completion.summary,
+        measurement=measurement,
     )
