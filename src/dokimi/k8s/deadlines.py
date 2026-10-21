@@ -61,7 +61,10 @@ DEFAULT_WARMUP_SECONDS = 10.0
 DEFAULT_DIRECT_READ_SECONDS = 30.0
 #: A few scrape intervals at the common 15 to 30 s ([ADR-03-01]).
 DEFAULT_SCRAPE_CONFIRMATION_SECONDS = 120.0
-DEFAULT_PREFLIGHT_SECONDS = 300.0
+#: Phase 4, every wait in it at its longest: the Prometheus query check (180 s), the probe
+#: pair's startup (:data:`DEFAULT_STARTUP_SECONDS`), its start and exchange (90 s) and its
+#: removal (60 s). ``tests/test_preflight.py`` holds it to the timeouts themselves.
+DEFAULT_PREFLIGHT_SECONDS = 630.0
 DEFAULT_DIAGNOSTICS_SECONDS = 120.0
 DEFAULT_CLEANUP_SECONDS = 120.0
 

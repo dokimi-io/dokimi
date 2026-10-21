@@ -87,12 +87,14 @@ def render_manifests(
     images: Mapping[str, WorkloadImage],
     cluster: str,
     service_account: str | None = None,
+    preflight_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Render the objects a submission creates, in the order they must be created.
 
     *image* is the orchestrator's own; *images* are the ones the run deploys, resolved at
     submission and handed to the Job in its environment (ADR-04-08), like *cluster*, the
-    name the operator gave the cluster (ADR-02-07).
+    name the operator gave the cluster (ADR-02-07). *preflight_only* is ``dokimi preflight``:
+    the same objects, and a Job that stops after phase 4.
     """
     owner = _owner_manifest(run_id, namespace)
     owner_reference = _owner_reference(owner)
@@ -115,6 +117,7 @@ def render_manifests(
             source_suffix=source_suffix,
             service_account=service_account,
             owner_reference=owner_reference,
+            preflight_only=preflight_only,
         ),
     ]
 
@@ -186,6 +189,7 @@ def _job_manifest(
     source_suffix: str,
     service_account: str | None,
     owner_reference: dict[str, Any],
+    preflight_only: bool = False,
 ) -> dict[str, Any]:
     labels = ownership_labels(run_id, RUN_COMPONENT)
     definition_path = f"{DEFINITION_MOUNT_PATH}/{definition_file_name(source_suffix)}"
@@ -214,6 +218,7 @@ def _job_manifest(
                     namespace,
                     "--deadline-seconds",
                     str(deadline),
+                    *(["--preflight-only"] if preflight_only else []),
                 ],
                 # The images the run deploys and the cluster's name, resolved on the
                 # submitter's side, whose environment the Job never sees (ADR-04-08,

@@ -26,6 +26,7 @@ from dokimi.cli.commands import (
     attach,
     convert,
     execute,
+    preflight,
     show_image,
     submit_run,
     validate,
@@ -40,6 +41,7 @@ from dokimi.k8s.ownership import OwnershipError
 from dokimi.k8s.submission import RunNotFound
 from dokimi.metrics.prometheus import PrometheusUnreachableError
 from dokimi.model import ConfigError
+from dokimi.preflight import ClusterNotReadyError
 from dokimi.run_images import COMPONENTS
 
 __all__ = ["build_parser", "main"]
@@ -119,14 +121,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--service-account",
         help="service account for the run's Job, if the cluster needs a specific one",
     )
-    submit_parser.add_argument(
-        "--cluster",
-        dest="cluster_name",
-        help=f"the name results are labelled with, overriding ${CLUSTER_ENV_VAR}; required, "
-        "with no default: lowercase letters, digits and hyphens",
-    )
+    _add_cluster_name_argument(submit_parser)
     _add_cluster_arguments(submit_parser)
     _add_image_argument(submit_parser)
+
+    preflight_parser = commands.add_parser(
+        "preflight",
+        help="check that the cluster can run a definition's tests, without running them",
+        description=(
+            "Submit the run's preflight and only that: claim the cluster, check the "
+            "planned nodes, and deploy the first pair once to see it schedule, pull its "
+            "image, connect and resolve a cluster name, then remove it. Creates real pods, "
+            "unlike submit --dry-run, which renders and creates nothing. Exits 0 if the "
+            "cluster is ready and 4 if it is not."
+        ),
+    )
+    preflight_parser.add_argument(
+        "definition", type=Path, help="the .yaml or .robot test definition to check for"
+    )
+    preflight_parser.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="submit and return immediately instead of streaming",
+    )
+    preflight_parser.add_argument("--run-id", help="use this run id instead of generating one")
+    preflight_parser.add_argument(
+        "--service-account",
+        help="service account for the run's Job, if the cluster needs a specific one",
+    )
+    _add_cluster_name_argument(preflight_parser)
+    _add_cluster_arguments(preflight_parser)
+    _add_image_argument(preflight_parser)
 
     attach_parser = commands.add_parser(
         "attach",
@@ -155,8 +180,19 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--run-id", required=True)
     execute_parser.add_argument("--namespace", required=True)
     execute_parser.add_argument("--deadline-seconds", type=int, required=True)
+    execute_parser.add_argument("--preflight-only", action="store_true")
 
     return parser
+
+
+def _add_cluster_name_argument(parser: argparse.ArgumentParser) -> None:
+    """``--cluster``, for every command that submits a run: a preflight is a run too."""
+    parser.add_argument(
+        "--cluster",
+        dest="cluster_name",
+        help=f"the name results are labelled with, overriding ${CLUSTER_ENV_VAR}; required, "
+        "with no default: lowercase letters, digits and hyphens",
+    )
 
 
 def _add_cluster_arguments(parser: argparse.ArgumentParser) -> None:
@@ -213,11 +249,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunNotFound as error:
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
-    except (RunExclusivityError, OwnershipError, PrometheusUnreachableError) as error:
+    except (
+        RunExclusivityError,
+        OwnershipError,
+        PrometheusUnreachableError,
+        ClusterNotReadyError,
+    ) as error:
         # ADR-01-11: another run holds the cluster, or an owner belongs to another run.
-        # ADR-03-02: the run's Prometheus cannot be queried. Each a run-level
-        # precondition checked before any workload exists, so a preflight failure (4).
-        # A refusal's message names its `run_already_active` reason.
+        # ADR-03-02: the run's Prometheus cannot be queried. ADR-05-07: a cluster check
+        # failed. Each a run-level precondition checked before any test runs, so a
+        # preflight failure (4). Each message names its reason: `run_already_active`,
+        # or `cluster not ready (<check>)`.
         console.fail(_with_notes(error))
         return ExitCode.PREFLIGHT_FAILURE
     except (ClusterError, RobotRunError) as error:
@@ -262,6 +304,20 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             context=args.context,
             follow_logs=not args.no_follow,
         )
+    if args.command == "preflight":
+        return preflight(
+            console,
+            path=args.definition,
+            namespace=args.namespace,
+            run_id=args.run_id,
+            image_override=args.image_override,
+            images=args.images,
+            service_account=args.service_account,
+            cluster_name=args.cluster_name,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+            follow_logs=not args.no_follow,
+        )
     if args.command == "attach":
         return attach(
             console,
@@ -280,6 +336,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             run_id=args.run_id,
             namespace=args.namespace,
             deadline_seconds=args.deadline_seconds,
+            preflight_only=args.preflight_only,
         )
     raise AssertionError(f"unreachable: argparse accepted {args.command!r}")
 
