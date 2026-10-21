@@ -478,6 +478,38 @@ def test_the_report_returned_at_the_timeout_never_changes_after_it(tmp_path: Pat
     assert kinds(diagnostics) == [AnomalyKind.SNAPSHOT_INCOMPLETE]
 
 
+def test_a_worker_finishing_just_after_the_timeout_still_names_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The race at the timeout: the worker ends between close() and the check that follows
+    # it. Its last commit is dropped, so the report is incomplete and must say why.
+    import dokimi.diagnostics as module  # noqa: PLC0415
+
+    release = threading.Event()
+    close = module._Recorder.close
+
+    def close_then_let_the_worker_finish(self: Any) -> Diagnostics:
+        taken = close(self)
+        release.set()
+        for thread in threading.enumerate():
+            if thread.name == "dokimi-diagnostics":
+                thread.join(5)
+        return taken
+
+    monkeypatch.setattr(module._Recorder, "close", close_then_let_the_worker_finish)
+
+    diagnostics = snapshot(
+        cluster_with(pod("client"), pod("server")),
+        tmp_path,
+        prometheus_ready=lambda: release.wait(5),
+        timeout=0.2,
+    )
+
+    assert diagnostics.complete is False
+    assert kinds(diagnostics) == [AnomalyKind.SNAPSHOT_INCOMPLETE]
+    assert diagnostics.retain is True
+
+
 def test_its_timeout_fits_the_job_budgets_diagnostics_term() -> None:
     assert SNAPSHOT_TIMEOUT_SECONDS < DEFAULT_DIAGNOSTICS_SECONDS
 

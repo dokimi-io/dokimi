@@ -320,9 +320,13 @@ def capture(
     worker.start()
     worker.join(timeout)
     diagnostics = recorder.close()
-    if worker.is_alive():
+    # Decided from the copy, not from worker.is_alive(): a worker that finishes between
+    # close() and that check has its last commit dropped, and would leave the report
+    # incomplete with no reason given. A failed step has already named itself.
+    if not diagnostics.complete and not any(
+        anomaly.kind is AnomalyKind.SNAPSHOT_INCOMPLETE for anomaly in diagnostics.anomalies
+    ):
         # Left to finish or not on its own: the Job ends anyway, and cleanup does not wait.
-        diagnostics.complete = False
         diagnostics.anomalies.append(
             Anomaly(
                 AnomalyKind.SNAPSHOT_INCOMPLETE,
