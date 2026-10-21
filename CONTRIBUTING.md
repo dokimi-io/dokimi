@@ -100,6 +100,11 @@ just a review.
 
 ## Pull requests
 
+The [pull request template](.github/pull_request_template.md) lists what follows as a
+checklist, plus one more question: does [dokimi.io](https://github.com/dokimi-io/dokimi-website)
+need updating? Its pages describe what dokimi does today, so a change a user can see usually
+reaches them too.
+
 - **One topic per pull request.** A refactoring that a feature needs goes first, on its own.
 - **The title is what the change does**, as it should read in the history: `Refuse an unknown
   monitoring mode before submitting`. A pull request for a planned work item starts with its id,
