@@ -143,10 +143,10 @@ class DokimiLibrary:
         directory = _output_directory()
         if directory is not None:
             write_measurement(measurement, directory)
-        # Measured: a pass until a criterion says otherwise. With no criteria, it stays one.
+        # Measured, and nothing asserted yet: on record as such until the criteria run. A
+        # test with none stays an error, since nothing passed.
         self.evaluations[measurement.test_id] = []
         self._record(measurement.test_id)
-        self._tag(measurement.test_id, Outcome.PASS)
 
     def _criterion(self, name: str, args: list[str]) -> None:
         criterion = criterion_from_keyword(name, args)
@@ -179,7 +179,8 @@ class DokimiLibrary:
 
     def _tag(self, test_id: str, outcome: Outcome, categories: tuple[str, ...] = ()) -> None:
         """Tag the running test with its worst outcome so far, and an error's categories."""
-        worst = max(outcome, self.outcomes.get(test_id, Outcome.PASS), key=lambda o: o.rank)
+        known = self.outcomes.get(test_id)
+        worst = outcome if known is None else max(outcome, known, key=lambda o: o.rank)
         self.outcomes[test_id] = worst
         builtin = BuiltIn()
         builtin.remove_tags("outcome:*")

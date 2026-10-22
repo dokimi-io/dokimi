@@ -114,7 +114,7 @@ Five things to know about a run today:
   Every criterion is checked and listed, not only the first. Robot's report tags each test
   `outcome:pass`, `outcome:fail` or `outcome:error`, an error also `error:<category>`, and
   each test's outcome is in `pairs/<test-id>.validation.json`, with the PromQL that
-  reproduces it from the run's Prometheus.
+  reproduces it from the run's Prometheus: see [validation.json](#validationjson).
 - **Robot's report comes back to you.** `submit` and `attach` extract it into
   `<results.directory>/<run-id>/`: `log.html`, `report.html`, the merged `output.xml`, and
   `suite.robot`, the exact suite that ran. See [The run's reports](#the-runs-reports).
@@ -539,6 +539,39 @@ is what it recommends. Two consequences of it:
   extracts nothing; `dokimi attach <run-id>` later does, until the pod is deleted.
 - **The Job's raw log ends with a block of base64.** `kubectl logs` shows it; `submit` and
   `attach` never do.
+
+### validation.json
+
+`pairs/<test-id>.validation.json`: what a test's pass criteria came to, phase 8, written by
+its Robot process next to its `output.xml`. It is the classification itself; Robot's
+status and tags are only a rendering of it. Its `schema` is `1`; a field that changes
+meaning or goes away raises it.
+
+| Field | Type | What it says |
+| --- | --- | --- |
+| `schema` | integer | `1` |
+| `test_id` | string | The test |
+| `outcome` | string | `pass`, `fail` or `error`: the worst of its criteria, and `error` if it has none |
+| `criteria` | list | Each criterion, in the order the suite checks them, as below |
+
+Each criterion:
+
+| Field | Type | What it says |
+| --- | --- | --- |
+| `phrase` | string | The criterion as the suite writes it: `Throughput Should Be At Least 950 megabits per second` |
+| `metric`, `statistic`, `comparison`, `threshold`, `unit` | string | The criterion's fields; `statistic` is `null` where the metric has none, and `threshold` is the number as written |
+| `outcome` | string | `pass`, `fail` or `error`: the worst of its pairs |
+| `categories` | list | For an `error`, each error category once: `metrics_missing`, `exporter_parse` |
+| `promql_equivalent` | string | The PromQL that returns the pairs violating it from the run's Prometheus. An equivalent for checking by hand, not what decided: the verdict comes from the direct read |
+| `pairs` | list | Each expected pair: `test_id`, `source_node`, `target_node`, `outcome`, `value` (the measured value as a decimal string in the criterion's unit, or `null` for an error), `category` and `detail` (for an error) |
+
+The three outcomes:
+
+| `outcome` | Means |
+| --- | --- |
+| `pass` | Measured, and the criterion holds for every expected pair |
+| `fail` | Measured, and it doesn't hold for at least one pair: a finding about the network |
+| `error` | At least one pair couldn't be validly measured, and nothing about the network follows from it. Never a pass, and it outranks `fail` |
 
 ### diagnostics.json
 

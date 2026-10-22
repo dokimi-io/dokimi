@@ -169,7 +169,9 @@ def test_jitter_in_microseconds_against_a_metric_in_seconds() -> None:
         (Comparison.EXACTLY, 0.39, Outcome.FAIL),
     ],
 )
-def test_each_comparison(comparison: Comparison, loss: float, outcome: Outcome) -> None:
+def test_each_comparison_bounds_the_value_the_way_it_reads(
+    comparison: Comparison, loss: float, outcome: Outcome
+) -> None:
     rule = criterion(Metric.PACKET_LOSS, comparison, "0", Unit.PERCENT)
 
     assert (
@@ -344,6 +346,34 @@ def test_a_value_for_a_person_has_no_exponent(value: Decimal, text: str) -> None
     assert format_value(value) == text
 
 
+def test_a_value_one_bit_short_is_never_shown_as_the_threshold() -> None:
+    # Seven digits would round 949.999999 to 950, and the message would say a pair at 950
+    # failed "at least 950". It gets the digits it takes to stay below.
+    result = evaluate(
+        criterion(), {"pair-001": measured(throughput_bits_per_second=949_999_999.0)}, [PAIR]
+    )
+
+    assert result.outcome is Outcome.FAIL
+    assert "(pair-001): 949.999999 megabits per second, needs at least 950" in result.message()
+
+
+@pytest.mark.parametrize(
+    ("value", "threshold", "text"),
+    [
+        (Decimal("949.999999"), Decimal("950"), "949.999999"),
+        (Decimal("950.0000001"), Decimal("950"), "950.0000001"),
+        (Decimal("950"), Decimal("950"), "950"),
+        (Decimal("49.983531"), Decimal("950"), "49.98353"),
+        # A threshold between the value and its seven-digit rounding.
+        (Decimal("123.45678"), Decimal("123.456785"), "123.45678"),
+    ],
+)
+def test_a_value_sits_on_the_same_side_of_the_threshold_as_it_really_does(
+    value: Decimal, threshold: Decimal, text: str
+) -> None:
+    assert format_value(value, threshold=threshold) == text
+
+
 # -- the PromQL equivalent ------------------------------------------------------------------
 
 
@@ -355,6 +385,17 @@ def test_the_promql_equivalent_returns_the_violating_pairs_in_base_units() -> No
     assert promql_equivalent(
         criterion(Metric.PACKET_LOSS, Comparison.AT_MOST, "0", Unit.PERCENT)
     ) == ('dokimi_packet_loss_percent{direction="inbound"} > 0')
+
+
+def test_the_promql_equivalent_keeps_the_threshold_exact() -> None:
+    # Rounded, 123.4567891 megabits per second would be < 123456800, which no longer
+    # reproduces the verdict.
+    precise = criterion(threshold="123.4567891")
+
+    assert promql_equivalent(precise).endswith(" < 123456789.1")
+    assert promql_equivalent(
+        criterion(Metric.JITTER, Comparison.AT_MOST, "10", Unit.MICROSECONDS)
+    ).endswith(" > 0.00001")
 
 
 def test_each_evaluation_carries_its_promql_equivalent() -> None:
@@ -379,7 +420,8 @@ def test_a_tests_outcome_is_its_worst_criterion() -> None:
     )
     erring = evaluate(criterion(), {}, [PAIR])
 
-    assert outcome_of([]) is Outcome.PASS
+    # Nothing asserted is not a pass. Both formats refuse it; a hand-written suite can't.
+    assert outcome_of([]) is Outcome.ERROR
     assert outcome_of([passing]) is Outcome.PASS
     assert outcome_of([passing, failing]) is Outcome.FAIL
     assert outcome_of([failing, erring, passing]) is Outcome.ERROR

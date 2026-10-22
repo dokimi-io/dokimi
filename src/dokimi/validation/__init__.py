@@ -214,14 +214,14 @@ class Evaluation:
 
     def _badness(self, result: PairResult) -> Decimal:
         """How far a measured pair is from the threshold, on the wrong side counting most."""
-        assert result.value is not None
+        value = _measured(result)
         threshold = self.criterion.threshold
         comparison = self.criterion.comparison
         if comparison is Comparison.AT_LEAST:
-            return threshold - result.value
+            return threshold - value
         if comparison is Comparison.AT_MOST:
-            return result.value - threshold
-        return abs(result.value - threshold)
+            return value - threshold
+        return abs(value - threshold)
 
     def _closest(self) -> str:
         measured = [result for result in self.pairs if result.value is not None]
@@ -231,8 +231,8 @@ class Evaluation:
         return f"{closest.pair} at {self._value(closest)}"
 
     def _value(self, result: PairResult) -> str:
-        assert result.value is not None
-        return f"{format_value(result.value)} {self.criterion.unit.value}"
+        shown = format_value(_measured(result), threshold=self.criterion.threshold)
+        return f"{shown} {self.criterion.unit.value}"
 
     def _needs(self) -> str:
         bound = {
@@ -246,6 +246,13 @@ class Evaluation:
         if count <= MAX_LISTED:
             return []
         return [f"  ... and {count - MAX_LISTED} more, in each test's {VALIDATION_SUFFIX[1:]}"]
+
+
+def _measured(result: PairResult) -> Decimal:
+    """A measured pair's value. Only failed and passed pairs are ever asked for one."""
+    if result.value is None:
+        raise ValueError(f"{result.pair} has no measured value: it is {result.outcome.value}")
+    return result.value
 
 
 def phrase(criterion: Criterion) -> str:
@@ -392,19 +399,45 @@ def promql_equivalent(criterion: Criterion, run_id: str = "") -> str:
         Comparison.AT_MOST: ">",
         Comparison.EXACTLY: "!=",
     }[criterion.comparison]
-    return f"{series}{{{selector}}} {violation} {format_value(threshold)}"
+    return f"{series}{{{selector}}} {violation} {_plain(threshold)}"
 
 
-def format_value(value: Decimal) -> str:
-    """A number for a person: up to seven significant digits, never an exponent.
+#: Significant digits a value is shown with, unless the threshold needs more.
+SHOWN_DIGITS = 7
+
+
+def format_value(value: Decimal, *, threshold: Decimal | None = None) -> str:
+    """A number for a person: seven significant digits, never an exponent.
 
     ``1e-05`` has no place in a message a person reads. Values here are already in the
     user's unit, so they are rarely tiny, but never written as one.
+
+    Given the *threshold* it is compared with, the value is shown with as many more
+    digits as it takes to sit on the same side of it as the exact value: 949.999999
+    megabits per second against "at least 950" is never shown as ``950``.
     """
     if value == 0:
         return "0"
-    rounded = Decimal(f"{value:.7g}")
-    text = format(rounded, "f")
+    side = _sign(value - threshold) if threshold is not None else None
+    for digits in range(SHOWN_DIGITS, _digits(value) + 1):
+        rounded = Decimal(f"{value:.{digits}g}")
+        if threshold is None or _sign(rounded - threshold) == side:
+            return _plain(rounded)
+    return _plain(value)
+
+
+def _digits(value: Decimal) -> int:
+    """How many significant digits *value* has: the most it can ever need."""
+    return max(len(value.normalize().as_tuple().digits), SHOWN_DIGITS)
+
+
+def _sign(difference: Decimal) -> int:
+    return (difference > 0) - (difference < 0)
+
+
+def _plain(value: Decimal) -> str:
+    """*value* exactly, with no exponent and no trailing zeros: ``950000000``, ``0.00001``."""
+    text = format(value.normalize(), "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
@@ -412,12 +445,13 @@ def format_value(value: Decimal) -> str:
 
 
 def outcome_of(evaluations: Sequence[Evaluation]) -> Outcome:
-    """A test's outcome from its criteria: the worst of them, ``pass`` if there are none.
+    """A test's outcome from its criteria: the worst of them.
 
-    A test with no criteria was measured and asserted nothing, so it passes, as Robot's
-    status already says. What made it unmeasurable stops it earlier, in phase 6 or 7.
+    A test with none is an ``error``: nothing was asserted, so nothing passed. Both
+    formats refuse a definition without criteria, so only a suite written by hand and run
+    directly gets here, and it must not read as a pass.
     """
-    return max((e.outcome for e in evaluations), key=lambda o: o.rank, default=Outcome.PASS)
+    return max((e.outcome for e in evaluations), key=lambda o: o.rank, default=Outcome.ERROR)
 
 
 def write_validation(test_id: str, evaluations: Sequence[Evaluation], directory: Path) -> Path:

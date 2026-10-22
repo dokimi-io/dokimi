@@ -1448,6 +1448,19 @@ def test_phase_8_prints_each_tests_outcome_as_its_robot_process_decided_it(
     assert code == ExitCode.INTERNAL
 
 
+def test_a_test_with_no_criteria_is_an_error_in_phase_8(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only a suite written by hand gets here: both formats refuse it.
+    robot.validates = []
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert "phase 8 (validation): pair-001 error, 0 criterion(s)" in out
+    assert "  error  nothing asserted: the test has no pass criterion" in out
+
+
 def test_a_test_that_ended_before_its_criteria_has_no_phase_8_outcome(
     job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:

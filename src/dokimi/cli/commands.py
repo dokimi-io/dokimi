@@ -591,10 +591,13 @@ def _report_validation(console: Console, executions: Sequence[PairExecution]) ->
             f"phase 8 (validation): {test_id} {document.get('outcome', '?')}, "
             f"{len(criteria)} criterion(s)"
         )
+        if not criteria:
+            console.say("  error  nothing asserted: the test has no pass criterion")
         for criterion in criteria:
             measured = [pair["value"] for pair in criterion.get("pairs", []) if pair["value"]]
+            threshold = Decimal(criterion["threshold"])
             found = (
-                f": {format_value(Decimal(measured[0]))} {criterion['unit']}"
+                f": {format_value(Decimal(measured[0]), threshold=threshold)} {criterion['unit']}"
                 if len(measured) == 1
                 else ""
             )
