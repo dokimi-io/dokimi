@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import io
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +32,10 @@ from dokimi.execution import (
 from dokimi.formats import parse_file
 from dokimi.formats.robot_suite import criterion_keyword_names
 from dokimi.images import ImageSource
-from dokimi.measurement import Measurement, read_measurement
+from dokimi.measurement import Measurement, MetricsMissingError, read_measurement
 from dokimi.planning import NodeFacts, Plan, PlannedPair
 from dokimi.testtypes.interface import Role, WorkloadImage
+from dokimi.validation import read_validation
 
 
 def _robot_installed() -> bool:
@@ -66,10 +68,20 @@ def run_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(name, value)
 
 
+#: What the replaced ``run_network_test`` reports as read from the exporters. A test may
+#: change it before running the suite; the fixture restores it.
+MEASURED: dict[str, float] = {}
+
+
 @pytest.fixture
 def network_test(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """``run_network_test``, replaced: records each call, and the pair always completes."""
     calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "MEASURED",
+        {"dokimi_throughput_bits_per_second": 49983531.0},
+    )
 
     def completes(context: execution.RunContext, **arguments: str) -> NetworkTestResult:
         calls.append({"test_id": context.test_id, **arguments})
@@ -81,8 +93,14 @@ def network_test(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
             measurement=Measurement(
                 context.test_id,
                 "inbound",
-                {"dokimi_throughput_bits_per_second": 49983531.0},
-                {"run_id": context.run_id, "test_id": context.test_id, "direction": "inbound"},
+                dict(MEASURED),
+                {
+                    "run_id": context.run_id,
+                    "test_id": context.test_id,
+                    "direction": "inbound",
+                    "test_type": "iperf2",
+                    "protocol": arguments["protocol"],
+                },
             ),
         )
 
@@ -163,20 +181,69 @@ def test_the_measurement_is_written_next_to_the_pairs_output(
     assert measurement.values == {"dokimi_throughput_bits_per_second": 49983531.0}
 
 
-def test_every_criterion_fails_and_says_it_was_not_evaluated(
+def test_the_criteria_are_evaluated_against_what_the_pair_measured(
     tmp_path: Path, run_environment: None, network_test: list[dict[str, Any]]
 ) -> None:
-    # Until M1-13, a criterion is never a pass and never a skip: the report says plainly
-    # that it was not checked, for each one, not only the first.
+    # Phase 8 for real: 49.98 Mbit/s against "at least 950" is a finding, and a packet
+    # loss the exporters didn't serve is an error. Both are listed, apart, and the test
+    # is tagged with the worse of the two.
     artifacts = RunArtifacts(tmp_path, RUN_ID)
     suite = render_suite(parse_file(EXAMPLES / "worker-01-to-worker-02-udp.yaml"), artifacts)
 
     test = run_in_process(suite, artifacts.directory).suite.tests[0]
 
     assert test.status == "FAIL"
-    assert "'Throughput Should Be At Least 950 megabits per second' was not checked" in test.message
-    assert "'Packet Loss Should Be At Most 0 percent' was not checked" in test.message
-    assert "M1-13" in test.message
+    assert (
+        "Throughput Should Be At Least 950 megabits per second: 1 of 1 pair(s) violated "
+        "this criterion" in test.message
+    )
+    assert "49.98353 megabits per second, needs at least 950" in test.message
+    assert (
+        "ERROR (metrics_missing): Packet Loss Should Be At Most 0 percent: 1 of 1 pair(s) "
+        "could not be evaluated" in test.message
+    )
+    assert "outcome:error" in test.tags
+    assert "error:metrics_missing" in test.tags
+    assert "outcome:fail" not in test.tags
+    document = read_validation(artifacts.directory, "pair-001")
+    assert document is not None
+    assert document["outcome"] == "error"
+    assert [c["outcome"] for c in document["criteria"]] == ["fail", "error"]
+
+
+def test_a_pair_that_meets_its_criteria_passes(
+    tmp_path: Path, run_environment: None, network_test: list[dict[str, Any]]
+) -> None:
+    MEASURED.update({"dokimi_throughput_bits_per_second": 9.6e8, "dokimi_packet_loss_percent": 0.0})
+    artifacts = RunArtifacts(tmp_path, RUN_ID)
+    suite = render_suite(parse_file(EXAMPLES / "worker-01-to-worker-02-udp.yaml"), artifacts)
+
+    test = run_in_process(suite, artifacts.directory).suite.tests[0]
+
+    assert test.status == "PASS"
+    assert "outcome:pass" in test.tags
+    document = read_validation(artifacts.directory, "pair-001")
+    assert document is not None
+    assert document["outcome"] == "pass"
+
+
+def test_a_test_that_could_not_be_measured_is_tagged_with_the_error(
+    tmp_path: Path, run_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(context: execution.RunContext, **arguments: str) -> NetworkTestResult:
+        raise MetricsMissingError(context.test_id, "the server's exporter served no result")
+
+    monkeypatch.setattr(execution, "run_network_test", fails)
+    artifacts = RunArtifacts(tmp_path, RUN_ID)
+    suite = render_suite(parse_file(EXAMPLES / "worker-01-to-worker-02-udp.yaml"), artifacts)
+
+    test = run_in_process(suite, artifacts.directory).suite.tests[0]
+
+    assert test.status == "FAIL"
+    assert "metrics_missing: the server's exporter served no result" in test.message
+    assert {"outcome:error", "error:metrics_missing"} <= set(test.tags)
+    # Its criteria never ran, so there is no phase-8 record, and the Job says so.
+    assert read_validation(artifacts.directory, "pair-001") is None
 
 
 def test_robot_runs_as_its_own_process_and_rebot_merges_the_report(

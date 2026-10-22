@@ -33,12 +33,13 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_iperf2.py`](test_iperf2.py) | The `iperf2` plugin: capabilities per protocol, the warm-up pass, its pods, start, completion, the probe mode, and both role scripts' contracts |
 | [`test_iperf2_exporter.py`](test_iperf2_exporter.py) | The iperf2 exporter: each pod's own view, every required label, base units, served after the tool exited |
 | [`test_measurement.py`](test_measurement.py) | Phase 7: the direct read of the exporters, what is `metrics_missing` or `exporter_parse`, and Prometheus's confirmation, its timeout and a disagreement |
+| [`test_validation.py`](test_validation.py) | Phase 8: a criterion over the expected pairs in the user's unit, `metrics_missing` and `exporter_parse` never a pass, a metric the test type never produces said once, the message, the PromQL equivalent and the record |
 | [`test_lifecycle.py`](test_lifecycle.py) | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | The Prometheus client, and phase 4's query-access check |
 | [`test_preflight.py`](test_preflight.py) | Phase 4's cluster checks: each failure by the check it names, the first pair in probe mode, the node-exporter warning, and the time phase 4 may take |
 | [`test_managed_prometheus.py`](test_managed_prometheus.py) | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
 | [`test_execution.py`](test_execution.py) | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
-| [`test_robot_execution.py`](test_robot_execution.py) | What Robot Framework does with the rendered suite: YAML and Robot run identically, every criterion says it was not evaluated, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
+| [`test_robot_execution.py`](test_robot_execution.py) | What Robot Framework does with the rendered suite: YAML and Robot run identically, the criteria are evaluated, tagged with their outcome and recorded next to the pair's output, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
 | [`test_artifact_stream.py`](test_artifact_stream.py) | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
 | [`test_manifests.py`](test_manifests.py) | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | Submitting, following and reattaching, and which exit codes are a verdict |

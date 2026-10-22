@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dokimi.measurement import Measurement, write_measurement
+from dokimi.validation import Evaluation, write_validation
 
 
 @dataclass
@@ -33,6 +34,9 @@ class FakeRobotRunner:
     #: What a pair's ``Run Network Test`` read directly from its exporters (phase 7), by
     #: metric name; written next to its output as the real library does. ``None``: none.
     measures: Mapping[str, float] | None = None
+    #: What its criteria came to (phase 8), written next to its output as the real
+    #: library does. ``None``: nothing, as when its test ended before its criteria.
+    validates: Sequence[Evaluation] | None = None
 
     def run(
         self, suite: Path, *, output: Path, environment: Mapping[str, str], pythonpath: Path
@@ -53,6 +57,8 @@ class FakeRobotRunner:
             write_measurement(
                 Measurement(test_id, "inbound", dict(self.measures), labels), output.parent
             )
+        if self.validates is not None:
+            write_validation(output.stem, self.validates, output.parent)
 
     def merge(self, outputs: Sequence[Path], *, output: Path, log: Path, report: Path) -> None:
         self.merges.append(list(outputs))

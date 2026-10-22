@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -80,6 +81,7 @@ from dokimi.run_images import (
 )
 from dokimi.testtypes.interface import Role, WorkloadImage
 from dokimi.testtypes.probe import Probes
+from dokimi.validation import format_value, read_validation
 
 __all__ = [
     "Console",
@@ -340,10 +342,10 @@ def execute(
 
     Phase 7's direct read happens in each pair's Robot process, which writes what it read
     next to its output; the Job then confirms Prometheus holds the same values, before
-    anything is torn down (ADR-03-01).
+    anything is torn down (ADR-03-01). Phase 8 evaluates each test's criteria in its Robot
+    process too, which writes the outcome next to its output; the Job prints it.
 
-    Not built yet: validation
-    (M1-13, #48), the result artifact (M1-14, #49), and cleanup and the real exit code
+    Not built yet: the result artifact (M1-14, #49), and cleanup and the real exit code
     (M1-16, #51). Rather than exit 0 and let a submitter read that as a passing run, this
     reports an orchestrator error and names what is missing.
 
@@ -506,13 +508,14 @@ def execute(
             ),
         )
         _confirm_measurements(console, prometheus, executions, artifacts)
+        _report_validation(console, executions)
         merge_reports(executions, artifacts, ROBOT_RUNNER())
         console.say(f"phase 9a (reporting): {artifacts.log}, {artifacts.report}")
         console.say()
         console.warn(
-            "the rest of phases 8 to 11 is not implemented in this build: validation "
-            "(#48), results (#49), cleanup and outcome (#51). The run stops here without "
-            "a verdict; Robot's report says which steps ran."
+            "the rest of phases 9b to 11 is not implemented in this build: results (#49), "
+            "cleanup and outcome (#51). So the exit code is not the run's verdict yet: "
+            "each test's outcome is in phase 8 above and in Robot's report."
         )
         return ExitCode.INTERNAL
     finally:
@@ -561,6 +564,47 @@ def execute(
 
 
 MEASUREMENT_REPORT = "measurement.json"
+
+
+def _report_validation(console: Console, executions: Sequence[PairExecution]) -> None:
+    """Phase 8, as each pair's Robot process decided it: one line per test and criterion.
+
+    The Job only prints what the library classified, never Robot's status. A test that
+    wrote nothing ended before its criteria, in phase 6 or 7, and Robot's report says why.
+    Never raises: it reports, and decides nothing.
+    """
+    for execution in executions:
+        test_id = execution.pair.test_id
+        try:
+            document = read_validation(execution.output.parent, test_id)
+        except (OSError, ValueError) as error:
+            console.warn(f"phase 8 (validation): could not read {test_id}'s outcome: {error}")
+            continue
+        if document is None:
+            console.warn(
+                f"phase 8 (validation): {test_id} has no outcome: its test ended before its "
+                "criteria were evaluated, and Robot's report says why"
+            )
+            continue
+        criteria = document.get("criteria", [])
+        console.say(
+            f"phase 8 (validation): {test_id} {document.get('outcome', '?')}, "
+            f"{len(criteria)} criterion(s)"
+        )
+        if not criteria:
+            console.say("  error  nothing asserted: the test has no pass criterion")
+        for criterion in criteria:
+            measured = [pair["value"] for pair in criterion.get("pairs", []) if pair["value"]]
+            threshold = Decimal(criterion["threshold"])
+            found = (
+                f": {format_value(Decimal(measured[0]), threshold=threshold)} {criterion['unit']}"
+                if len(measured) == 1
+                else ""
+            )
+            categories = criterion.get("categories") or []
+            why = f" ({', '.join(categories)})" if categories else ""
+            console.say(f"  {criterion['outcome']}{why}  {criterion['phrase']}{found}")
+    console.say()
 
 
 def _confirm_measurements(

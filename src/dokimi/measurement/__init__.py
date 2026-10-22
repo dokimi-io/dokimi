@@ -3,7 +3,7 @@
 **The direct read is authoritative.** Once a test has completed, each of its pods'
 exporters is read over ``/metrics``, the same surface Prometheus scrapes: one format, one
 code path, so a disagreement between the two readers says something about delivery, not
-about two endpoints. The verdict is evaluated against what this read returns (M1-13).
+about two endpoints. The verdict is evaluated against what this read returns, in phase 8.
 
 **The receiver's view decides.** Each pod exports its own view, labelled ``direction``
 (ADR-02-02). The ``inbound`` one, the server's, is what arrived: its throughput, and for
