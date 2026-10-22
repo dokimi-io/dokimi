@@ -32,13 +32,15 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 
 ## What a run does today
 
-Milestone-01 is not finished. A submitted run parses its definition, resolves its two
-nodes against the cluster, plans the pair, claims the cluster, starts its own Prometheus,
-with a node-exporter when the cluster has none, and checks that it answers. It checks that
-the cluster can run the pair, and then **runs the test through Robot Framework**: it renders
+Milestone-01 is not finished: the CSV and JSONL result files are not built yet. Everything
+else a run does works. It parses its definition, resolves its two nodes against the
+cluster, plans the pair, claims the cluster, starts its own Prometheus, with a
+node-exporter when the cluster has none, and checks that it answers. It checks that the
+cluster can run the pair, and then **runs the test through Robot Framework**: it renders
 the suite, deploys the pair's pods, waits until both are Ready, starts the measurement and
-waits for it to finish. It reads the result directly from the pair's exporters and confirms
-Prometheus holds the same values. Then it stops:
+waits for it to finish. It reads the result directly from the pair's exporters, confirms
+Prometheus holds the same values, and evaluates the pass criteria. Then it records where
+everything ran, removes what it doesn't keep, and exits with its verdict:
 
 ```
 run 20261002-120000-a1b2c3
@@ -53,7 +55,7 @@ phase 4 (preflight): monitoring mode managed (requested)
   kube_state_metrics  absent
 phase 4 (preflight): Prometheus answers queries
   node-exporter pods  4 of 4 pods ready
-  kept after the run (ADR-03-02); remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
+  kept after the run; remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
   query it from your machine with: kubectl port-forward -n dokimi-iperf2 service/run-20261002-120000-a1b2c3-prometheus 9090:9090
 phase 4 (preflight): nodes worker-01, worker-02 accept test pods
 phase 4 (preflight): pair-001 scheduled, pulled its image and connected, as run-20261002-120000-a1b2c3-pair-001-preflight-client, run-20261002-120000-a1b2c3-pair-001-preflight-server
@@ -72,10 +74,8 @@ phase 8 (validation): pair-001 fail, 2 criterion(s)
   pass  Packet Loss Should Be At Most 0 percent: 0 percent
 
 phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../report.html
+phase 9b (results): the CSV and JSONL result files are not built yet. Each test's outcome is in phase 8 above, in its validation.json and in Robot's report
 
-the rest of phases 9b to 11 is not implemented in this build: results (#49), cleanup and
-outcome (#51). So the exit code is not the run's verdict yet: each test's outcome is in
-phase 8 above and in Robot's report.
 phase 10 (diagnostics): 5 pod(s), 1 pair(s), none down
   run-20261002-120000-a1b2c3-pair-001-client on worker-01: Running
   run-20261002-120000-a1b2c3-pair-001-server on worker-02: Running
@@ -83,17 +83,17 @@ phase 10 (diagnostics): 5 pod(s), 1 pair(s), none down
   2 node-exporter pod(s)
 phase 10 (diagnostics): /work/artifacts/20261002-120000-a1b2c3/diagnostics.json
 
-phase 11 (cleanup): removed 2 test pod(s)
 phase 11 (cleanup): removed node-exporter run-20261002-120000-a1b2c3-node-exporter
+phase 11 (cleanup): run kept for inspection (fail): run-20261002-120000-a1b2c3-pair-001-client, run-20261002-120000-a1b2c3-pair-001-server, and its owner and definition. It no longer holds the cluster. Remove it with: dokimi cleanup 20261002-120000-a1b2c3 --namespace dokimi-iperf2
 ```
 
-It exits `5`, not `0`, whatever phase 8 found: the run's verdict as an exit code is not
-built yet, and a run that stops early must not look like a run that passed. A node that
-is missing or cannot take a test pod stops it earlier, in phase 3, with `3`. A cluster
-that cannot run the pair stops it in phase 4, with `4`, before any test: see
-[preflight](#preflight).
+It exits `1`: a criterion did not hold. A run whose tests all pass exits `0`, and one with
+a test that couldn't be validly measured exits `2`, whatever the others found. See
+[Exit codes](#exit-codes). A node that is missing or cannot take a test pod stops it
+earlier, in phase 3, with `3`. A cluster that cannot run the pair stops it in phase 4,
+with `4`, before any test: see [preflight](#preflight).
 
-Five things to know about a run today:
+Six things to know about a run:
 
 - **The result is read directly from the exporters, and Prometheus only confirms it.**
   Once a test has finished, each of its pods' exporters is read over `/metrics`, the same
@@ -125,25 +125,25 @@ Five things to know about a run today:
   pod or the Prometheus pod that went missing, was evicted or stopped by its deadline, a
   container of one that restarted, crash-looped or was OOM-killed, or its node no longer
   Ready. The node-exporter's pods, one on every node, are recorded but never an anomaly.
-  An anomaly marks the run `"retain": true`. Until M1-16, the test pods are still removed, as below, and the
-  snapshot is what keeps their state.
-- **The run removes its test pods before it frees the cluster,** however it ended, and
-  waits until they are gone: a server pod would otherwise idle until its deadline, and a
-  pod still sending must keep the cluster claimed (ADR-05-13). That takes the pods of a
-  failed run too, so for now a failure keeps its report but not its pods; what a failed run
-  keeps is M1-16's. If the pods cannot be removed, the run says so and keeps its claim until
-  it expires. Removing them by hand does not free the cluster on its own, because only a
-  finished or expired claim does. The run prints both steps: remove the test's client and
-  server pods with `kubectl delete pod -n dokimi-iperf2 -l
-  'dokimi.io/run-id=<run-id>,app.kubernetes.io/component in (client,server)'`, then delete the
-  run's owner, `run-<run-id>-owner`, which clears the claim and removes the rest of the run.
-  Fetch its reports with `dokimi attach` first if you still need them.
+  An anomaly marks the run `"retain": true`, and makes it exit `2` even if its tests passed:
+  something went wrong around them, so their results are not the whole picture.
+- **A run that didn't pass keeps its evidence, without holding the cluster** (phase 11).
+  A run that exits `0` removes its test pods and its node-exporter, and once `submit` or
+  `attach` has fetched its reports, its Job, owner and definition go too. A run that
+  doesn't exit `0` keeps its test pods, with their logs and events, and its owner and
+  definition, for you to look at; it says so, and how to remove it: `dokimi cleanup
+  <run-id>`. Either way it is marked finished, so the next run can start. `submit --retain
+  always` keeps a passing run too, and `--retain never` keeps nothing.
+- **A test pod that may still be sending never stays.** The next run would measure next to
+  it. So a test's pods are kept only if it was measured, or its pods never started: a
+  test that timed out, lost a pod or recorded nothing has them removed, however the run
+  ended, and the run waits until they are gone. If they can't be removed, the run keeps
+  its claim until it expires, and says how to free the cluster earlier: `dokimi cleanup
+  <run-id> --force`, once its Job has ended.
 - **Its Prometheus stays after the run,** with the node metrics it scraped while the run was
-  on; the node-exporter the run deployed is removed with the test pods. Phase 4 prints how
+  on. The node-exporter the run deployed is removed, also from a run that keeps its
+  evidence, or the Prometheus would go on scraping every node through it. Phase 4 prints how
   to query the Prometheus and how to remove it; see [Cleaning up](#cleaning-up).
-
-Everything else on this page — validation, conversion, dry-run rendering, node
-resolution, submission, streaming, reattachment, exit-code propagation — works now.
 
 ## Before the first run
 
@@ -218,15 +218,15 @@ first step of phase 4. A second run started meanwhile is refused and exits `4`:
 ```
 dokimi: refusing to start run 20260924-201500-p7m2q8 (run_already_active): run 20260924-200229-ca532a already active in this cluster.
   - ConfigMap dokimi-iperf2/run-20260924-200229-ca532a-owner claimed at 2026-09-24T20:02:41Z, claim expires at 2026-09-24T20:25:11Z
-Wait for it to finish, or for its claim to expire. If it is stale, clear it by deleting its owner, which removes what it created with it:
-  kubectl delete configmap -n dokimi-iperf2 run-20260924-200229-ca532a-owner
+Wait for it to finish, or for its claim to expire. If it is stale, because its Job is gone, clear it, which removes what it created with it:
+  dokimi cleanup 20260924-200229-ca532a --namespace dokimi-iperf2 --force
 ```
 
 Only a run that has claimed the cluster counts (ADR-05-13). A run stops counting:
 
-- **when it ends**, however it ends: once its test pods are gone it marks itself finished,
-  before any other cleanup, so a failed run whose objects are kept as evidence does not hold
-  the cluster;
+- **when it ends**, however it ends: once no test pod of it can still be sending, it marks
+  itself finished, so a failed run whose objects are kept as evidence does not hold the
+  cluster;
 - **when its claim expires**, if it crashed: the claim expires with the Job's own deadline,
   its start time plus its `activeDeadlineSeconds`, by which time the cluster has stopped the
   Job and everything it ran. A claim with no readable expiry never counts.
@@ -328,7 +328,12 @@ own exit code.
 | `--image <component>=<reference>` | choose an image for this run, repeatable: `orchestrator`, the Job's own, or `iperf2` |
 | `--orchestrator-image` | the earlier name of `--image orchestrator=` |
 | `--service-account` | run the Job as a specific service account |
+| `--retain` | when the run keeps its test pods and record for inspection: `on-failure` (the default), `always` or `never`; see [Cleaning up](#cleaning-up) |
 | `--kubeconfig`, `--context` | pick cluster credentials |
+
+Once it has extracted the run's reports, `submit` removes the run's Job, which has nothing
+left to give. A run that kept nothing goes completely, its owner and definition with it;
+one that kept its evidence keeps it for `dokimi cleanup`.
 
 ### --dry-run
 
@@ -447,7 +452,9 @@ deploys the pair afresh, so the probe never runs next to a test.
 `dokimi preflight` is not a preview. `submit --dry-run` renders what a run would create and
 creates nothing; this creates real pods, because whether they schedule and connect can
 only be seen by trying. It claims the cluster while it runs, provisions the run's managed
-Prometheus, which is kept as every run's is, and removes everything else it deployed.
+Prometheus, which is kept as every run's is, and removes everything else it deployed. A
+failed preflight keeps its owner and definition, like any run that didn't pass, until
+`dokimi cleanup`.
 Like every run, it ends with phase 10's snapshot: `diagnostics.json` in
 `<results.directory>/<run-id>/`, which after a failed check shows the probe's pods as they
 were.
@@ -455,7 +462,7 @@ were.
 A passed preflight is a floor, not a guarantee: one pair, under no load, says nothing about
 what the full matrix will meet.
 
-`preflight` takes the same flags as `submit`, except `--dry-run`.
+`preflight` takes the same flags as `submit`, except `--dry-run` and `--retain`.
 
 ## attach
 
@@ -480,7 +487,8 @@ run is somewhere else.
 `attach` also extracts the run's reports, into the `results.directory` of the definition
 the run was submitted with (see [The run's reports](#the-runs-reports)). Reading that
 definition takes `get` on the run's ConfigMaps. `--results-directory <dir>` extracts there
-instead, and needs no such read.
+instead, and needs no such read. Like `submit`, it then removes the run's Job, so a run's
+reports can be fetched once.
 
 ## image
 
@@ -532,11 +540,13 @@ that directory is reported, and nothing is extracted. A run whose log carries no
 all, because it stopped before writing one or because its log was rotated, says so. None
 of this changes the run's exit code.
 
-This is **provisional**: how artifacts leave the Job is ADR-05-15, still proposed, and this
-is what it recommends. Two consequences of it:
+Two consequences of carrying them in the log:
 
-- **The artifacts can be fetched for as long as the run's pod exists.** `submit --no-follow`
-  extracts nothing; `dokimi attach <run-id>` later does, until the pod is deleted.
+- **A run's artifacts can be fetched once, within an hour after it ended.** `submit` or
+  `attach` removes the run's Job once it has extracted them, and the cluster removes a Job
+  nobody fetched an hour after it finished (`ttlSecondsAfterFinished: 3600`). `submit
+  --no-follow` extracts nothing; `dokimi attach <run-id>` later does, within that hour. A
+  block that didn't arrive whole leaves the Job in place, so you can reattach.
 - **The Job's raw log ends with a block of base64.** `kubectl logs` shows it; `submit` and
   `attach` never do.
 
@@ -551,8 +561,9 @@ meaning or goes away raises it.
 | --- | --- | --- |
 | `schema` | integer | `1` |
 | `test_id` | string | The test |
-| `outcome` | string | `pass`, `fail` or `error`: the worst of its criteria, and `error` if it has none |
-| `criteria` | list | Each criterion, in the order the suite checks them, as below |
+| `outcome` | string | `pass`, `fail` or `error`: the worst of its criteria, and `error` if it has none, or if it ended before them |
+| `error` | object or null | Why the test ended before its criteria: `category` (below, or `null` for an error nothing anticipated) and `detail`. `null` for a test that reached them |
+| `criteria` | list | Each criterion, in the order the suite checks them, as below. Empty for a test that ended before them |
 
 Each criterion:
 
@@ -562,6 +573,17 @@ Each criterion:
 | `metric`, `statistic`, `comparison`, `threshold`, `unit` | string | The criterion's fields; `statistic` is `null` where the metric has none, and `threshold` is the number as written |
 | `outcome` | string | `pass`, `fail` or `error`: the worst of its pairs |
 | `categories` | list | For an `error`, each error category once: `metrics_missing`, `exporter_parse` |
+
+The error categories, here and in Robot's `error:<category>` tags:
+
+| Category | The test |
+| --- | --- |
+| `scheduling` | had a pod that could not be placed on its node |
+| `image_pull` | had a pod that could not get its image |
+| `tool_execution` | ran its tool, which measured nothing, measured another path than the pair's, or lost a pod |
+| `timeout` | did not finish in the time it was given |
+| `metrics_missing` | finished, and an exporter served no result for it |
+| `exporter_parse` | finished, and an exporter served something that is not a result |
 | `promql_equivalent` | string | The PromQL that returns the pairs violating it from the run's Prometheus. An equivalent for checking by hand, not what decided: the verdict comes from the direct read |
 | `pairs` | list | Each expected pair: `test_id`, `source_node`, `target_node`, `outcome`, `value` (the measured value as a decimal string in the criterion's unit, or `null` for an error), `category` and `detail` (for an error) |
 
@@ -584,7 +606,7 @@ a field that changes meaning or goes away raises it.
 | `run_id`, `cluster`, `namespace` | string | The run, the cluster's name as given at submission, and the namespace it ran in |
 | `captured_at` | string | When the snapshot began, UTC, ISO 8601 |
 | `complete` | boolean | `false` if a step failed or the snapshot ran out of time; the rest is still there |
-| `retain` | boolean | `true` if there is any anomaly: the run's resources are kept |
+| `retain` | boolean | `true` if there is any anomaly: the run keeps its evidence, and exits `2` |
 | `anomalies` | list | Each with `kind`, `subject` (a pod, a node, a pair as `<test-id>/<role>`, or `run`) and `detail` |
 | `prometheus_deployed` | boolean | Whether the run deployed a Prometheus of its own |
 | `reachable.namespace` | boolean or null | Whether the run's pods could be listed; `null` if not tried |
@@ -615,8 +637,8 @@ implementation detail (ADR-01-08).
 | Code | Meaning |
 | --- | --- |
 | `0` | run completed, overall pass |
-| `1` | run completed, at least one non-optional pair failed |
-| `2` | at least one non-optional pair errored, or a post-run anomaly |
+| `1` | run completed, at least one test failed a criterion |
+| `2` | at least one test could not be validly measured, or a post-run anomaly |
 | `3` | invalid request — a bad definition, run id or flag — detected before anything was created |
 | `4` | run-level preflight failure: another run being active (`run_already_active`), or a cluster check (`cluster not ready (<check>)`, see [preflight](#preflight)) |
 | `5` | internal or unexpected orchestrator error |
@@ -710,8 +732,8 @@ submitting needs only namespaced permissions.
 
 If a later step of the submission fails — the Job is refused, say — what it created is
 deleted again, each object by name and uid after its labels are re-checked. That is different from a
-failed *run*, whose objects are kept as evidence: a submission that never got as far as
-a Job has no evidence to keep.
+failed *run*, whose test pods and record are kept as evidence: a submission that never got
+as far as a Job has no evidence to keep.
 
 Every object carries `app.kubernetes.io/managed-by: dokimi` and
 `dokimi.io/run-id: <id>`. Nothing without those labels is ever modified or
@@ -720,8 +742,9 @@ deleted, and every lookup and delete is scoped by label selector rather than by 
 The definition travels with the run in a ConfigMap rather than being re-read from your
 disk. That is what makes a Job self-contained and lets `attach` need nothing local.
 
-The Job carries `backoffLimit: 0`, `restartPolicy: Never` and an `activeDeadlineSeconds`
-built from named terms: the test duration, startup, the warm-up pass, the direct read and
+The Job carries `backoffLimit: 0`, `restartPolicy: Never`, `ttlSecondsAfterFinished: 3600`,
+so that the cluster removes a finished Job nobody fetched the reports of within the hour,
+and an `activeDeadlineSeconds` built from named terms: the test duration, startup, the warm-up pass, the direct read and
 scrape confirmation, then preflight, diagnostics and cleanup, plus a margin. The dry run
 prints it as `Deadline`. The first two are requirements, not
 preferences: the exit code is the verdict, so a controller that retried on non-zero would
@@ -832,35 +855,62 @@ column with M1-14.
 
 ## Cleaning up
 
-Automatic cleanup arrives with M1-16 (#51). Until then, deleting a run's owner object
-takes the rest with it — the cluster's own garbage collector cascades through the
-`ownerReferences`:
+A run cleans up after itself, in phase 11. What it leaves depends on how it ended:
+
+| The run | What stays | Until |
+| --- | --- | --- |
+| exited `0` | its Prometheus | you remove it |
+| didn't exit `0` | its Prometheus, its owner and definition, and the pods of each test that was measured or never started | `dokimi cleanup` |
+| crashed, or its Job was stopped | whatever it had created | `dokimi cleanup`, once its claim has expired |
+
+Its Job goes once `submit` or `attach` has fetched its reports, or an hour after it ended.
+`submit --retain always` keeps a passing run's evidence too, and `--retain never` keeps
+none. A test pod that may still be sending, such as the client of a test that timed out,
+is never kept: the next run would measure next to it.
+
+### dokimi cleanup
 
 ```console
-$ kubectl delete configmap run-20260924-200229-ca532a-owner -n dokimi-iperf2
+$ dokimi cleanup 20260924-200229-ca532a
+run 20260924-200229-ca532a: removed 4 object(s)
+  ConfigMap/run-20260924-200229-ca532a-definition
+  Pod/run-20260924-200229-ca532a-pair-001-client
+  Pod/run-20260924-200229-ca532a-pair-001-server
+  ConfigMap/run-20260924-200229-ca532a-owner
+  kept: ConfigMap/run-20260924-200229-ca532a-prometheus, Service/run-20260924-200229-ca532a-prometheus, Deployment/run-20260924-200229-ca532a-prometheus, the run's Prometheus and its history. Add --prometheus to remove it too
 ```
 
-A node-exporter the run deployed is gone already: the run deletes it when it ends, and
-leaves one it found. Or by label, across everything a run created except its Prometheus:
+Removes everything a run created, found by its labels, without the run's own process or
+anything it remembered: so it also removes what a crashed run left, its node-exporter
+included. Its Job goes with its owner, through the cluster's garbage collector.
+`--older-than 24h` does the same for every run that started more than 24 hours ago.
 
-```console
-$ kubectl delete job,configmap,daemonset -n dokimi-iperf2 \
-    -l 'dokimi.io/run-id=20260924-200229-ca532a,app.kubernetes.io/component!=prometheus'
-```
+| Flag | |
+| --- | --- |
+| `--older-than <age>` | every run that started more than this long ago, instead of one run: `90m`, `24h` |
+| `--prometheus` | remove the run's Prometheus too, and the history it holds |
+| `--force` | remove a run that still holds the cluster; only for one whose Job is gone |
+| `--dry-run` | list what would be removed, and remove nothing |
+| `--namespace`, `-n` | the test type's namespace, if not `dokimi-iperf2` |
+| `--kubeconfig`, `--context` | pick cluster credentials |
 
-The run id reads the same in the object name and the label, so either command can be
-built from the id `submit` printed.
+A run that still holds the cluster is refused: its Job may still be running it. With
+`--older-than` it is skipped and said so. It exits `0` once nothing is left, `4` when the
+run named by its id still holds the cluster, and `5` when something could not be removed,
+listing what and how to retry.
+
+### The Prometheus
 
 **Every run leaves its Prometheus behind**, on purpose: the run's history outlives the
-run (ADR-03-02). It has no owner reference, so neither command above removes it, and
-the label command must exclude it as shown, or it deletes the Prometheus's ConfigMap
-and leaves a Prometheus that cannot restart. Phase 4 prints the command that removes
-one run's Prometheus, and the one that reaches it from your machine:
+run. It has no owner reference, so removing the run's owner leaves it alone, and `dokimi
+cleanup` removes it only with `--prometheus`. Phase 4 prints the command that removes one
+run's Prometheus, and the one that reaches it from your machine:
 
 ```console
 $ kubectl port-forward -n dokimi-iperf2 service/run-20260924-200229-ca532a-prometheus 9090:9090
 ```
- To remove every kept Prometheus at once:
+
+To remove every kept Prometheus at once:
 
 ```console
 $ kubectl delete deployment,service,configmap -n dokimi-iperf2 \

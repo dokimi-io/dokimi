@@ -25,6 +25,7 @@ from dokimi.k8s.cluster import ClusterError
 
 __all__ = [
     "CONFIG_MAP",
+    "REQUEST_TIMEOUT_SECONDS",
     "DAEMON_SET",
     "DEPLOYMENT",
     "JOB",
@@ -44,6 +45,11 @@ __all__ = [
 ]
 
 Manifest = dict[str, Any]
+
+#: How long any one call to the API server may take. Every phase of a run is bounded, and
+#: a call that hangs would hold that bound open, or a pooled connection cleanup then waits
+#: on. A timed-out call is a :class:`ClusterError` like any other failed one.
+REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -210,7 +216,7 @@ class KubernetesResources:
         from urllib3.exceptions import HTTPError as TransportError
 
         try:
-            result = method(**kwargs)
+            result = method(**kwargs, _request_timeout=REQUEST_TIMEOUT_SECONDS)
         except TransportError as error:
             # Not an ApiException, and easy to miss: untranslated, it escapes as a
             # traceback that Python exits 1 with, `fail` in ADR-01-08's table.

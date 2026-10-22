@@ -136,11 +136,19 @@ has no default: `--cluster <name>` on `submit`, or `DOKIMI_CLUSTER` for an insta
 `export DOKIMI_CLUSTER=lab-fra-1` next to the credentials a machine submits with. See
 [Naming the cluster](usage.md#naming-the-cluster).
 
-Submitting needs to create Jobs and ConfigMaps in the run's namespace, and nothing more:
-**a run never creates a namespace** (ADR-05-13). An administrator creates the namespaces
-once, and after that submitting needs only namespaced permissions, not the cluster-wide
-right to create namespaces. Submitting to a namespace that does not exist fails with a
-message saying so.
+Submitting needs only namespaced permissions in the run's namespace: **a run never creates
+a namespace** (ADR-05-13). An administrator creates the namespaces once, and after that
+nobody needs the cluster-wide right to create one. Submitting to a namespace that does not
+exist fails with a message saying so. What each command needs in that namespace:
+
+| Command | Needs |
+| --- | --- |
+| `submit`, `preflight` | `create` on Jobs and ConfigMaps; `get` on Pods and their `log`, and `list` on Jobs and Pods, to follow the run; and, once the reports are fetched, `get` and `delete` on ConfigMaps and `list` and `delete` on Jobs, to remove the run |
+| `attach` | the same, without `create`; `get` on ConfigMaps also finds the run's `results.directory` |
+| `cleanup` | `get` on ConfigMaps, and `list` and `delete` on ConfigMaps, Pods, Services, ServiceAccounts, Jobs, Deployments, DaemonSets and StatefulSets |
+
+A missing `delete` after a fetch is only a warning: the cluster removes the Job an hour
+after the run ended, and `dokimi cleanup` removes the rest.
 
 The Job a run submits authenticates as a service account of its own, not as you. Its
 grant is cluster-wide in two places, which is why an administrator applies it once per

@@ -9,22 +9,27 @@ from __future__ import annotations
 import json
 import urllib.parse
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from dokimi import _image_digest, images
+from dokimi.cleanup import test_pods
 from dokimi.cli import commands
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import main
+from dokimi.error_categories import ErrorCategory
 from dokimi.formats import parse_file
 from dokimi.images import IMAGE_REPOSITORY
 from dokimi.k8s.exclusivity import claim_run
 from dokimi.k8s.manifests import resource_name
 from dokimi.k8s.ownership import (
     CLAIM_EXPIRES_AT_ANNOTATION,
+    CLAIMED_AT_ANNOTATION,
     FINISHED_AT_ANNOTATION,
+    RETAINED_ANNOTATION,
     owner_manifest,
     owner_name,
     ownership_labels,
@@ -32,11 +37,12 @@ from dokimi.k8s.ownership import (
 from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD
 from dokimi.measurement import Measurement
 from dokimi.metrics.prometheus import PrometheusClient, Response
+from dokimi.model import Comparison, Criterion, Metric, Unit
 from dokimi.run_identity import RunId
 from dokimi.run_images import COMPONENTS
 from dokimi.testtypes.interface import Role
 from dokimi.testtypes.probe import ProbeCheck, ProbeResult
-from dokimi.validation import ExpectedPair, evaluate
+from dokimi.validation import ExpectedPair, TestError, evaluate
 from tests.fake_cluster import ExplodingCluster, FakeCluster, node
 from tests.fake_probe import FakeProbe
 from tests.fake_robot import FakeRobotRunner
@@ -376,10 +382,9 @@ def test_execute_parses_then_plans(
     # nodes are still Ready (phase 10).
     assert job_cluster.node_reads == 3
     assert "phase 4 (preflight): cluster claimed for this run until" in out.out
-    # Phases 9b to 11 do not exist yet, and a run that stops early must not look like one
-    # that passed.
-    assert code == ExitCode.INTERNAL
-    assert "the rest of phases 9b to 11 is not implemented" in out.err
+    # The faked test records no outcome, which is an error, never a pass.
+    assert "phase 8 (validation): pair-001 error" in out.err
+    assert code == ExitCode.ERROR
 
 
 def test_execute_marks_its_run_finished_so_the_next_one_can_start(
@@ -392,7 +397,7 @@ def test_execute_marks_its_run_finished_so_the_next_one_can_start(
 
     submitted(job_cluster, "20260101-110000-aaaaaa")
     other = [*EXECUTE[:4], "20260101-110000-aaaaaa", *EXECUTE[5:]]
-    assert main(other) == ExitCode.INTERNAL
+    assert main(other) == ExitCode.ERROR
 
 
 def test_execute_dates_its_claim_from_the_jobs_start(job_cluster: FakeCluster) -> None:
@@ -1318,6 +1323,211 @@ def test_attach_can_be_told_where_the_artifacts_go(
     assert (tmp_path / "chosen" / RUN_ID / "log.html").is_file()
 
 
+# -- once the artifacts are here, the run's Job goes ---------------------------------------
+
+
+def test_a_run_that_kept_nothing_is_removed_once_its_artifacts_are_fetched(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster.log_lines = artifact_lines(tmp_path, RUN_ID)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["submit", str(EXAMPLE), "--run-id", RUN_ID]) == ExitCode.PASS
+
+    # Its owner goes, and the garbage collector takes the Job and the definition with it.
+    assert not cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert f"removed run {RUN_ID} from the cluster" in capsys.readouterr().err
+
+
+def test_a_run_that_kept_its_evidence_loses_only_its_job_once_fetched(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    owner = owner_manifest(RunId(RUN_ID), "dokimi-iperf2")
+    owner["metadata"]["annotations"] = {
+        CLAIMED_AT_ANNOTATION: "2026-01-01T10:00:00Z",
+        FINISHED_AT_ANNOTATION: "2026-01-01T10:05:00Z",
+        RETAINED_ANNOTATION: "fail",
+    }
+    cluster.store.put(CONFIG_MAP, "dokimi-iperf2", owner)
+    cluster.store.put(
+        JOB,
+        "dokimi-iperf2",
+        {
+            "metadata": {
+                "name": resource_name(RUN_ID),
+                "labels": ownership_labels(RunId(RUN_ID), component="orchestrator"),
+            }
+        },
+    )
+    cluster.log_lines = artifact_lines(tmp_path, RUN_ID)
+    monkeypatch.chdir(tmp_path)
+
+    main(["attach", RUN_ID, "--results-directory", str(tmp_path / "chosen")])
+
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert not cluster.store.exists(JOB, "dokimi-iperf2", resource_name(RUN_ID))
+    assert f"What the run kept stays until: dokimi cleanup {RUN_ID}" in capsys.readouterr().err
+
+
+def test_a_run_whose_artifacts_did_not_arrive_keeps_its_job_to_reattach_to(
+    cluster: FakeCluster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lines = artifact_lines(tmp_path, RUN_ID)
+    lines[1] = "!" * len(lines[1])
+    cluster.log_lines = lines
+    monkeypatch.chdir(tmp_path)
+
+    main(["submit", str(EXAMPLE), "--run-id", RUN_ID])
+
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert cluster.store.exists(JOB, "dokimi-iperf2", resource_name(RUN_ID))
+
+
+def test_a_job_that_cant_be_removed_is_left_to_its_hour(
+    cluster: FakeCluster,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster.log_lines = artifact_lines(tmp_path, RUN_ID)
+    cluster.store.fail_deleting = True
+    monkeypatch.chdir(tmp_path)
+
+    # The verdict is the run's, whatever happens to its Job.
+    assert main(["submit", str(EXAMPLE), "--run-id", RUN_ID]) == ExitCode.PASS
+    assert "The cluster removes it an hour after the run ended" in capsys.readouterr().err
+
+
+# -- dokimi cleanup -----------------------------------------------------------------------
+
+
+def run_objects(fake: FakeCluster, run_id: str = RUN_ID) -> None:
+    """What a finished run left: its owner, a test pod, and its kept Prometheus."""
+    fake.store.put(CONFIG_MAP, "dokimi-iperf2", owner_manifest(RunId(run_id), "dokimi-iperf2"))
+    for kind, name, component in (
+        (POD, f"run-{run_id}-pair-001-client", "client"),
+        (DEPLOYMENT, f"run-{run_id}-prometheus", "prometheus"),
+    ):
+        fake.store.put(
+            kind,
+            "dokimi-iperf2",
+            {
+                "metadata": {
+                    "name": name,
+                    "labels": ownership_labels(RunId(run_id), component=component),
+                }
+            },
+        )
+
+
+def test_cleanup_removes_a_run_and_keeps_its_prometheus(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+
+    assert main(["cleanup", RUN_ID]) == ExitCode.PASS
+
+    out = capsys.readouterr().out
+    assert f"run {RUN_ID}: removed 2 object(s)" in out
+    assert f"  Pod/run-{RUN_ID}-pair-001-client" in out
+    assert "Add --prometheus to remove it too" in out
+    assert cluster.store.exists(DEPLOYMENT, "dokimi-iperf2", f"run-{RUN_ID}-prometheus")
+
+
+def test_cleanup_with_prometheus_removes_it_too(cluster: FakeCluster) -> None:
+    run_objects(cluster)
+
+    main(["cleanup", RUN_ID, "--prometheus"])
+
+    assert not cluster.store.exists(DEPLOYMENT, "dokimi-iperf2", f"run-{RUN_ID}-prometheus")
+
+
+def test_cleanup_refuses_a_run_that_still_holds_the_cluster(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+    owner = cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    owner["metadata"]["annotations"] = {
+        CLAIMED_AT_ANNOTATION: "2026-01-01T10:00:00Z",
+        CLAIM_EXPIRES_AT_ANNOTATION: "2999-01-01T00:00:00Z",
+    }
+    cluster.store.replace(CONFIG_MAP, "dokimi-iperf2", owner)
+
+    assert main(["cleanup", RUN_ID]) == ExitCode.PREFLIGHT_FAILURE
+    assert "still holds the cluster" in capsys.readouterr().err
+    assert main(["cleanup", RUN_ID, "--force"]) == ExitCode.PASS
+
+
+def test_cleanup_that_cant_remove_something_says_how_to_retry(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+    cluster.store.fail_deleting = True
+
+    assert main(["cleanup", RUN_ID]) == ExitCode.INTERNAL
+    err = capsys.readouterr().err
+    assert f"could not remove Pod/run-{RUN_ID}-pair-001-client" in err
+    assert f"retry with: dokimi cleanup {RUN_ID} --namespace dokimi-iperf2" in err
+
+
+def test_cleanup_dry_run_removes_nothing(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+
+    assert main(["cleanup", RUN_ID, "--dry-run"]) == ExitCode.PASS
+
+    assert f"run {RUN_ID}: would remove 2 object(s)" in capsys.readouterr().out
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+
+
+def test_cleanup_by_age_removes_only_older_runs(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recent = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-bbbbbb"
+    run_objects(cluster)
+    run_objects(cluster, recent)
+
+    assert main(["cleanup", "--older-than", "24h"]) == ExitCode.PASS
+
+    assert not cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(recent)))
+    assert f"run {recent}" not in capsys.readouterr().out
+
+
+def test_cleanup_by_age_with_nothing_that_old_says_so(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["cleanup", "--older-than", "1h"]) == ExitCode.PASS
+    assert "no run in dokimi-iperf2 started more than 1h ago" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "arguments", [[], [RUN_ID, "--older-than", "24h"]], ids=["neither", "both"]
+)
+def test_cleanup_takes_a_run_id_or_an_age(no_cluster: None, arguments: list[str]) -> None:
+    with pytest.raises(SystemExit) as exited:
+        main(["cleanup", *arguments])
+    assert exited.value.code == ExitCode.CONFIG_ERROR
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["--older-than", "24h", "--force"], ["--older-than", "a day"], ["not-a-run-id"]],
+    ids=["force by age", "malformed age", "malformed run id"],
+)
+def test_a_cleanup_it_cant_carry_out_is_a_config_error(
+    no_cluster: None, arguments: list[str]
+) -> None:
+    assert main(["cleanup", *arguments]) == ExitCode.CONFIG_ERROR
+
+
 # -- phase 11 starts: the run's test pods go before the claim does (ADR-05-13) ---------
 
 
@@ -1393,7 +1603,7 @@ def test_a_blocked_scrape_warns_and_the_run_goes_on(
     assert "The verdict comes from the direct read and stands" in captured.err
     # The run went on to its reports, as before this phase existed.
     assert "phase 9a (reporting)" in captured.out
-    assert code == ExitCode.INTERNAL
+    assert code == ExitCode.ERROR
     report = json.loads((tmp_path / "artifacts" / RUN_ID / "measurement.json").read_text())
     assert report["tests"][0]["history_captured"] is False
 
@@ -1444,8 +1654,8 @@ def test_phase_8_prints_each_tests_outcome_as_its_robot_process_decided_it(
         "49.98353 megabits per second" in out
     )
     assert "  pass  Packet Loss Should Be At Most 0 percent: 0 percent" in out
-    # Phase 8 decides each test's outcome; the run's exit code is still M1-16's.
-    assert code == ExitCode.INTERNAL
+    # The worst test outcome is the run's exit code.
+    assert code == ExitCode.FAIL
 
 
 def test_a_test_with_no_criteria_is_an_error_in_phase_8(
@@ -1461,15 +1671,57 @@ def test_a_test_with_no_criteria_is_an_error_in_phase_8(
     assert "  error  nothing asserted: the test has no pass criterion" in out
 
 
-def test_a_test_that_ended_before_its_criteria_has_no_phase_8_outcome(
+def test_a_test_that_recorded_nothing_is_an_error(
     job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    main(EXECUTE)
+    # Its Robot process ended before it wrote anything: no data is never a pass.
+    assert main(EXECUTE) == ExitCode.ERROR
 
     assert (
-        "phase 8 (validation): pair-001 has no outcome: its test ended before its criteria"
+        "phase 8 (validation): pair-001 error: it ended before its outcome was recorded"
         in capsys.readouterr().err
     )
+
+
+def test_a_test_that_ended_before_its_criteria_says_why(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    robot.ends_with = TestError(ErrorCategory.IMAGE_PULL, "pair-001 could not pull its image")
+
+    assert main(EXECUTE) == ExitCode.ERROR
+
+    out = capsys.readouterr().out
+    assert "phase 8 (validation): pair-001 error, 0 criterion(s)" in out
+    assert "  error (image_pull)  ended before its criteria: pair-001 could not pull" in out
+
+
+def test_a_run_whose_tests_all_pass_exits_0(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    recorded(robot, holds=True)
+
+    assert main(EXECUTE) == ExitCode.PASS
+
+
+def test_an_anomaly_makes_a_passing_run_an_error(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    # Something went wrong around the test: its result is not the whole picture.
+    recorded(robot, holds=True)
+    robot.on_run = lambda: server_lost(job_cluster)
+
+    assert main(EXECUTE) == ExitCode.ERROR
+
+
+def recorded(robot: FakeRobotRunner, *, holds: bool) -> None:
+    """Make the faked test record one criterion that holds, or doesn't."""
+    pair = ExpectedPair("pair-001", "worker-01", "worker-02")
+    measurement = Measurement("pair-001", "inbound", MEASURED, {})
+    threshold = Decimal(1 if holds else 950)
+    throughput = Criterion(
+        Metric.THROUGHPUT, Comparison.AT_LEAST, threshold, Unit.MEGABITS_PER_SECOND
+    )
+    robot.validates = [evaluate(throughput, {"pair-001": measurement}, [pair])]
 
 
 def pair_pods(fake: FakeCluster) -> None:
@@ -1493,6 +1745,12 @@ def pair_pods(fake: FakeCluster) -> None:
                 "status": {"phase": "Running"},
             },
         )
+
+
+def server_lost(fake: FakeCluster) -> None:
+    """The pair's pods as phase 6 leaves them, but its server pod has gone: an anomaly."""
+    pair_pods(fake)
+    fake.store.objects.pop((POD.kind, "dokimi-iperf2", f"run-{RUN_ID}-pair-001-server"))
 
 
 def removed_pair_pods(fake: FakeCluster) -> list[str]:
@@ -1575,13 +1833,7 @@ def test_an_anomaly_means_the_run_is_retained(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Only the client is left: the server pod of a pair that started has gone.
-    from dokimi.k8s.resources import POD  # noqa: PLC0415
-
-    def phase_6() -> None:
-        pair_pods(job_cluster)
-        job_cluster.store.objects.pop((POD.kind, "dokimi-iperf2", f"run-{RUN_ID}-pair-001-server"))
-
-    robot.on_run = phase_6
+    robot.on_run = lambda: server_lost(job_cluster)
 
     main(EXECUTE)
 
@@ -1688,12 +1940,8 @@ def test_pods_that_cannot_be_deleted_keep_the_cluster_claimed(
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
     assert "keeps its claim on the cluster until" in err
-    assert (
-        f"kubectl delete pod -n dokimi-iperf2 -l 'dokimi.io/run-id={RUN_ID},"
-        "app.kubernetes.io/component in (client,server)'" in err
-    )
     # Removing the pods frees nothing by itself: the way out ends at the claim.
-    assert f"kubectl delete configmap -n dokimi-iperf2 run-{RUN_ID}-owner" in err
+    assert f"dokimi cleanup {RUN_ID} --namespace dokimi-iperf2 --force" in err
 
 
 def test_pods_that_never_go_away_keep_the_cluster_claimed(
@@ -1702,8 +1950,10 @@ def test_pods_that_never_go_away_keep_the_cluster_claimed(
     left_pod(job_cluster, f"run-{RUN_ID}-pair-001-client")
     from dokimi.k8s.ownership import find_run_owned  # noqa: PLC0415
 
-    lingering = find_run_owned(job_cluster.store, RunId(RUN_ID), namespace="dokimi-iperf2")
-    monkeypatch.setattr(commands, "find_run_owned", lambda *_a, **_k: lingering)
+    lingering = find_run_owned(
+        job_cluster.store, RunId(RUN_ID), namespace="dokimi-iperf2", kinds=(POD,)
+    )
+    monkeypatch.setattr(test_pods, "find_run_owned", lambda *_a, **_k: lingering)
     monkeypatch.setattr(commands, "POD_REMOVAL_TIMEOUT_SECONDS", 0.0)
 
     main(EXECUTE)
@@ -1711,3 +1961,135 @@ def test_pods_that_never_go_away_keep_the_cluster_claimed(
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
     assert "were still there after 0s" in capsys.readouterr().err
+
+
+# -- phase 11: what a run keeps ------------------------------------------------------------
+
+
+def owner_annotations(fake: FakeCluster) -> dict[str, str]:
+    owner = fake.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+    annotations: dict[str, str] = owner["metadata"].get("annotations") or {}
+    return annotations
+
+
+def test_a_passing_run_keeps_nothing(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recorded(robot, holds=True)
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    assert main(EXECUTE) == ExitCode.PASS
+
+    assert len(removed_pair_pods(job_cluster)) == 2
+    assert FINISHED_AT_ANNOTATION in owner_annotations(job_cluster)
+    assert RETAINED_ANNOTATION not in owner_annotations(job_cluster)
+    assert "kept for inspection" not in capsys.readouterr().out
+
+
+def test_a_failed_run_keeps_its_test_pods_and_still_releases_the_cluster(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recorded(robot, holds=False)
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    assert main(EXECUTE) == ExitCode.FAIL
+
+    assert removed_pair_pods(job_cluster) == []
+    annotations = owner_annotations(job_cluster)
+    assert FINISHED_AT_ANNOTATION in annotations
+    assert annotations[RETAINED_ANNOTATION] == "fail"
+    out = capsys.readouterr().out
+    assert (
+        f"phase 11 (cleanup): run kept for inspection (fail): run-{RUN_ID}-pair-001-client, "
+        f"run-{RUN_ID}-pair-001-server, and its owner and definition" in out
+    )
+    assert f"dokimi cleanup {RUN_ID} --namespace dokimi-iperf2" in out
+
+
+def test_an_anomaly_keeps_the_run_even_though_its_tests_passed(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    recorded(robot, holds=True)
+    robot.on_run = lambda: server_lost(job_cluster)
+
+    assert main(EXECUTE) == ExitCode.ERROR
+
+    assert owner_annotations(job_cluster)[RETAINED_ANNOTATION] == "error"
+    assert removed_pair_pods(job_cluster) == []
+
+
+def test_a_test_that_may_still_be_sending_loses_its_pods_whatever_is_kept(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    # A timed-out client may still be sending, and the cluster is released next.
+    robot.ends_with = TestError(ErrorCategory.TIMEOUT, "pair-001 did not complete")
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    assert main(EXECUTE) == ExitCode.ERROR
+
+    assert len(removed_pair_pods(job_cluster)) == 2
+    assert owner_annotations(job_cluster)[RETAINED_ANNOTATION] == "error"
+
+
+def test_a_test_whose_pods_never_became_ready_keeps_them_for_inspection(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    # Pending pods send nothing, and their events say why they never started.
+    robot.ends_with = TestError(ErrorCategory.SCHEDULING, "pair-001 could not be scheduled")
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    main(EXECUTE)
+
+    assert removed_pair_pods(job_cluster) == []
+
+
+@pytest.mark.parametrize(
+    ("retain", "holds", "kept"),
+    [("never", False, False), ("always", True, True), ("on-failure", True, False)],
+)
+def test_the_submitter_decides_when_a_run_keeps_its_evidence(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, retain: str, holds: bool, kept: bool
+) -> None:
+    recorded(robot, holds=holds)
+    robot.on_run = lambda: pair_pods(job_cluster)
+
+    main([*EXECUTE, "--retain", retain])
+
+    assert (removed_pair_pods(job_cluster) == []) is kept
+    assert (RETAINED_ANNOTATION in owner_annotations(job_cluster)) is kept
+
+
+def test_a_run_that_keeps_its_evidence_still_removes_its_node_exporter(
+    job_cluster: FakeCluster, robot: FakeRobotRunner
+) -> None:
+    # The kept Prometheus would go on scraping every node through it.
+    recorded(robot, holds=False)
+
+    main(EXECUTE)
+
+    assert not job_cluster.store.list(
+        DAEMON_SET, f"dokimi.io/run-id={RUN_ID},app.kubernetes.io/component=node-exporter"
+    )
+
+
+def test_a_node_exporter_left_by_a_crashed_run_is_named_with_its_cleanup(
+    job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    crashed = "20251231-100000-aaaaaa"
+    job_cluster.store.put(
+        DAEMON_SET,
+        "dokimi-iperf2",
+        {
+            "metadata": {
+                "name": f"run-{crashed}-node-exporter",
+                "labels": ownership_labels(RunId(crashed), component="node-exporter"),
+            }
+        },
+    )
+
+    main(EXECUTE)
+
+    assert (
+        f"was left behind by run {crashed}, and this run uses it. Remove what that run left "
+        f"with: dokimi cleanup {crashed} --namespace dokimi-iperf2" in capsys.readouterr().err
+    )

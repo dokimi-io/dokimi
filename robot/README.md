@@ -23,6 +23,10 @@ rendered suite's `Resource resources/Dokimi.resource` resolves.
 | `Run Network Test` | `dokimi.execution.run_network_test`: deploy the pair, pass the readiness gate, start, and wait for completion |
 | The criterion keywords, such as `Throughput Should Be` | `dokimi.validation.evaluate`, phase 8, over the pair the plan gave the process. A criterion that doesn't hold **fails**, naming the pair and its value; one that couldn't be checked fails as `ERROR` with its category. Either way the test goes on, so every criterion appears in `log.html`, and the test is tagged `outcome:<pass, fail or error>` |
 
+When `Run Network Test` fails, the test is an error before its criteria run: it is tagged
+`outcome:error` and `error:<category>`, and its `<test-id>.validation.json` records the
+category and why, so the run's exit code sees it as the tags do.
+
 The criterion keywords come from the same table the Robot format's parser reads
 (`criterion_keyword_names()`), so a suite the parser accepts never calls a keyword this library
 lacks. Each Robot process learns its run from the environment phase 6 starts it with:

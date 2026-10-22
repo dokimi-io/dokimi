@@ -70,6 +70,7 @@ __all__ = [
     "CLAIM_EXPIRES_AT_ANNOTATION",
     "COMPONENT_LABEL",
     "FINISHED_AT_ANNOTATION",
+    "RETAINED_ANNOTATION",
     "MANAGED_BY_LABEL",
     "MANAGED_BY_VALUE",
     "ORCHESTRATOR_COMPONENT",
@@ -84,6 +85,7 @@ __all__ = [
     "OwnershipError",
     "RunOwnership",
     "claim_of",
+    "delete_objects",
     "delete_run_owned",
     "format_timestamp",
     "find_run_owned",
@@ -102,6 +104,9 @@ CLAIMED_AT_ANNOTATION = "dokimi.io/claimed-at"
 CLAIM_EXPIRES_AT_ANNOTATION = "dokimi.io/claim-expires-at"
 #: Written at the start of phase 11. A finished run no longer holds the cluster.
 FINISHED_AT_ANNOTATION = "dokimi.io/finished-at"
+#: Written with ``finished-at`` when the run keeps its evidence, saying why. Whoever fetches
+#: its artifacts then removes only its Job, and leaves the rest for ``dokimi cleanup``.
+RETAINED_ANNOTATION = "dokimi.io/retained"
 
 #: The placeholder owner ConfigMap.
 OWNER_COMPONENT = "run-owner"
@@ -234,6 +239,8 @@ class Claim:
     claimed_at: datetime | None
     expires_at: datetime | None
     finished_at: datetime | None
+    #: Why the finished run keeps its evidence; ``None`` if it doesn't.
+    retained: str | None = None
 
     def is_active(self, now: datetime) -> bool:
         """Claimed, not finished, and not yet expired.
@@ -255,6 +262,7 @@ def claim_of(owner: Manifest) -> Claim:
         claimed_at=_timestamp(annotations.get(CLAIMED_AT_ANNOTATION)),
         expires_at=_timestamp(annotations.get(CLAIM_EXPIRES_AT_ANNOTATION)),
         finished_at=_timestamp(annotations.get(FINISHED_AT_ANNOTATION)),
+        retained=annotations.get(RETAINED_ANNOTATION) or None,
     )
 
 
@@ -456,6 +464,8 @@ class OwnedObject:
     uid: str
     run_id: str
     component: str | None
+    #: The test it belongs to, for a test's pods.
+    test_id: str | None = None
 
     @property
     def is_owner(self) -> bool:
@@ -499,6 +509,7 @@ def find_run_owned(
                     uid=metadata["uid"],
                     run_id=labels[RUN_ID_LABEL],
                     component=labels.get(COMPONENT_LABEL),
+                    test_id=labels.get(TEST_ID_LABEL),
                 )
             )
     return found
@@ -540,14 +551,25 @@ def delete_run_owned(
     alone, unless *remove_kept* is set: ADR-03-02 keeps it by default and removes it only
     on an explicit flag.
     """
-    report = DeletionReport(run_id=str(run_id))
     objects = find_run_owned(
         cluster, run_id, namespace=namespace, kinds=kinds, components=components
     )
-    if not remove_kept:
-        report.kept = [obj for obj in objects if obj.component in _KEPT_COMPONENTS]
-        objects = [obj for obj in objects if obj.component not in _KEPT_COMPONENTS]
-    for obj in _dependents_first(objects):
+    kept = [] if remove_kept else [obj for obj in objects if obj.component in _KEPT_COMPONENTS]
+    report = delete_objects(cluster, run_id, [obj for obj in objects if obj not in kept])
+    report.kept = kept
+    return report
+
+
+def delete_objects(
+    cluster: ResourceClient, run_id: RunId, objects: Iterable[OwnedObject]
+) -> DeletionReport:
+    """Delete *objects*, found by :func:`find_run_owned` for *run_id*, each by name and uid.
+
+    For a caller that chose which of a run's objects go, such as the test pods of only
+    some tests. Dependents go before owners, for the reason :func:`delete_run_owned` gives.
+    """
+    report = DeletionReport(run_id=str(run_id))
+    for obj in _dependents_first(obj for obj in objects if obj.run_id == str(run_id)):
         try:
             cluster.delete(obj.kind, obj.namespace, obj.name, uid=obj.uid)
         except NotFoundError:

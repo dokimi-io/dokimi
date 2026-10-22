@@ -35,12 +35,13 @@ from __future__ import annotations
 import enum
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.measurement import RESULTS, Measurement
 from dokimi.model import Comparison, Criterion, Metric
 
@@ -52,12 +53,17 @@ __all__ = [
     "ExpectedPair",
     "Outcome",
     "PairResult",
+    "TestError",
+    "TestOutcome",
     "evaluate",
     "format_value",
     "outcome_of",
     "phrase",
     "promql_equivalent",
+    "read_outcome",
     "read_validation",
+    "run_outcome",
+    "worst",
     "write_validation",
 ]
 
@@ -73,9 +79,6 @@ MAX_LISTED = 10
 #: ``<test-id>.validation.json``, next to the pair's ``output.xml``.
 VALIDATION_SUFFIX = ".validation.json"
 SCHEMA_VERSION = 1
-
-METRICS_MISSING = "metrics_missing"
-EXPORTER_PARSE = "exporter_parse"
 
 
 class Outcome(enum.Enum):
@@ -114,7 +117,7 @@ class PairResult:
     #: The measured value in the criterion's unit; ``None`` for an error.
     value: Decimal | None = None
     #: The error category, for an error: ``metrics_missing`` or ``exporter_parse``.
-    category: str | None = None
+    category: ErrorCategory | None = None
     detail: str = ""
 
 
@@ -291,7 +294,7 @@ def evaluate(
     results = []
     for pair in expected:
         if not_produced is not None:
-            results.append(PairResult(pair, Outcome.ERROR, category=METRICS_MISSING))
+            results.append(PairResult(pair, Outcome.ERROR, category=ErrorCategory.METRICS_MISSING))
             continue
         results.append(_evaluate_pair(criterion, series, measurements.get(pair.test_id), pair))
     outcome = max((result.outcome for result in results), key=lambda o: o.rank)
@@ -312,14 +315,14 @@ def _evaluate_pair(
         return PairResult(
             pair,
             Outcome.ERROR,
-            category=METRICS_MISSING,
+            category=ErrorCategory.METRICS_MISSING,
             detail="no measurement: its test ended before its result was read",
         )
     if series is None or series not in measurement.values:
         return PairResult(
             pair,
             Outcome.ERROR,
-            category=METRICS_MISSING,
+            category=ErrorCategory.METRICS_MISSING,
             detail=f"its result has no {series or criterion.metric.value}",
         )
     raw = measurement.values[series]
@@ -327,7 +330,7 @@ def _evaluate_pair(
         return PairResult(
             pair,
             Outcome.ERROR,
-            category=EXPORTER_PARSE,
+            category=ErrorCategory.EXPORTER_PARSE,
             detail=f"{series} is {raw!r}, not a number a criterion can be checked against",
         )
     # repr() is the shortest string that round-trips the float, so the Decimal holds
@@ -444,6 +447,11 @@ def _plain(value: Decimal) -> str:
 # -- one pair's outcome, and where it is kept -----------------------------------------------
 
 
+def worst(outcomes: Iterable[Outcome]) -> Outcome:
+    """The worst of *outcomes*, and ``error`` for none: nothing asserted is not a pass."""
+    return max(outcomes, key=lambda outcome: outcome.rank, default=Outcome.ERROR)
+
+
 def outcome_of(evaluations: Sequence[Evaluation]) -> Outcome:
     """A test's outcome from its criteria: the worst of them.
 
@@ -451,21 +459,45 @@ def outcome_of(evaluations: Sequence[Evaluation]) -> Outcome:
     formats refuse a definition without criteria, so only a suite written by hand and run
     directly gets here, and it must not read as a pass.
     """
-    return max((e.outcome for e in evaluations), key=lambda o: o.rank, default=Outcome.ERROR)
+    return worst(evaluation.outcome for evaluation in evaluations)
 
 
-def write_validation(test_id: str, evaluations: Sequence[Evaluation], directory: Path) -> Path:
+@dataclass(frozen=True, slots=True)
+class TestError:
+    """Why a test ended before its criteria could be evaluated: an ``error``, never a pass."""
+
+    #: ``None`` for an error nothing anticipated, which is still an error.
+    category: ErrorCategory | None
+    detail: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": None if self.category is None else self.category.value,
+            "detail": self.detail,
+        }
+
+
+def write_validation(
+    test_id: str,
+    evaluations: Sequence[Evaluation],
+    directory: Path,
+    *,
+    error: TestError | None = None,
+) -> Path:
     """Write ``<test-id>.validation.json`` into *directory*, next to the pair's output.
 
-    What M1-14's result artifact and M1-16's outcome read: the classification itself,
-    never Robot's rendering of it.
+    What the result files and the run's exit code read: the classification itself, never
+    Robot's rendering of it. With *error*, the test ended before its criteria, and is an
+    ``error`` whatever the criteria evaluated so far say.
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{test_id}{VALIDATION_SUFFIX}"
+    outcome = Outcome.ERROR if error is not None else outcome_of(evaluations)
     document = {
         "schema": SCHEMA_VERSION,
         "test_id": test_id,
-        "outcome": outcome_of(evaluations).value,
+        "outcome": outcome.value,
+        "error": None if error is None else error.to_dict(),
         "criteria": [evaluation.to_dict() for evaluation in evaluations],
     }
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
@@ -479,3 +511,69 @@ def read_validation(directory: Path, test_id: str) -> dict[str, Any] | None:
         return None
     document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return document
+
+
+# -- what a run came to ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TestOutcome:
+    """One test's outcome, as its Robot process recorded it, for the run's verdict."""
+
+    test_id: str
+    outcome: Outcome
+    #: What the Robot process wrote; ``None`` if it wrote nothing, or nothing readable.
+    document: Mapping[str, Any] | None
+    #: Why the outcome could not be read, when there is no document.
+    problem: str = ""
+
+    @property
+    def recorded(self) -> bool:
+        return self.document is not None
+
+    @property
+    def error(self) -> TestError | None:
+        """Why the test ended before its criteria, if it did."""
+        error = (self.document or {}).get("error")
+        if not error:
+            return None
+        category = error.get("category")
+        known = category in {member.value for member in ErrorCategory}
+        return TestError(ErrorCategory(category) if known else None, error.get("detail", ""))
+
+
+def read_outcome(directory: Path, test_id: str) -> TestOutcome:
+    """A test's outcome from ``<test-id>.validation.json``.
+
+    A test that wrote nothing, or something that can't be read, is an ``error``: it ended
+    before anything was classified, and no data is never a pass.
+    """
+    try:
+        document = read_validation(directory, test_id)
+    except (OSError, ValueError) as error:
+        return TestOutcome(test_id, Outcome.ERROR, None, f"could not read its outcome: {error}")
+    if document is None:
+        return TestOutcome(
+            test_id,
+            Outcome.ERROR,
+            None,
+            "it ended before its outcome was recorded, and Robot's report says why",
+        )
+    try:
+        outcome = Outcome(document.get("outcome"))
+    except ValueError:
+        return TestOutcome(test_id, Outcome.ERROR, None, "its outcome is not one dokimi knows")
+    return TestOutcome(test_id, outcome, document)
+
+
+def run_outcome(tests: Iterable[TestOutcome], *, anomaly: bool) -> Outcome:
+    """The run's outcome: its worst test, and an ``error`` after any post-run anomaly.
+
+    A run without a single test is an ``error`` too, by :func:`worst`. An anomaly means
+    something went wrong around the tests, such as a pod evicted while measuring, so their
+    results are not the whole picture, whatever they say.
+    """
+    outcomes = [test.outcome for test in tests]
+    if anomaly:
+        outcomes.append(Outcome.ERROR)
+    return worst(outcomes)

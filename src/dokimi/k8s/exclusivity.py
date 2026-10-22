@@ -49,6 +49,7 @@ from dokimi.k8s.ownership import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
     OWNER_COMPONENT,
+    RETAINED_ANNOTATION,
     RUN_ID_LABEL,
     OwnershipError,
     RunOwnership,
@@ -138,8 +139,8 @@ class ActiveRun:
 
     @property
     def cleanup_command(self) -> str:
-        """Clears the run: its owner cascades to everything the run created there."""
-        return f"kubectl delete configmap -n {self.namespace} {self.owner}"
+        """Clears the run, although it still holds the cluster: hence ``--force``."""
+        return f"dokimi cleanup {self.run_id} --namespace {self.namespace} --force"
 
 
 class RunAlreadyActiveError(RunExclusivityError):
@@ -173,8 +174,8 @@ class RunAlreadyActiveError(RunExclusivityError):
         lines.extend(f"  - {run.describe()}" for run in self.active)
         if self.active:
             lines.append(
-                "Wait for it to finish, or for its claim to expire. If it is stale, clear it "
-                "by deleting its owner, which removes what it created with it:"
+                "Wait for it to finish, or for its claim to expire. If it is stale, because "
+                "its Job is gone, clear it, which removes what it created with it:"
             )
             lines.extend(f"  {run.cleanup_command}" for run in self.active)
         else:
@@ -297,7 +298,7 @@ def claim_run(
                 CLAIMED_AT_ANNOTATION: format_timestamp(now()),
                 CLAIM_EXPIRES_AT_ANNOTATION: format_timestamp(expires_at),
             },
-            remove=(FINISHED_AT_ANNOTATION,),
+            remove=(FINISHED_AT_ANNOTATION, RETAINED_ANNOTATION),
         )
         ownership.remember(claimed)
 
@@ -318,13 +319,14 @@ def mark_finished(
     run_id: RunId,
     *,
     namespace: str,
+    retained: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Manifest:
-    """Record that *run_id* has finished. Called at the start of phase 11 ([ADR-05-13]).
+    """Record that *run_id* has finished, and, with *retained*, why it keeps its evidence.
 
-    Before cleanup deletes or retains anything: retained evidence is for inspection, and
-    must not hold the cluster. Raises :class:`ClusterError` if the owner cannot be updated;
-    the run's claim then still ends when it expires.
+    Retained evidence is for inspection, and must not hold the cluster. Raises
+    :class:`ClusterError` if the owner cannot be updated; the run's claim then still ends
+    when it expires.
     """
     owner = cluster.get(CONFIG_MAP, namespace, owner_name(run_id))
     if not is_run_owned(owner, run_id):
@@ -332,7 +334,10 @@ def mark_finished(
             f"ConfigMap {namespace}/{owner_name(run_id)} is not labelled as owned by run "
             f"{run_id}; refusing to mark it finished"
         )
-    return _annotate(cluster, owner, {FINISHED_AT_ANNOTATION: format_timestamp(now())})
+    annotations = {FINISHED_AT_ANNOTATION: format_timestamp(now())}
+    if retained is not None:
+        annotations[RETAINED_ANNOTATION] = retained
+    return _annotate(cluster, owner, annotations)
 
 
 def _annotate(

@@ -6,10 +6,9 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO
@@ -17,6 +16,18 @@ from typing import Any, TextIO
 import yaml
 
 from dokimi.artifact_stream import ArtifactReceiver, ArtifactStreamError, write_artifacts
+from dokimi.cleanup import POD_REMOVAL_TIMEOUT_SECONDS as DEFAULT_POD_REMOVAL_TIMEOUT
+from dokimi.cleanup import (
+    PodRemoval,
+    Release,
+    Retention,
+    RunCleanup,
+    clean_up_run,
+    quiet_tests,
+    release_fetched_run,
+    remove_test_pods,
+    runs_older_than,
+)
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cluster_name import cluster_from_job_environment, resolve_cluster
 from dokimi.diagnostics import SNAPSHOT_TIMEOUT_SECONDS, capture, write_report
@@ -34,16 +45,13 @@ from dokimi.execution import (
 from dokimi.formats import SUFFIXES, parse, parse_file, render_robot, render_yaml
 from dokimi.k8s.cluster import ClusterClient, ClusterError, connect
 from dokimi.k8s.exclusivity import claim_expiry, claim_run, mark_finished
-from dokimi.k8s.identity import COMPONENT_LABEL, RUN_ID_LABEL, validate_run_id
+from dokimi.k8s.identity import validate_run_id
 from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
     TEST_ID_LABEL,
     RunOwnership,
-    delete_run_owned,
-    find_run_owned,
     format_timestamp,
-    owner_name,
     run_selector,
 )
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
@@ -53,6 +61,7 @@ from dokimi.metrics.managed import (
     NODE_EXPORTER_COMPONENT,
     SCRAPE_INTERVAL_SECONDS,
     ManagedPrometheus,
+    MonitoringSelection,
     NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
@@ -68,7 +77,14 @@ from dokimi.metrics.prometheus import (
     PrometheusClient,
     verify_query_access,
 )
-from dokimi.model import DEFAULT_RESULTS_DIRECTORY, ConfigError, Criterion, TestDefinition, TestType
+from dokimi.model import (
+    DEFAULT_RESULTS_DIRECTORY,
+    ConfigError,
+    Criterion,
+    Duration,
+    TestDefinition,
+    TestType,
+)
 from dokimi.planning import Plan, PlannedPair, discover, plan_run
 from dokimi.preflight import check_cluster, node_exporter_reachability
 from dokimi.run_identity import RunId
@@ -79,13 +95,21 @@ from dokimi.run_images import (
     resolve_component,
     resolve_run_images,
 )
-from dokimi.testtypes.interface import Role, WorkloadImage
+from dokimi.testtypes.interface import WorkloadImage
 from dokimi.testtypes.probe import Probes
-from dokimi.validation import format_value, read_validation
+from dokimi.validation import (
+    Outcome,
+    TestOutcome,
+    format_value,
+    read_outcome,
+    run_outcome,
+    worst,
+)
 
 __all__ = [
     "Console",
     "attach",
+    "clean_up",
     "convert",
     "execute",
     "preflight",
@@ -173,6 +197,7 @@ def submit_run(
     context: str | None = None,
     follow_logs: bool = True,
     preflight_only: bool = False,
+    retention: Retention = Retention.ON_FAILURE,
     connect_to: Callable[..., ClusterClient] | None = None,
 ) -> int:
     """Validate locally, then either render the run or create it.
@@ -204,6 +229,7 @@ def submit_run(
         namespace=namespace,
         service_account=service_account,
         preflight_only=preflight_only,
+        retention=retention,
     )
 
     if dry_run:
@@ -306,6 +332,94 @@ def attach(
     return _follow(console, cluster, resolved_namespace, resolved_run_id, results)
 
 
+def clean_up(
+    console: Console,
+    *,
+    run_id: str | None = None,
+    older_than: str | None = None,
+    namespace: str | None = None,
+    prometheus: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+    kubeconfig: str | None = None,
+    context: str | None = None,
+    connect_to: Callable[..., ClusterClient] | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> int:
+    """Remove a run, or every run older than an age, by the labels on what it created.
+
+    Exits 0 once nothing is left, 4 if a run named by its id still holds the cluster, and
+    5 if something could not be removed. With *older_than*, a run that still holds the
+    cluster is skipped and said so: it is not this command's to stop.
+    """
+    if (run_id is None) == (older_than is None):
+        raise ConfigError("dokimi cleanup takes a run id or --older-than, and not both")
+    if force and older_than is not None:
+        raise ConfigError(
+            "--force removes a run that still holds the cluster, so it takes that run's id, "
+            "not --older-than"
+        )
+    resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
+    # Both checked before any cluster call: a malformed one is a config_error.
+    selection: RunId | timedelta
+    if older_than is None:
+        selection = RunId(validate_run_id(str(run_id)))
+    else:
+        selection = timedelta(seconds=float(Duration.parse(older_than).seconds))
+    resources = (connect_to or connect)(kubeconfig=kubeconfig, context=context).resources()
+    if isinstance(selection, RunId):
+        run_ids = [selection]
+    else:
+        run_ids = runs_older_than(resources, resolved_namespace, selection, now=now)
+        if not run_ids:
+            console.say(f"no run in {resolved_namespace} started more than {older_than} ago")
+            return ExitCode.PASS
+    code = ExitCode.PASS
+    for each in run_ids:
+        result = clean_up_run(
+            resources,
+            each,
+            resolved_namespace,
+            remove_prometheus=prometheus,
+            force=force,
+            dry_run=dry_run,
+            now=now,
+        )
+        _report_cleanup(console, result, resolved_namespace, dry_run=dry_run)
+        if result.refused is not None and older_than is None:
+            code = max(code, ExitCode.PREFLIGHT_FAILURE)
+        elif result.deletion is not None and not result.deletion.complete:
+            code = max(code, ExitCode.INTERNAL)
+    return code
+
+
+def _report_cleanup(console: Console, result: RunCleanup, namespace: str, *, dry_run: bool) -> None:
+    run_id = result.run_id
+    if result.refused is not None:
+        console.warn(f"run {run_id}: not removed: {result.refused}")
+        return
+    if not result.removable and not result.kept:
+        console.say(f"run {run_id}: nothing left in {namespace}")
+        return
+    if dry_run:
+        console.say(f"run {run_id}: would remove {len(result.removable)} object(s)")
+        for obj in result.removable:
+            console.say(f"  {obj.kind}/{obj.name}")
+    elif result.deletion is not None:
+        console.say(f"run {run_id}: removed {len(result.deletion.deleted)} object(s)")
+        for obj in result.deletion.deleted:
+            console.say(f"  {obj.kind}/{obj.name}")
+        for obj, error in result.deletion.failed:
+            console.warn(f"  could not remove {obj.kind}/{obj.name}: {error}")
+        if result.deletion.failed:
+            console.warn(f"retry with: dokimi cleanup {run_id} --namespace {namespace}")
+    if result.kept:
+        console.say(
+            f"  kept: {', '.join(f'{obj.kind}/{obj.name}' for obj in result.kept)}, the run's "
+            "Prometheus and its history. Add --prometheus to remove it too"
+        )
+
+
 def execute(
     console: Console,
     *,
@@ -319,38 +433,22 @@ def execute(
     artifacts_root: Path | None = None,
     robot_directory: Path | None = None,
     preflight_only: bool = False,
+    retention: Retention = Retention.ON_FAILURE,
 ) -> int:
-    """The in-cluster entry point: what the submitted Job runs.
+    """The in-cluster entry point: what the submitted Job runs, phases 2 to 11.
 
-    The CLI/Job boundary is one decision (ADR-01-06) and both of its sides belong to
-    M1-04, so the contract is fixed here: the Job is invoked with the mounted definition
-    and the run's id, and it owns phases 2 to 11.
+    The Job is invoked with the mounted definition and the run's id. Phases 2 and 3 parse
+    and plan; a node that is missing or can't take a test pod is a config_error, with
+    nothing created. Phase 4 claims the cluster first, so only one run at a time measures
+    its network, and a refused claim exits 4. Then :func:`_preflight`, and, unless this
+    is ``dokimi preflight`` (*preflight_only*), the tests (:func:`_run_tests`).
 
-    Phases 2 and 3 are implemented, and phase 4 begins with the run-exclusivity claim
-    (ADR-05-10): a refused claim raises and exits 4 (ADR-01-11). Phase 4 then provisions
-    the run's managed Prometheus, with a node-exporter when the cluster has none, and
-    verifies it answers queries (ADR-03-02), before any workload exists. Then the cluster
-    checks (ADR-05-07, :mod:`dokimi.preflight`): the planned nodes, and the first pair in
-    probe mode, which is removed again before phase 5. A failed check exits 4 as well,
-    and nothing in the matrix runs. Phases 5, 6 and 9a render the suite, run it through
-    Robot Framework once per pair, and merge the reports into the run's artifact
-    directory (ADR-01-08). Phase 10 takes the post-run snapshot on every path, before
-    anything is removed, and writes ``diagnostics.json`` next to Robot's reports
-    (ADR-05-07).
+    Phases 10 and 11 run on every path once the cluster is claimed: the post-run
+    snapshot, while everything still exists, then the cleanup (:func:`_end_run`).
 
-    With *preflight_only* the run stops after phase 4 and exits 0: ``dokimi preflight``.
-
-    Phase 7's direct read happens in each pair's Robot process, which writes what it read
-    next to its output; the Job then confirms Prometheus holds the same values, before
-    anything is torn down (ADR-03-01). Phase 8 evaluates each test's criteria in its Robot
-    process too, which writes the outcome next to its output; the Job prints it.
-
-    Not built yet: the result artifact (M1-14, #49), and cleanup and the real exit code
-    (M1-16, #51). Rather than exit 0 and let a submitter read that as a passing run, this
-    reports an orchestrator error and names what is missing.
-
-    Once claimed, the run is always marked finished on the way out — the start of phase
-    11 (ADR-05-13) — so a run that ends, however it ends, stops holding the cluster.
+    The exit code is the run's verdict: 0, 1 or 2, from the worst test outcome, and 2 for
+    a snapshot that found something wrong around the tests. A run that stops on an
+    exception exits through :func:`dokimi.cli.main.main`'s mapping instead.
     """
     resolved_run_id = RunId(validate_run_id(run_id))
     resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
@@ -361,8 +459,8 @@ def execute(
     definition = parse_file(path)
     # Decided before any cluster call: a mode this build cannot honour is a config_error.
     monitoring = select_monitoring(definition.monitoring_mode)
-    # Resolved by submit, never here: the submitter's environment does not reach the Job
-    # (ADR-04-08). What the Job was given is what it runs, and the log says so.
+    # Resolved by submit, never here: the submitter's environment does not reach the Job.
+    # What the Job was given is what it runs, and the log says so.
     run_images = images_from_job_environment(env, monitoring=monitoring.deploys)
     run_cluster = cluster_from_job_environment(env)
     console.say("phase 2 (ingestion): definition parsed")
@@ -373,9 +471,9 @@ def execute(
     console.say()
 
     # Phase 3. Discovery happens here, in the cluster, with the Job's own credentials:
-    # this is the resolution the run is held to, and it happens before phase 6 deploys
-    # anything, so a node that is missing or unschedulable is a config_error with
-    # nothing to clean up (ADR-04-01, ADR-05-05).
+    # this is the resolution the run is held to, and it happens before anything is
+    # deployed, so a node that is missing or unschedulable is a config_error with nothing
+    # to clean up.
     cluster = (connect_to or connect)()
     plan = plan_run(definition, discover(cluster))
     console.say(f"phase 3 (planning): {_plan_summary(plan)}")
@@ -383,9 +481,9 @@ def execute(
         console.say(line)
     console.say()
 
-    # Phase 4 begins with the claim (ADR-05-10). The Job's deadline, its start time plus
+    # Phase 4 begins with the claim. The Job's deadline, its start time plus
     # activeDeadlineSeconds, is when the claim expires: by then the cluster has killed
-    # this Job, so an expired claim is safe to ignore (ADR-05-13).
+    # this Job, so an expired claim is safe to ignore.
     resources = cluster.resources()
     expires_at = claim_expiry(
         resources, resolved_run_id, namespace=resolved_namespace, deadline_seconds=deadline_seconds
@@ -393,205 +491,230 @@ def execute(
     claim_run(
         resources, resolved_run_id, namespace=resolved_namespace, expires_at=expires_at, now=now
     )
-    artifacts = RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id))
-    node_exporter: NodeExporter | None = None
-    # The run's managed Prometheus, once provisioned: phase 10 checks it is still up.
-    prometheus: ManagedPrometheus | None = None
-    # The pairs whose pods were deployed: phase 10 expects only their pods to exist.
-    started: set[str] = set()
+    run = _Run(
+        resources=resources,
+        run_id=resolved_run_id,
+        namespace=resolved_namespace,
+        plan=plan,
+        artifacts=RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id)),
+        expires_at=expires_at,
+    )
+    #: What the run came to; ``None`` while it hasn't, which is how an exception ends it.
+    outcome: Outcome | None = None
     try:
         console.say(
             "phase 4 (preflight): cluster claimed for this run until "
             f"{format_timestamp(expires_at)}"
         )
-
-        # ADR-03-02: deployed and verified before any workload, and said prominently,
-        # so the user always knows which Prometheus produced their results.
-        ownership = RunOwnership(resources, resolved_run_id)
-        supporting = detect_supporting_exporters(resources)
-        node_exporter = provide_node_exporter(
-            ownership,
-            resolved_namespace,
-            supporting,
-            image=run_images["node-exporter"].reference,
+        prometheus = _preflight(
+            console, cluster, run, definition, monitoring, run_images, run_cluster
         )
-        prometheus = provision_managed_prometheus(
-            ownership,
-            resolved_namespace,
-            supporting,
-            selection=monitoring,
-            node_exporter=node_exporter,
-            avoid_nodes=_tested_nodes(plan),
-            image=run_images["prometheus"].reference,
-        )
-        console.say(f"phase 4 (preflight): monitoring mode {monitoring.describe()}")
-        console.say(f"  Prometheus  {prometheus.endpoint}")
-        for key, value in prometheus.run_metadata().items():
-            if key.startswith("supporting_"):
-                console.say(f"  {key.removeprefix('supporting_'):<18}  {value or 'absent'}")
-        verify_query_access(
-            PrometheusClient(prometheus.endpoint), timeout=QUERY_ACCESS_TIMEOUT_SECONDS
-        )
-        console.say("phase 4 (preflight): Prometheus answers queries")
-        if node_exporter is not None:
-            # Read after the query check, which gives the DaemonSet time to place its pods.
-            running, summary = node_exporter_status(resources, node_exporter)
-            console.say(f"  node-exporter pods  {summary}")
-            if not running:
-                console.warn(f"node-exporter {node_exporter.name}: {summary}")
-        console.say(
-            "  kept after the run (ADR-03-02); remove it with: " + removal_command(prometheus)
-        )
-        console.say("  query it from your machine with: " + port_forward_command(prometheus))
-
-        # ADR-05-07: the cluster checks, against the nodes as they are now rather than at
-        # planning, and the first pair in probe mode. A failure raises and exits 4.
-        report = check_cluster(
-            definition,
-            plan,
-            discover(cluster),
-            resources=resources,
-            run_id=str(resolved_run_id),
-            namespace=resolved_namespace,
-            cluster=run_cluster,
-            images=run_images,
-            plugin=PREFLIGHT_PLUGIN,
-        )
-        console.say(f"phase 4 (preflight): nodes {', '.join(report.nodes)} accept test pods")
-        console.say(
-            f"phase 4 (preflight): {report.pair.test_id} scheduled, pulled its image and "
-            f"connected, as {', '.join(sorted(report.pods.values()))}"
-        )
-        console.say(f"  {report.probe}")
-        if node_exporter is not None or any(
-            exporter.kind == NODE_EXPORTER_COMPONENT for exporter in supporting
-        ):
-            # Late in the phase, so that Prometheus has had its first scrapes. A warning:
-            # node metrics explain a result, they never decide one (ADR-03-02).
-            unreachable = node_exporter_reachability(
-                PrometheusClient(prometheus.endpoint), NODE_EXPORTER_COMPONENT
-            )
-            if unreachable is not None:
-                console.warn(
-                    f"node-exporter: {unreachable}. The run continues without node metrics"
-                )
-        # The probe is never next to a test: its pods go before phase 5, and phase 6
-        # deploys the pair afresh.
-        if not _remove_test_pods(
-            console, resources, resolved_run_id, resolved_namespace, phase="phase 4 (preflight)"
-        ):
-            raise ClusterError(
-                "the preflight's probe pods could not be removed, so no test starts next to them"
-            )
-        # A phase line, so on the same stream as the others: stdout and stderr reach the
-        # Job's log through separate pipes, and lines microseconds apart can swap.
-        console.say("phase 4 (preflight): the cluster is ready")
-        console.say()
         if preflight_only:
             console.say("preflight only: the run stops before any test, as asked")
-            return ExitCode.PASS
-
-        suite = render_suite(definition, artifacts)
-        console.say(f"phase 5 (suite rendering): {suite}")
-        executions = execute_pairs(
-            plan,
-            suite=suite,
-            artifacts=artifacts,
-            runner=ROBOT_RUNNER(),
-            robot_directory=robot_directory or default_robot_directory(),
-            namespace=resolved_namespace,
-            cluster=run_cluster,
-            images=run_images,
-            on_pair=lambda pair: _start_pair(console, pair),
-            after_pair=lambda pair: _record_deployed(
-                console, resources, resolved_run_id, resolved_namespace, started, pair
-            ),
-        )
-        _confirm_measurements(console, prometheus, executions, artifacts)
-        _report_validation(console, executions)
-        merge_reports(executions, artifacts, ROBOT_RUNNER())
-        console.say(f"phase 9a (reporting): {artifacts.log}, {artifacts.report}")
-        console.say()
-        console.warn(
-            "the rest of phases 9b to 11 is not implemented in this build: results (#49), "
-            "cleanup and outcome (#51). So the exit code is not the run's verdict yet: "
-            "each test's outcome is in phase 8 above and in Robot's report."
-        )
-        return ExitCode.INTERNAL
+            outcome = Outcome.PASS
+        else:
+            run.tests = _run_tests(
+                console, run, prometheus, definition, run_images, run_cluster, robot_directory
+            )
+            outcome = run_outcome(run.tests, anomaly=False)
     finally:
         # Phase 10 first, on every path: while everything the run created still exists,
-        # and before cleanup removes any of it (ADR-05-07).
-        _diagnose(
-            console,
-            resources,
-            cluster,
-            run_cluster,
-            resolved_run_id,
-            resolved_namespace,
-            plan,
-            started,
-            artifacts,
-            prometheus,
+        # and before cleanup removes any of it.
+        if not _diagnose(console, cluster, run_cluster, run) and outcome is not None:
+            outcome = worst([outcome, Outcome.ERROR])
+        _end_run(console, run, retention.reason(outcome), now)
+    return ExitCode.of(outcome)
+
+
+@dataclass
+class _Run:
+    """A claimed run: what phases 4 to 9 leave for phases 10 and 11 to look at and remove."""
+
+    resources: ResourceClient
+    run_id: RunId
+    namespace: str
+    plan: Plan
+    artifacts: RunArtifacts
+    expires_at: datetime
+    #: The node-exporter the run deployed or reused, if it has one.
+    node_exporter: NodeExporter | None = None
+    #: The run's managed Prometheus, once provisioned: phase 10 checks it is still up.
+    prometheus: ManagedPrometheus | None = None
+    #: The tests whose pods were deployed: phase 10 expects only their pods to exist.
+    started: set[str] = field(default_factory=set)
+    #: Each test's outcome, once phase 8 has read them.
+    tests: tuple[TestOutcome, ...] = ()
+
+
+def _preflight(
+    console: Console,
+    cluster: ClusterClient,
+    run: _Run,
+    definition: TestDefinition,
+    monitoring: MonitoringSelection,
+    run_images: Mapping[str, WorkloadImage],
+    run_cluster: str,
+) -> ManagedPrometheus:
+    """Phase 4 after the claim: the run's Prometheus, then the cluster checks.
+
+    The Prometheus is deployed and verified before any workload, and said prominently, so
+    the user always knows which Prometheus produced their results. Then the planned nodes
+    are checked as they are now, and the first pair is deployed once in probe mode and
+    removed again. A failed check raises, which exits 4, and no test runs.
+    """
+    resources = run.resources
+    ownership = RunOwnership(resources, run.run_id)
+    supporting = detect_supporting_exporters(resources)
+    run.node_exporter = provide_node_exporter(
+        ownership, run.namespace, supporting, image=run_images["node-exporter"].reference
+    )
+    if run.node_exporter is not None and not run.node_exporter.by_this_run:
+        # A crashed run's: every later run's Prometheus scrapes every node through it
+        # until it is removed.
+        console.warn(
+            f"node-exporter {run.node_exporter.name} was left behind by run "
+            f"{run.node_exporter.run_id}, and this run uses it. Remove what that run left "
+            f"with: dokimi cleanup {run.node_exporter.run_id} --namespace {run.namespace}"
         )
-        # ADR-05-13: a run stops blocking the cluster only once nothing of it can still be
-        # sending traffic. A test aborted mid-measurement leaves a client that keeps
-        # sending, so its pods go first, on every path, and the claim is released only
-        # once they are gone. If they cannot be removed, the claim stays until it expires.
-        # The artifacts go last in the log, so they come after the pods' removal, and the
-        # claim is released after both.
-        removed = _remove_test_pods(console, resources, resolved_run_id, resolved_namespace)
-        if node_exporter is not None:
-            # The 2026-10-07 decision: a run removes the node-exporter it deployed, before
-            # it releases the cluster, and leaves one it found.
-            _remove_node_exporter(console, resources, node_exporter)
-        if not removed:
-            # Removing the pods alone frees nothing: only a finished or expired claim does
-            # (ADR-05-13). So the way out names both steps, the second one being the
-            # recovery the refusal of a later run prints too.
-            console.warn(
-                f"run {resolved_run_id} keeps its claim on the cluster until "
-                f"{format_timestamp(expires_at)}, because its test pods may still be sending "
-                "traffic. To free it earlier, remove them: kubectl delete pod -n "
-                f"{resolved_namespace} -l '{_test_pod_selector(resolved_run_id)}'. "
-                "Then clear the claim by "
-                "deleting the run's owner, which removes the rest of the run with it: "
-                f"kubectl delete configmap -n {resolved_namespace} "
-                f"{owner_name(resolved_run_id)}"
-            )
-        _return_artifacts(console, artifacts)
-        if removed:
-            _finish(console, resources, resolved_run_id, resolved_namespace, now)
+    prometheus = provision_managed_prometheus(
+        ownership,
+        run.namespace,
+        supporting,
+        selection=monitoring,
+        node_exporter=run.node_exporter,
+        avoid_nodes=_tested_nodes(run.plan),
+        image=run_images["prometheus"].reference,
+    )
+    run.prometheus = prometheus
+    console.say(f"phase 4 (preflight): monitoring mode {monitoring.describe()}")
+    console.say(f"  Prometheus  {prometheus.endpoint}")
+    for key, value in prometheus.run_metadata().items():
+        if key.startswith("supporting_"):
+            console.say(f"  {key.removeprefix('supporting_'):<18}  {value or 'absent'}")
+    verify_query_access(PrometheusClient(prometheus.endpoint), timeout=QUERY_ACCESS_TIMEOUT_SECONDS)
+    console.say("phase 4 (preflight): Prometheus answers queries")
+    if run.node_exporter is not None:
+        # Read after the query check, which gives the DaemonSet time to place its pods.
+        running, summary = node_exporter_status(resources, run.node_exporter)
+        console.say(f"  node-exporter pods  {summary}")
+        if not running:
+            console.warn(f"node-exporter {run.node_exporter.name}: {summary}")
+    console.say("  kept after the run; remove it with: " + removal_command(prometheus))
+    console.say("  query it from your machine with: " + port_forward_command(prometheus))
+
+    report = check_cluster(
+        definition,
+        run.plan,
+        discover(cluster),
+        resources=resources,
+        run_id=str(run.run_id),
+        namespace=run.namespace,
+        cluster=run_cluster,
+        images=run_images,
+        plugin=PREFLIGHT_PLUGIN,
+    )
+    console.say(f"phase 4 (preflight): nodes {', '.join(report.nodes)} accept test pods")
+    console.say(
+        f"phase 4 (preflight): {report.pair.test_id} scheduled, pulled its image and "
+        f"connected, as {', '.join(sorted(report.pods.values()))}"
+    )
+    console.say(f"  {report.probe}")
+    if run.node_exporter is not None or any(
+        exporter.kind == NODE_EXPORTER_COMPONENT for exporter in supporting
+    ):
+        # Late in the phase, so that Prometheus has had its first scrapes. A warning:
+        # node metrics explain a result, they never decide one.
+        unreachable = node_exporter_reachability(
+            PrometheusClient(prometheus.endpoint), NODE_EXPORTER_COMPONENT
+        )
+        if unreachable is not None:
+            console.warn(f"node-exporter: {unreachable}. The run continues without node metrics")
+    # The probe is never next to a test: its pods go before phase 5, and phase 6 deploys
+    # the pair afresh.
+    removal = remove_test_pods(
+        resources, run.run_id, run.namespace, timeout=POD_REMOVAL_TIMEOUT_SECONDS
+    )
+    if not removal.complete:
+        raise ClusterError(
+            f"the preflight's probe pods could not be removed, so no test starts next to "
+            f"them: {removal.problem}"
+        )
+    _say_removed(console, "phase 4 (preflight)", removal)
+    # A phase line, so on the same stream as the others: stdout and stderr reach the
+    # Job's log through separate pipes, and lines microseconds apart can swap.
+    console.say("phase 4 (preflight): the cluster is ready")
+    console.say()
+    return prometheus
+
+
+def _run_tests(
+    console: Console,
+    run: _Run,
+    prometheus: ManagedPrometheus,
+    definition: TestDefinition,
+    run_images: Mapping[str, WorkloadImage],
+    run_cluster: str,
+    robot_directory: Path | None,
+) -> tuple[TestOutcome, ...]:
+    """Phases 5 to 9: render the suite, run it once per pair, and read what each test came to.
+
+    Each pair's Robot process reads its measurement directly from the exporters (phase 7)
+    and evaluates its criteria (phase 8), and writes both next to its output. Here the Job
+    confirms Prometheus holds the same values, before anything is torn down, and reads
+    each test's outcome back: what the library classified, never Robot's status.
+    """
+    suite = render_suite(definition, run.artifacts)
+    console.say(f"phase 5 (suite rendering): {suite}")
+    executions = execute_pairs(
+        run.plan,
+        suite=suite,
+        artifacts=run.artifacts,
+        runner=ROBOT_RUNNER(),
+        robot_directory=robot_directory or default_robot_directory(),
+        namespace=run.namespace,
+        cluster=run_cluster,
+        images=run_images,
+        on_pair=lambda pair: _start_pair(console, pair),
+        after_pair=lambda pair: _record_deployed(console, run, pair),
+    )
+    _confirm_measurements(console, prometheus, executions, run.artifacts)
+    tests = tuple(
+        read_outcome(execution.output.parent, execution.pair.test_id) for execution in executions
+    )
+    _report_validation(console, tests)
+    merge_reports(executions, run.artifacts, ROBOT_RUNNER())
+    console.say(f"phase 9a (reporting): {run.artifacts.log}, {run.artifacts.report}")
+    console.say(
+        "phase 9b (results): the CSV and JSONL result files are not built yet. Each "
+        "test's outcome is in phase 8 above, in its validation.json and in Robot's report"
+    )
+    console.say()
+    return tests
 
 
 MEASUREMENT_REPORT = "measurement.json"
 
 
-def _report_validation(console: Console, executions: Sequence[PairExecution]) -> None:
+def _report_validation(console: Console, tests: Sequence[TestOutcome]) -> None:
     """Phase 8, as each pair's Robot process decided it: one line per test and criterion.
 
     The Job only prints what the library classified, never Robot's status. A test that
-    wrote nothing ended before its criteria, in phase 6 or 7, and Robot's report says why.
-    Never raises: it reports, and decides nothing.
+    ended before its criteria says why, with its error category. Never raises: it reports.
     """
-    for execution in executions:
-        test_id = execution.pair.test_id
-        try:
-            document = read_validation(execution.output.parent, test_id)
-        except (OSError, ValueError) as error:
-            console.warn(f"phase 8 (validation): could not read {test_id}'s outcome: {error}")
+    for test in tests:
+        if test.document is None:
+            console.warn(f"phase 8 (validation): {test.test_id} error: {test.problem}")
             continue
-        if document is None:
-            console.warn(
-                f"phase 8 (validation): {test_id} has no outcome: its test ended before its "
-                "criteria were evaluated, and Robot's report says why"
-            )
-            continue
-        criteria = document.get("criteria", [])
+        criteria = test.document.get("criteria", [])
         console.say(
-            f"phase 8 (validation): {test_id} {document.get('outcome', '?')}, "
+            f"phase 8 (validation): {test.test_id} {test.outcome.value}, "
             f"{len(criteria)} criterion(s)"
         )
-        if not criteria:
+        error = test.error
+        if error is not None:
+            category = f" ({error.category})" if error.category else ""
+            console.say(f"  error{category}  ended before its criteria: {error.detail}")
+        elif not criteria:
             console.say("  error  nothing asserted: the test has no pass criterion")
         for criterion in criteria:
             measured = [pair["value"] for pair in criterion.get("pairs", []) if pair["value"]]
@@ -680,21 +803,9 @@ def _report_scrape(console: Console, report: ScrapeReport) -> None:
         )
 
 
-#: A test's pods, by their component label. Only these are removed before the claim is
-#: released: a run's other pods, such as its kept Prometheus or a DaemonSet's, are not test
-#: traffic, and a controller would only recreate them.
-TEST_POD_COMPONENTS = frozenset(role.value for role in Role)
-
-
-def _test_pod_selector(run_id: RunId) -> str:
-    """The label selector for a run's test pods, the same set phase 11 removes."""
-    components = ",".join(sorted(TEST_POD_COMPONENTS))
-    return f"{RUN_ID_LABEL}={run_id},{COMPONENT_LABEL} in ({components})"
-
-
-#: How long phase 11 waits for the run's test pods to be gone: their grace period, plus
-#: the API server's and the kubelet's reaction time.
-POD_REMOVAL_TIMEOUT_SECONDS = 60.0
+#: How long phase 11 waits for the run's test pods to be gone. Module-level so a test can
+#: shorten it.
+POD_REMOVAL_TIMEOUT_SECONDS = DEFAULT_POD_REMOVAL_TIMEOUT
 
 
 def _start_pair(console: Console, pair: PlannedPair) -> None:
@@ -704,14 +815,7 @@ def _start_pair(console: Console, pair: PlannedPair) -> None:
     )
 
 
-def _record_deployed(
-    console: Console,
-    resources: ResourceClient,
-    run_id: RunId,
-    namespace: str,
-    started: set[str],
-    pair: PlannedPair,
-) -> None:
+def _record_deployed(console: Console, run: _Run, pair: PlannedPair) -> None:
     """After a pair's Robot process: whether its pods were deployed, for phase 10.
 
     Only deploy() creates a test's pods, inside the Robot process, and nothing removes
@@ -720,42 +824,32 @@ def _record_deployed(
     be checked counts as deployed: a missing pod is then reported rather than missed.
     """
     # Only a test's pods carry its test id.
-    selector = f"{run_selector(run_id)},{TEST_ID_LABEL}={pair.test_id}"
+    selector = f"{run_selector(run.run_id)},{TEST_ID_LABEL}={pair.test_id}"
     try:
-        deployed = bool(resources.list(POD, selector, namespace))
+        deployed = bool(run.resources.list(POD, selector, run.namespace))
     except Exception as error:
         console.warn(f"could not check whether {pair.test_id}'s pods were deployed: {error}")
         deployed = True
     if deployed:
-        started.add(pair.test_id)
+        run.started.add(pair.test_id)
 
 
-def _diagnose(
-    console: Console,
-    resources: ResourceClient,
-    cluster: ClusterClient,
-    cluster_name: str,
-    run_id: RunId,
-    namespace: str,
-    plan: Plan,
-    started: set[str],
-    artifacts: RunArtifacts,
-    prometheus: ManagedPrometheus | None,
-) -> None:
-    """Phase 10: the post-run snapshot, written next to Robot's reports. Never raises.
+def _diagnose(console: Console, cluster: ClusterClient, cluster_name: str, run: _Run) -> bool:
+    """Phase 10: the post-run snapshot, written next to Robot's reports. True if all was well.
 
-    Should anything in it raise after all, the run would keep its test pods and its claim,
-    so whatever it is becomes a warning, and cleanup goes on.
+    Never raises: cleanup must go on. A snapshot that could not be taken at all counts as
+    one that found something, since nothing says the run was sound.
     """
     try:
+        prometheus = run.prometheus
         ready = None if prometheus is None else PrometheusClient(prometheus.endpoint).ready
         diagnostics = capture(
-            resources,
-            run_id=run_id,
-            namespace=namespace,
-            plan=plan,
-            started=started,
-            artifacts=artifacts,
+            run.resources,
+            run_id=run.run_id,
+            namespace=run.namespace,
+            plan=run.plan,
+            started=run.started,
+            artifacts=run.artifacts,
             list_nodes=cluster.list_nodes,
             prometheus_ready=ready,
             cluster=cluster_name,
@@ -763,56 +857,60 @@ def _diagnose(
         )
         for line in diagnostics.summary():
             console.say(line)
-        report = write_report(diagnostics, artifacts.directory)
+        report = write_report(diagnostics, run.artifacts.directory)
         console.say(f"phase 10 (diagnostics): {report}")
     except Exception as error:
         console.warn(f"could not record the run's diagnostics: {error}")
-    console.say()
-
-
-def _remove_test_pods(
-    console: Console,
-    resources: ResourceClient,
-    run_id: RunId,
-    namespace: str,
-    *,
-    phase: str = "phase 11 (cleanup)",
-    timeout: float | None = None,
-    clock: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
-) -> bool:
-    """Delete the run's test pods, and wait until they are gone. True if they are.
-
-    Only the test's client and server pods: the owner and the definition stay for
-    ``attach`` and for cleanup (M1-16), and the Job's own pod is never selected. Waiting
-    matters, because a deleted pod keeps running through its grace period, and so can its
-    traffic.
-    """
-    limit = POD_REMOVAL_TIMEOUT_SECONDS if timeout is None else timeout
-    try:
-        report = delete_run_owned(
-            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
-        )
-        if report.failed:
-            console.warn(
-                f"could not delete run {run_id}'s test pods: "
-                + "; ".join(f"{obj.name}: {error}" for obj, error in report.failed)
-            )
-            return False
-        deadline = clock() + limit
-        while find_run_owned(
-            resources, run_id, namespace=namespace, kinds=(POD,), components=TEST_POD_COMPONENTS
-        ):
-            if clock() >= deadline:
-                console.warn(f"run {run_id}'s test pods were still there after {limit:g}s")
-                return False
-            sleep(2.0)
-    except ClusterError as error:
-        console.warn(f"could not remove run {run_id}'s test pods: {error}")
+        console.say()
         return False
-    if report.deleted:
-        console.say(f"{phase}: removed {len(report.deleted)} test pod(s)")
-    return True
+    console.say()
+    return not diagnostics.anomalies
+
+
+def _end_run(
+    console: Console, run: _Run, retained: str | None, now: Callable[[], datetime]
+) -> None:
+    """Phase 11: remove what the run doesn't keep, return its artifacts, release the cluster.
+
+    A run that keeps its evidence (*retained* says why) keeps the pods of each test known
+    to be quiet; every other test pod goes, and is waited for, because the cluster is
+    released next and a later run must not measure next to traffic. The node-exporter
+    the run deployed always goes: the kept Prometheus would otherwise go on scraping every
+    node. If a test pod can't be removed, the claim stays until it expires.
+
+    Nothing here changes the exit code: a cleanup that fails is reported prominently, with
+    what remains and how to remove it, and the verdict stands.
+    """
+    keep = quiet_tests(run.tests) if retained else frozenset[str]()
+    removal = remove_test_pods(
+        run.resources, run.run_id, run.namespace, keep=keep, timeout=POD_REMOVAL_TIMEOUT_SECONDS
+    )
+    _say_removed(console, "phase 11 (cleanup)", removal)
+    if run.node_exporter is not None:
+        _remove_node_exporter(console, run.resources, run.node_exporter)
+    remove = f"dokimi cleanup {run.run_id} --namespace {run.namespace}"
+    if not removal.complete:
+        # Removing the pods alone frees nothing: only a finished or expired claim does.
+        console.warn(
+            f"phase 11 (cleanup): {removal.problem}. Run {run.run_id} keeps its claim on the "
+            f"cluster until {format_timestamp(run.expires_at)}, because its test pods may "
+            f"still be sending traffic. To free it earlier, once this Job has ended, remove "
+            f"the run: {remove} --force"
+        )
+    elif retained:
+        kept = ", ".join(sorted(pod.name for pod in removal.kept)) or "no test pods"
+        console.say(
+            f"phase 11 (cleanup): run kept for inspection ({retained}): {kept}, and its "
+            f"owner and definition. It no longer holds the cluster. Remove it with: {remove}"
+        )
+    _return_artifacts(console, run.artifacts)
+    if removal.complete:
+        _finish(console, run, retained, now)
+
+
+def _say_removed(console: Console, phase: str, removal: PodRemoval) -> None:
+    if removal.removed:
+        console.say(f"{phase}: removed {len(removal.removed)} test pod(s)")
 
 
 def _remove_node_exporter(
@@ -824,23 +922,19 @@ def _remove_node_exporter(
             console.say(f"phase 11 (cleanup): removed node-exporter {exporter.name}")
     except ClusterError as error:
         # A later run finds it and reuses it, so nothing clashes on the host port.
-        console.warn(f"could not remove node-exporter {exporter.name}: {error}")
+        console.warn(f"phase 11 (cleanup): could not remove node-exporter {exporter.name}: {error}")
 
 
-def _finish(
-    console: Console,
-    resources: ResourceClient,
-    run_id: RunId,
-    namespace: str,
-    now: Callable[[], datetime],
-) -> None:
-    """The start of phase 11: record that the run no longer holds the cluster."""
+def _finish(console: Console, run: _Run, retained: str | None, now: Callable[[], datetime]) -> None:
+    """Record that the run no longer holds the cluster, and whether it keeps its evidence."""
     try:
-        mark_finished(resources, run_id, namespace=namespace, now=now)
+        mark_finished(
+            run.resources, run.run_id, namespace=run.namespace, retained=retained, now=now
+        )
     except ClusterError as error:
         # Never mask the run's own outcome. The claim still ends when it expires.
         console.warn(
-            f"could not mark run {run_id} finished; its claim ends when it expires: {error}"
+            f"could not mark run {run.run_id} finished; its claim ends when it expires: {error}"
         )
 
 
@@ -899,10 +993,11 @@ def _follow(
     *,
     expect_artifacts: bool = True,
 ) -> int:
-    """Stream the run, keep its artifacts out of what is printed, and extract them.
+    """Stream the run, keep its artifacts out of what is printed, extract them, release it.
 
-    Extracting never changes the run's exit code: the artifacts are reported, the
-    verdict is the Job's.
+    Once the artifacts are here, the run's Job has nothing left to give: it is removed, and
+    with it whatever the run did not keep (:func:`_release`). Neither step changes the
+    run's exit code: the artifacts are reported, the verdict is the Job's.
     """
     receiver = ArtifactReceiver(run_id)
     ended = False
@@ -926,35 +1021,71 @@ def _follow(
     finally:
         # A preflight writes no test results, only phase 10's snapshot, so missing
         # artifacts are not worth a note there.
-        _store_artifacts(console, receiver, results / run_id, ended=ended and expect_artifacts)
+        settled = _store_artifacts(
+            console, receiver, results / run_id, ended=ended and expect_artifacts
+        )
+        if ended and settled:
+            _release(console, cluster, namespace, run_id)
 
 
 def _store_artifacts(
     console: Console, receiver: ArtifactReceiver, destination: Path, *, ended: bool
-) -> None:
-    """Extract what arrived, or say why nothing did. Never raises: the exit code is the run's."""
+) -> bool:
+    """Extract what arrived, or say why nothing did.
+
+    True unless reattaching could still fetch something: the artifacts are on disk, or
+    the log carried none. Never raises: the exit code is the run's.
+    """
     if receiver.received:
         try:
             receiver.extract(destination)
         except ArtifactStreamError as error:
             console.warn(f"the run's artifacts were not extracted: {error}")
-            return
+            return False
         except OSError as error:
             console.warn(f"could not write the run's artifacts to {destination}: {error}")
-            return
+            return False
         console.warn(f"artifacts: {destination}")
-    elif receiver.error is not None:
+        return True
+    if receiver.error is not None:
         console.warn(f"the run's artifacts were not extracted: {receiver.error}")
-    elif receiver.incomplete:
+        return False
+    if receiver.incomplete:
         console.warn(
             "the run's artifacts were cut off before the end of its log. Reattach while "
             f"the run's pod still exists to fetch them: dokimi attach {receiver.run_id}"
         )
-    elif ended:
+        return False
+    if ended:
         console.warn(
             "the run's log carried no artifacts: it stopped before writing any, or its log "
             "was rotated or cut. If the run got as far as its tests, reattach while its pod "
             f"still exists: dokimi attach {receiver.run_id}"
+        )
+    return True
+
+
+def _release(console: Console, cluster: ClusterClient, namespace: str, run_id: str) -> None:
+    """Remove the run's Job now that its artifacts are here, and the run if it kept nothing.
+
+    Never raises: a Job that can't be removed here is removed by the cluster an hour
+    after the run ended.
+    """
+    resolved = RunId(run_id)
+    try:
+        released = release_fetched_run(cluster.resources(), resolved, namespace)
+    except ClusterError as error:
+        console.warn(
+            f"could not remove run {run_id}'s Job: {error}. The cluster removes it an hour "
+            "after the run ended"
+        )
+        return
+    if released is Release.RUN:
+        console.warn(f"removed run {run_id} from the cluster, now that its artifacts are here")
+    else:
+        console.warn(
+            f"removed run {run_id}'s Job, now that its artifacts are here. What the run kept "
+            f"stays until: dokimi cleanup {run_id} --namespace {namespace}"
         )
 
 

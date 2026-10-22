@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.k8s.deadlines import DEFAULT_DIRECT_READ_SECONDS, workload_budget
 from dokimi.k8s.ownership import RunOwnership
 from dokimi.k8s.resources import KubernetesResources, ResourceClient
@@ -47,6 +48,8 @@ _COMPLETION_GRACE_SECONDS = 60.0
 
 class ToolFailedError(RuntimeError):
     """The test ran to completion, and its tool reported that it measured nothing."""
+
+    category = ErrorCategory.TOOL_EXECUTION
 
 
 class PairMismatchError(RuntimeError):

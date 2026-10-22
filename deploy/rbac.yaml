@@ -15,13 +15,17 @@
 #   - phase 4 begins with the run-exclusivity claim (ADR-05-10): it lists run owners in
 #     every namespace, takes a Lease in the lock namespace, reads its own Job's start
 #     time to date the claim's expiry, and writes its claim onto its own owner; phase 11
-#     marks that owner finished;
+#     marks that owner finished, and records there whether the run keeps its evidence;
 #   - phase 4 then deploys the run's managed Prometheus (ADR-03-02): it looks for an
 #     already-present node-exporter or kube-state-metrics by listing Services, deploys
 #     a node-exporter DaemonSet when there is none, and creates the Prometheus's
 #     ConfigMap, Deployment and Service in the run namespace;
 #   - phase 6 creates each pair's client and server pods and reads their status, and
-#     phase 11 deletes them before the run releases the cluster.
+#     phase 11 deletes those that may still be sending before the run releases the
+#     cluster, and the node-exporter it deployed.
+#
+# The Job deletes nothing else. Its owner, definition and Job go after the run, removed by
+# whoever fetched its reports, or by `dokimi cleanup`, with their credentials.
 #
 # The managed Prometheus runs as its own service account, dokimi-prometheus, created
 # here rather than by a run: its discovery rights would otherwise have to be granted by

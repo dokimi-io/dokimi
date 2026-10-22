@@ -12,11 +12,13 @@ from typing import Any
 
 import pytest
 
+from dokimi.cleanup import Retention
 from dokimi.images import ImageSource
 from dokimi.k8s.deadlines import job_budget_for, workload_budget_for
 from dokimi.k8s.identity import MANAGED_BY_LABEL, RUN_ID_LABEL
 from dokimi.k8s.manifests import (
     DEFINITION_MOUNT_PATH,
+    JOB_TTL_SECONDS,
     bind_owner,
     job_deadline_seconds,
     render_manifests,
@@ -167,6 +169,30 @@ def test_the_job_carries_a_self_limiting_deadline(
     assert job["spec"]["activeDeadlineSeconds"] > int(definition.duration.seconds)
 
 
+def test_a_finished_job_is_removed_after_an_hour_if_nobody_fetches_it(
+    manifests: list[dict[str, Any]],
+) -> None:
+    # Its artifacts travel in its log, so the hour is how long `attach` can still fetch them.
+    assert _job(manifests)["spec"]["ttlSecondsAfterFinished"] == JOB_TTL_SECONDS == 3600
+
+
+def test_the_submitter_chooses_when_the_run_keeps_its_evidence(definition: TestDefinition) -> None:
+    kept = render_manifests(
+        definition,
+        source="apiVersion: dokimi.io/v1alpha1\n",
+        source_suffix=".yaml",
+        run_id=RUN_ID,
+        image=IMAGE,
+        images=RUN_IMAGES,
+        namespace="dokimi-iperf2",
+        cluster="test-cluster",
+        retention=Retention.ALWAYS,
+    )
+
+    args = _container(kept)["args"]
+    assert args[args.index("--retain") + 1] == "always"
+
+
 def test_the_job_outlives_any_workload_it_runs(definition: TestDefinition) -> None:
     # ADR-05-13: the Job deadline is also when the claim expires, which is only safe
     # because by then every workload has hit its own, shorter deadline.
@@ -217,6 +243,8 @@ def test_the_definition_travels_with_the_run(
         "dokimi-iperf2",
         "--deadline-seconds",
         str(job_deadline_seconds(definition)),
+        "--retain",
+        "on-failure",
     ]
 
 

@@ -22,7 +22,7 @@ from kubernetes.config.config_exception import ConfigException
 from urllib3.exceptions import HTTPError as TransportError
 
 from dokimi.k8s.cluster import ClusterError
-from dokimi.k8s.resources import KubernetesResources
+from dokimi.k8s.resources import REQUEST_TIMEOUT_SECONDS, KubernetesResources
 
 __all__ = ["KubernetesCluster"]
 
@@ -73,9 +73,13 @@ class KubernetesCluster:
         with _transport(f"creating {kind} {_name(body)}"):
             try:
                 if kind == "ConfigMap":
-                    created = self._core.create_namespaced_config_map(namespace, body)
+                    created = self._core.create_namespaced_config_map(
+                        namespace, body, _request_timeout=REQUEST_TIMEOUT_SECONDS
+                    )
                 elif kind == "Job":
-                    created = self._batch.create_namespaced_job(namespace, body)
+                    created = self._batch.create_namespaced_job(
+                        namespace, body, _request_timeout=REQUEST_TIMEOUT_SECONDS
+                    )
                 else:  # pragma: no cover - a submission creates nothing else
                     raise ClusterError(f"cannot create a {kind!r}: no client is wired up for it")
             except ApiException as error:
@@ -94,7 +98,9 @@ class KubernetesCluster:
     def find_job(self, namespace: str, selector: str) -> dict[str, Any] | None:
         try:
             with _transport(f"looking for a Job in {namespace}"):
-                jobs = self._batch.list_namespaced_job(namespace, label_selector=selector)
+                jobs = self._batch.list_namespaced_job(
+                    namespace, label_selector=selector, _request_timeout=REQUEST_TIMEOUT_SECONDS
+                )
         except ApiException as error:
             raise ClusterError(_explain(error, f"looking for a Job in {namespace}")) from error
         return self._newest(jobs.items)
@@ -102,7 +108,9 @@ class KubernetesCluster:
     def find_pod(self, namespace: str, selector: str) -> dict[str, Any] | None:
         try:
             with _transport(f"looking for a Pod in {namespace}"):
-                pods = self._core.list_namespaced_pod(namespace, label_selector=selector)
+                pods = self._core.list_namespaced_pod(
+                    namespace, label_selector=selector, _request_timeout=REQUEST_TIMEOUT_SECONDS
+                )
         except ApiException as error:
             raise ClusterError(_explain(error, f"looking for a Pod in {namespace}")) from error
         return self._newest(pods.items)
@@ -110,7 +118,9 @@ class KubernetesCluster:
     def read_pod(self, namespace: str, name: str) -> dict[str, Any] | None:
         try:
             with _transport(f"reading Pod {name}"):
-                pod = self._core.read_namespaced_pod(name, namespace)
+                pod = self._core.read_namespaced_pod(
+                    name, namespace, _request_timeout=REQUEST_TIMEOUT_SECONDS
+                )
         except ApiException as error:
             if error.status == _NOT_FOUND:
                 return None
@@ -136,6 +146,9 @@ class KubernetesCluster:
                     container=container,
                     follow=True,
                     _preload_content=False,
+                    # Connecting is bounded; reading is not, since a run can be quiet for
+                    # as long as its tests take.
+                    _request_timeout=(REQUEST_TIMEOUT_SECONDS, None),
                 )
         except ApiException as error:
             raise ClusterError(_explain(error, f"streaming logs from {pod}")) from error
@@ -165,7 +178,7 @@ class KubernetesCluster:
         """
         try:
             with _transport("listing nodes"):
-                nodes = self._core.list_node()
+                nodes = self._core.list_node(_request_timeout=REQUEST_TIMEOUT_SECONDS)
         except ApiException as error:
             if error.status == 403:
                 raise ClusterError(

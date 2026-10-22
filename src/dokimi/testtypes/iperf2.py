@@ -49,6 +49,7 @@ from decimal import Decimal
 from typing import Any
 
 from dokimi import _image_digest
+from dokimi.error_categories import ErrorCategory
 from dokimi.k8s.deadlines import DEFAULT_WARMUP_SECONDS
 from dokimi.k8s.resources import POD, Manifest, NotFoundError
 from dokimi.model import Bandwidth, ConfigError, Duration, Protocol
@@ -168,6 +169,8 @@ class UnexpectedTargetError(RuntimeError):
     measures against whatever that connection sent. A summary naming another destination
     is a result about some other path, and must not be read as this pair's.
     """
+
+    category = ErrorCategory.TOOL_EXECUTION
 
 
 @dataclass(frozen=True, slots=True)
