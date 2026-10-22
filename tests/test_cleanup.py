@@ -271,3 +271,22 @@ def test_otherwise_only_its_job_goes(store: FakeResources, annotations: dict[str
     assert release_fetched_run(store, RUN, NS) is Release.JOB
 
     assert names(store) == {owner_name(RUN), f"run-{OTHER}"}
+
+
+def test_cleanup_leaves_a_controllers_objects_to_it_and_skips_what_is_going(
+    store: FakeResources,
+) -> None:
+    # A Deployment's pod comes back if deleted alone; a deleted pod is still listed until
+    # its grace period ends. Neither is something cleanup removes.
+    labels = ownership_labels(RUN, component="prometheus")
+    controller = [{"kind": "ReplicaSet", "name": "rs", "uid": "u", "controller": True}]
+    store.put(
+        POD, NS, {"metadata": {"name": "prom", "labels": labels, "ownerReferences": controller}}
+    )
+    client = ownership_labels(RUN, test_id="pair-001", component="client")
+    store.put(POD, NS, {"metadata": {"name": "going", "labels": client, "deletionTimestamp": "x"}})
+    put(store, DEPLOYMENT, f"run-{RUN}-prometheus", component="prometheus")
+
+    result = clean_up_run(store, RUN, NS, remove_prometheus=True, now=lambda: NOW)
+
+    assert [obj.name for obj in result.removable] == [f"run-{RUN}-prometheus"]

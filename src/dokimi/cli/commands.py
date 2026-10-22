@@ -398,10 +398,9 @@ def _report_cleanup(console: Console, result: RunCleanup, namespace: str, *, dry
     if result.refused is not None:
         console.warn(f"run {run_id}: not removed: {result.refused}")
         return
-    if not result.removable and not result.kept:
-        console.say(f"run {run_id}: nothing left in {namespace}")
-        return
-    if dry_run:
+    if not result.removable:
+        console.say(f"run {run_id}: nothing to remove in {namespace}")
+    elif dry_run:
         console.say(f"run {run_id}: would remove {len(result.removable)} object(s)")
         for obj in result.removable:
             console.say(f"  {obj.kind}/{obj.name}")

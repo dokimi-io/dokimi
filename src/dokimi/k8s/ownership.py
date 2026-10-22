@@ -466,6 +466,11 @@ class OwnedObject:
     component: str | None
     #: The test it belongs to, for a test's pods.
     test_id: str | None = None
+    #: Managed by a controller, such as a Deployment's pods: deleting it alone only makes
+    #: the controller create another. It goes with its controller.
+    controlled: bool = False
+    #: Deleted already, and waiting out its grace period.
+    terminating: bool = False
 
     @property
     def is_owner(self) -> bool:
@@ -510,6 +515,11 @@ def find_run_owned(
                     run_id=labels[RUN_ID_LABEL],
                     component=labels.get(COMPONENT_LABEL),
                     test_id=labels.get(TEST_ID_LABEL),
+                    controlled=any(
+                        reference.get("controller")
+                        for reference in metadata.get("ownerReferences") or ()
+                    ),
+                    terminating=bool(metadata.get("deletionTimestamp")),
                 )
             )
     return found

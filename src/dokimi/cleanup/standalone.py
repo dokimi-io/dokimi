@@ -100,7 +100,13 @@ def clean_up_run(
             "it. Wait for it to finish, or, if its Job is gone, add --force"
         )
         return result
-    objects = find_run_owned(resources, run_id, namespace=namespace)
+    # A controller's objects go with it, and a terminating one is going already: listing
+    # either as removed would be untrue, and deleting a Deployment's pod only replaces it.
+    objects = [
+        obj
+        for obj in find_run_owned(resources, run_id, namespace=namespace)
+        if not (obj.controlled or obj.terminating)
+    ]
     for obj in objects:
         kept = obj.component == PROMETHEUS_COMPONENT and not remove_prometheus
         (result.kept if kept else result.removable).append(obj)
