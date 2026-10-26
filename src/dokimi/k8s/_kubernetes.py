@@ -22,7 +22,11 @@ from kubernetes.config.config_exception import ConfigException
 from urllib3.exceptions import HTTPError as TransportError
 
 from dokimi.k8s.cluster import ClusterError
-from dokimi.k8s.resources import REQUEST_TIMEOUT_SECONDS, KubernetesResources
+from dokimi.k8s.resources import (
+    REQUEST_TIMEOUT_SECONDS,
+    KubernetesResources,
+    bounded_api_client,
+)
 
 __all__ = ["KubernetesCluster"]
 
@@ -52,7 +56,7 @@ class KubernetesCluster:
         if kubeconfig is None and context is None:
             try:
                 config.load_incluster_config()
-                return cls(client.ApiClient())
+                return cls(bounded_api_client())
             except ConfigException:
                 pass
         try:
@@ -62,7 +66,7 @@ class KubernetesCluster:
                 f"no usable cluster credentials: {error}. Set KUBECONFIG, pass "
                 "--kubeconfig, or run inside the cluster."
             ) from error
-        return cls(client.ApiClient())
+        return cls(bounded_api_client())
 
     # -- writes ---------------------------------------------------------------
 

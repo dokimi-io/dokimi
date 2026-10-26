@@ -188,14 +188,15 @@ def find_active_runs(
     now: datetime,
     *,
     exclude: RunId | None = None,
+    namespace: str | None = None,
 ) -> list[ActiveRun]:
-    """Every run owner, in every namespace, whose claim is active at *now*.
+    """Every run owner whose claim is active at *now*, in *namespace* or in every one.
 
     The labels are re-checked on each result, so a selector the server misread cannot
     smuggle in an object that is not ours.
     """
     found: list[ActiveRun] = []
-    for item in cluster.list(CONFIG_MAP, _OWNER_SELECTOR, None):
+    for item in cluster.list(CONFIG_MAP, _OWNER_SELECTOR, namespace):
         if not is_run_owned(item):
             continue
         metadata = item["metadata"]

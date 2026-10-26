@@ -50,6 +50,7 @@ from dokimi.k8s.manifests import job_deadline_seconds, resource_name
 from dokimi.k8s.namespaces import namespace_for
 from dokimi.k8s.ownership import (
     TEST_ID_LABEL,
+    OwnershipError,
     RunOwnership,
     format_timestamp,
     run_selector,
@@ -348,9 +349,11 @@ def clean_up(
 ) -> int:
     """Remove a run, or every run older than an age, by the labels on what it created.
 
-    Exits 0 once nothing is left, 4 if a run named by its id still holds the cluster, and
-    5 if something could not be removed. With *older_than*, a run that still holds the
-    cluster is skipped and said so: it is not this command's to stop.
+    Exits 0 once nothing is left, 4 if the run named by its id can't be removed now
+    because it, or a run using what it left, holds the cluster, and 5 if something could
+    not be removed, a refused or timed-out call included. With *older_than*, a run that
+    can't be removed now is skipped, and the closing line counts them: it is not this
+    command's to stop a run.
     """
     if (run_id is None) == (older_than is None):
         raise ConfigError("dokimi cleanup takes a run id or --older-than, and not both")
@@ -361,11 +364,7 @@ def clean_up(
         )
     resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
     # Both checked before any cluster call: a malformed one is a config_error.
-    selection: RunId | timedelta
-    if older_than is None:
-        selection = RunId(validate_run_id(str(run_id)))
-    else:
-        selection = timedelta(seconds=float(Duration.parse(older_than).seconds))
+    selection = RunId(validate_run_id(str(run_id))) if older_than is None else _age(older_than)
     resources = (connect_to or connect)(kubeconfig=kubeconfig, context=context).resources()
     if isinstance(selection, RunId):
         run_ids = [selection]
@@ -374,44 +373,82 @@ def clean_up(
         if not run_ids:
             console.say(f"no run in {resolved_namespace} started more than {older_than} ago")
             return ExitCode.PASS
+    flags = [
+        "--namespace",
+        resolved_namespace,
+        *(["--prometheus"] if prometheus else []),
+        *(["--force"] if force else []),
+    ]
     code = ExitCode.PASS
+    skipped = 0
     for each in run_ids:
-        result = clean_up_run(
-            resources,
-            each,
-            resolved_namespace,
-            remove_prometheus=prometheus,
-            force=force,
-            dry_run=dry_run,
-            now=now,
-        )
-        _report_cleanup(console, result, resolved_namespace, dry_run=dry_run)
-        if result.refused is not None and older_than is None:
-            code = max(code, ExitCode.PREFLIGHT_FAILURE)
-        elif result.deletion is not None and not result.deletion.complete:
+        retry = " ".join(["dokimi cleanup", str(each), *flags])
+        try:
+            result = clean_up_run(
+                resources,
+                each,
+                resolved_namespace,
+                remove_prometheus=prometheus,
+                force=force,
+                dry_run=dry_run,
+                pod_timeout=POD_REMOVAL_TIMEOUT_SECONDS,
+                now=now,
+            )
+        except ClusterError as error:
+            # One run's failure doesn't stop the others: each is removed on its own.
+            console.warn(f"run {each}: could not remove it: {error}. Retry with: {retry}")
             code = max(code, ExitCode.INTERNAL)
+            continue
+        _report_cleanup(console, result, resolved_namespace, retry=retry, dry_run=dry_run)
+        if result.refused is not None:
+            skipped += 1
+            if older_than is None:
+                code = max(code, ExitCode.PREFLIGHT_FAILURE)
+        elif not result.complete:
+            code = max(code, ExitCode.INTERNAL)
+    if older_than is not None and skipped:
+        console.say(f"skipped {skipped} of {len(run_ids)} run(s), which can't be removed now")
     return code
 
 
-def _report_cleanup(console: Console, result: RunCleanup, namespace: str, *, dry_run: bool) -> None:
+def _age(text: str) -> timedelta:
+    """``--older-than``, as a duration that a date can be counted back by."""
+    try:
+        age = timedelta(seconds=float(Duration.parse(text).seconds))
+        # The date the age counts back to has to exist.
+        _ = datetime.now(UTC) - age
+    except OverflowError:
+        raise ConfigError(f"--older-than {text} reaches back before any run could start") from None
+    return age
+
+
+def _report_cleanup(
+    console: Console, result: RunCleanup, namespace: str, *, retry: str, dry_run: bool
+) -> None:
     run_id = result.run_id
     if result.refused is not None:
         console.warn(f"run {run_id}: not removed: {result.refused}")
         return
-    if not result.removable:
+    if dry_run:
+        if not result.removable:
+            console.say(f"run {run_id}: nothing to remove in {namespace}")
+        else:
+            console.say(f"run {run_id}: would remove {len(result.removable)} object(s)")
+            for obj in result.removable:
+                console.say(f"  {obj.kind}/{obj.name}")
+    elif not result.removed and result.complete:
         console.say(f"run {run_id}: nothing to remove in {namespace}")
-    elif dry_run:
-        console.say(f"run {run_id}: would remove {len(result.removable)} object(s)")
-        for obj in result.removable:
+    else:
+        console.say(f"run {run_id}: removed {len(result.removed)} object(s)")
+        for obj in result.removed:
             console.say(f"  {obj.kind}/{obj.name}")
-    elif result.deletion is not None:
-        console.say(f"run {run_id}: removed {len(result.deletion.deleted)} object(s)")
-        for obj in result.deletion.deleted:
-            console.say(f"  {obj.kind}/{obj.name}")
-        for obj, error in result.deletion.failed:
+        if result.pods is not None and result.pods.problem is not None:
+            # The owner stays, and with it a forced run's claim, until the pods are gone.
+            console.warn(f"  {result.pods.problem}; the rest of the run stays until they go")
+        for obj, error in [] if result.deletion is None else result.deletion.failed:
             console.warn(f"  could not remove {obj.kind}/{obj.name}: {error}")
-        if result.deletion.failed:
-            console.warn(f"retry with: dokimi cleanup {run_id} --namespace {namespace}")
+        if not result.complete:
+            console.warn(f"retry with: {retry}")
     if result.kept:
         console.say(
             f"  kept: {', '.join(f'{obj.kind}/{obj.name}' for obj in result.kept)}, the run's "
@@ -508,6 +545,7 @@ def execute(
         prometheus = _preflight(
             console, cluster, run, definition, monitoring, run_images, run_cluster
         )
+        run.past_preflight = True
         if preflight_only:
             console.say("preflight only: the run stops before any test, as asked")
             outcome = Outcome.PASS
@@ -519,9 +557,15 @@ def execute(
     finally:
         # Phase 10 first, on every path: while everything the run created still exists,
         # and before cleanup removes any of it.
-        if not _diagnose(console, cluster, run_cluster, run) and outcome is not None:
+        sound = _diagnose(console, cluster, run_cluster, run)
+        # A preflight's code says whether the cluster is ready, 0 or 4. Anything the
+        # snapshot found is in its log and diagnostics.json, not in that answer.
+        if not sound and outcome is not None and not preflight_only:
             outcome = worst([outcome, Outcome.ERROR])
-        _end_run(console, run, retention.reason(outcome), now)
+        # A run that stopped in phase 4 has nothing to inspect: its probe pods always go,
+        # and its diagnostics.json reaches the submitter with its log.
+        retained = retention.reason(outcome) if run.past_preflight else None
+        _end_run(console, run, retained, now)
     return ExitCode.of(outcome)
 
 
@@ -543,6 +587,8 @@ class _Run:
     started: set[str] = field(default_factory=set)
     #: Each test's outcome, once phase 8 has read them.
     tests: tuple[TestOutcome, ...] = ()
+    #: Whether phase 4 passed, so that the run got as far as its tests.
+    past_preflight: bool = False
 
 
 def _preflight(
@@ -572,8 +618,9 @@ def _preflight(
         # until it is removed.
         console.warn(
             f"node-exporter {run.node_exporter.name} was left behind by run "
-            f"{run.node_exporter.run_id}, and this run uses it. Remove what that run left "
-            f"with: dokimi cleanup {run.node_exporter.run_id} --namespace {run.namespace}"
+            f"{run.node_exporter.run_id}, and this run uses it. Once this run has ended, "
+            f"remove what that run left with: dokimi cleanup {run.node_exporter.run_id} "
+            f"--namespace {run.namespace}"
         )
     prometheus = provision_managed_prometheus(
         ownership,
@@ -930,7 +977,7 @@ def _finish(console: Console, run: _Run, retained: str | None, now: Callable[[],
         mark_finished(
             run.resources, run.run_id, namespace=run.namespace, retained=retained, now=now
         )
-    except ClusterError as error:
+    except (ClusterError, OwnershipError) as error:
         # Never mask the run's own outcome. The claim still ends when it expires.
         console.warn(
             f"could not mark run {run.run_id} finished; its claim ends when it expires: {error}"

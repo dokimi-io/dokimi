@@ -31,7 +31,7 @@ from dokimi.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
-from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD, Kind
+from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD, ConflictError, Kind
 from dokimi.run_identity import RunId
 from dokimi.validation import Outcome, TestError, TestOutcome
 from tests.fake_resources import FakeResources
@@ -290,3 +290,74 @@ def test_cleanup_leaves_a_controllers_objects_to_it_and_skips_what_is_going(
     result = clean_up_run(store, RUN, NS, remove_prometheus=True, now=lambda: NOW)
 
     assert [obj.name for obj in result.removable] == [f"run-{RUN}-prometheus"]
+
+
+def test_cleanup_refuses_a_run_whose_node_exporter_a_running_run_uses(
+    store: FakeResources,
+) -> None:
+    # The node-exporter belongs to the crashed run's owner, so removing the run would take
+    # it from the run measuring now, through the garbage collector if not directly.
+    owner(store, annotations=claimed(expires=NOW - timedelta(hours=1)))
+    put(store, DAEMON_SET, f"run-{RUN}-node-exporter", component="node-exporter")
+    owner(store, OTHER, annotations=claimed(expires=NOW + timedelta(minutes=30)))
+
+    result = clean_up_run(store, RUN, NS, now=lambda: NOW)
+
+    assert result.refused is not None
+    assert f"run {OTHER} holds the cluster and may be using the node-exporter" in result.refused
+    assert f"run-{RUN}-node-exporter" in names(store)
+
+
+def test_a_run_without_a_node_exporter_is_removed_while_another_runs(
+    store: FakeResources,
+) -> None:
+    a_whole_run(store)
+    store.objects.pop(("DaemonSet", NS, f"run-{RUN}-node-exporter"))
+    owner(store, OTHER, annotations=claimed(expires=NOW + timedelta(minutes=30)))
+
+    assert clean_up_run(store, RUN, NS, now=lambda: NOW).complete
+
+
+class LingeringPods(FakeResources):
+    """Pods that stay in their grace period: deleted, and still listed."""
+
+    def delete(self, kind: Kind, namespace: str, name: str, **kwargs: Any) -> None:
+        if kind != POD:
+            super().delete(kind, namespace, name, **kwargs)
+            return
+        self.objects[(kind.kind, namespace, name)]["metadata"]["deletionTimestamp"] = "now"
+
+
+def test_forced_cleanup_keeps_the_owner_until_the_test_pods_are_gone() -> None:
+    # A forced run's client may still be sending, and its owner carries its claim.
+    store = LingeringPods()
+    owner(store, annotations=claimed(expires=NOW + timedelta(minutes=30)))
+    a_whole_run(store)
+
+    result = clean_up_run(store, RUN, NS, force=True, pod_timeout=0.0, now=lambda: NOW)
+
+    assert not result.complete
+    assert result.pods is not None
+    assert result.pods.problem is not None
+    assert result.deletion is None
+    assert owner_name(RUN) in names(store)
+
+
+class Conflicting(FakeResources):
+    """A ConfigMap that changed hands between the listing and its delete."""
+
+    def delete(self, kind: Kind, namespace: str, name: str, **kwargs: Any) -> None:
+        if kind == CONFIG_MAP:
+            raise ConflictError(f"{name}: uid precondition failed")
+        super().delete(kind, namespace, name, **kwargs)
+
+
+def test_an_object_replaced_meanwhile_is_already_gone_not_a_failure() -> None:
+    store = Conflicting()
+    a_whole_run(store)
+
+    result = clean_up_run(store, RUN, NS, now=lambda: NOW)
+
+    assert result.complete
+    assert result.deletion is not None
+    assert [obj.name for obj in result.deletion.already_gone] == [f"run-{RUN}-definition"]

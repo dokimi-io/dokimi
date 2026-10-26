@@ -133,7 +133,9 @@ Six things to know about a run:
   doesn't exit `0` keeps its test pods, with their logs and events, and its owner and
   definition, for you to look at; it says so, and how to remove it: `dokimi cleanup
   <run-id>`. Either way it is marked finished, so the next run can start. `submit --retain
-  always` keeps a passing run too, and `--retain never` keeps nothing.
+  always` keeps a passing run too, and `--retain never` keeps nothing. A run that stopped
+  in its preflight keeps nothing either: there is nothing of it to look at but its log and
+  `diagnostics.json`, and those reach you.
 - **A test pod that may still be sending never stays.** The next run would measure next to
   it. So a test's pods are kept only if it was measured, or its pods never started: a
   test that timed out, lost a pod or recorded nothing has them removed, however the run
@@ -452,12 +454,11 @@ deploys the pair afresh, so the probe never runs next to a test.
 `dokimi preflight` is not a preview. `submit --dry-run` renders what a run would create and
 creates nothing; this creates real pods, because whether they schedule and connect can
 only be seen by trying. It claims the cluster while it runs, provisions the run's managed
-Prometheus, which is kept as every run's is, and removes everything else it deployed. A
-failed preflight keeps its owner and definition, like any run that didn't pass, until
-`dokimi cleanup`.
-Like every run, it ends with phase 10's snapshot: `diagnostics.json` in
-`<results.directory>/<run-id>/`, which after a failed check shows the probe's pods as they
-were.
+Prometheus, which is kept as every run's is, and removes everything else it deployed,
+whether it passed or not. Like every run, it ends with phase 10's snapshot:
+`diagnostics.json` in `<results.directory>/<run-id>/`, which after a failed check shows the
+probe's pods as they were. Whatever the snapshot finds is in the log and that file, and
+doesn't change the exit code: a preflight answers `0` or `4`.
 
 A passed preflight is a floor, not a guarantee: one pair, under no load, says nothing about
 what the full matrix will meet.
@@ -861,6 +862,7 @@ A run cleans up after itself, in phase 11. What it leaves depends on how it ende
 | --- | --- | --- |
 | exited `0` | its Prometheus | you remove it |
 | didn't exit `0` | its Prometheus, its owner and definition, and the pods of each test that was measured or never started | `dokimi cleanup` |
+| stopped in its preflight | its Prometheus | you remove it |
 | crashed, or its Job was stopped | whatever it had created | `dokimi cleanup`, once its claim has expired |
 
 Its Job goes once `submit` or `attach` has fetched its reports, or an hour after it ended.
@@ -882,8 +884,11 @@ run 20260924-200229-ca532a: removed 4 object(s)
 
 Removes everything a run created, found by its labels, without the run's own process or
 anything it remembered: so it also removes what a crashed run left, its node-exporter
-included. Its Job goes with its owner, through the cluster's garbage collector.
-`--older-than 24h` does the same for every run that started more than 24 hours ago.
+included. The test pods go first, and it waits until they are gone, because a run's
+client may still be sending; only then does the rest go, the owner last. The run's Job
+goes with its owner, through the cluster's garbage collector, and a Deployment's or
+DaemonSet's pods with them. `--older-than 24h` does the same for every run that started
+more than 24 hours ago.
 
 | Flag | |
 | --- | --- |
@@ -894,10 +899,19 @@ included. Its Job goes with its owner, through the cluster's garbage collector.
 | `--namespace`, `-n` | the test type's namespace, if not `dokimi-iperf2` |
 | `--kubeconfig`, `--context` | pick cluster credentials |
 
-A run that still holds the cluster is refused: its Job may still be running it. With
-`--older-than` it is skipped and said so. It exits `0` once nothing is left, `4` when the
-run named by its id still holds the cluster, and `5` when something could not be removed,
-listing what and how to retry.
+Two runs are refused, because removing them now would take something from a running one:
+
+- **a run that still holds the cluster**, since its Job may still be running it. `--force`
+  removes it anyway, for a run whose Job is gone;
+- **a run that left a node-exporter, while another run holds the cluster.** A later run
+  reuses a node-exporter a crashed run left, and it goes with that run's owner. Remove the
+  run once the other has ended.
+
+With `--older-than`, such a run is skipped and said so, and a closing line counts the runs
+skipped. It exits `0` once nothing is left that it was asked to remove, `4` when the run
+named by its id was refused, and `5` when something could not be removed: a refused
+permission, a call that timed out, or a test pod that didn't go. It then lists what, and
+the exact command to retry, with the flags you gave.
 
 ### The Prometheus
 

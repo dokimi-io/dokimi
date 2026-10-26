@@ -495,7 +495,8 @@ Further rules:
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
   inspection; `submit --retain always` or `never` forces either. A run that didn't pass keeps
   its owner, its definition and the pods of each test that was measured or never started, until
-  `dokimi cleanup`; a test pod that may still be sending is never kept. Cleanup runs **after** the
+  `dokimi cleanup`; a test pod that may still be sending is never kept, and a run that stopped
+  in its preflight keeps nothing. Cleanup runs **after** the
   post-run diagnostic snapshot, which needs the run's pods and placement to still exist, and the
   snapshot is bounded by its own timeout so it cannot delay cleanup indefinitely. The run's Job
   goes once `submit` or `attach` has fetched its reports, or an hour after the run ended.

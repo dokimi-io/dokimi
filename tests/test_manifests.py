@@ -243,8 +243,6 @@ def test_the_definition_travels_with_the_run(
         "dokimi-iperf2",
         "--deadline-seconds",
         str(job_deadline_seconds(definition)),
-        "--retain",
-        "on-failure",
     ]
 
 

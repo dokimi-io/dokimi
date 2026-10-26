@@ -23,6 +23,7 @@ from dokimi.cli.main import main
 from dokimi.error_categories import ErrorCategory
 from dokimi.formats import parse_file
 from dokimi.images import IMAGE_REPOSITORY
+from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import claim_run
 from dokimi.k8s.manifests import resource_name
 from dokimi.k8s.ownership import (
@@ -1472,8 +1473,71 @@ def test_cleanup_that_cant_remove_something_says_how_to_retry(
 
     assert main(["cleanup", RUN_ID]) == ExitCode.INTERNAL
     err = capsys.readouterr().err
-    assert f"could not remove Pod/run-{RUN_ID}-pair-001-client" in err
+    assert f"could not delete run {RUN_ID}'s test pods" in err
+    assert "the rest of the run stays until they go" in err
     assert f"retry with: dokimi cleanup {RUN_ID} --namespace dokimi-iperf2" in err
+    # Its owner, and so a forced run's claim, stays while a test pod may still be sending.
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+
+
+def test_the_retry_line_repeats_the_flags_given(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+    cluster.store.fail_deleting = True
+
+    main(["cleanup", RUN_ID, "--prometheus", "--force"])
+
+    assert (
+        f"retry with: dokimi cleanup {RUN_ID} --namespace dokimi-iperf2 --prometheus --force"
+        in capsys.readouterr().err
+    )
+
+
+def holding(fake: FakeCluster, run_id: str) -> None:
+    """Mark *run_id*'s owner as holding the cluster for the next half hour."""
+    owner = fake.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(run_id)))
+    expires = datetime.now(UTC) + timedelta(minutes=30)
+    owner["metadata"]["annotations"] = {
+        CLAIMED_AT_ANNOTATION: "2026-01-01T10:00:00Z",
+        CLAIM_EXPIRES_AT_ANNOTATION: expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    fake.store.replace(CONFIG_MAP, "dokimi-iperf2", owner)
+
+
+def test_cleanup_by_age_skips_a_run_that_holds_the_cluster_and_counts_it(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_objects(cluster)
+    holding(cluster, RUN_ID)
+
+    assert main(["cleanup", "--older-than", "24h"]) == ExitCode.PASS
+
+    captured = capsys.readouterr()
+    assert "still holds the cluster" in captured.err
+    assert "skipped 1 of 1 run(s), which can't be removed now" in captured.out
+    assert cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+
+
+def test_cleanup_by_age_goes_on_after_a_run_it_could_not_reach(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = "20251231-100000-bbbbbb"
+    run_objects(cluster)
+    run_objects(cluster, other)
+    from dokimi.cleanup import clean_up_run as real  # noqa: PLC0415
+
+    def times_out_on_the_first(resources: Any, run_id: RunId, *args: Any, **kwargs: Any) -> Any:
+        if str(run_id) == other:
+            raise ClusterError("reading ConfigMap: timed out")
+        return real(resources, run_id, *args, **kwargs)
+
+    monkeypatch.setattr(commands, "clean_up_run", times_out_on_the_first)
+
+    assert main(["cleanup", "--older-than", "24h"]) == ExitCode.INTERNAL
+
+    assert f"run {other}: could not remove it" in capsys.readouterr().err
+    assert not cluster.store.exists(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
 
 
 def test_cleanup_dry_run_removes_nothing(
@@ -1519,8 +1583,13 @@ def test_cleanup_takes_a_run_id_or_an_age(no_cluster: None, arguments: list[str]
 
 @pytest.mark.parametrize(
     "arguments",
-    [["--older-than", "24h", "--force"], ["--older-than", "a day"], ["not-a-run-id"]],
-    ids=["force by age", "malformed age", "malformed run id"],
+    [
+        ["--older-than", "24h", "--force"],
+        ["--older-than", "a day"],
+        ["--older-than", "30000000h"],
+        ["not-a-run-id"],
+    ],
+    ids=["force by age", "malformed age", "age before any run", "malformed run id"],
 )
 def test_a_cleanup_it_cant_carry_out_is_a_config_error(
     no_cluster: None, arguments: list[str]
@@ -2072,6 +2141,47 @@ def test_a_run_that_keeps_its_evidence_still_removes_its_node_exporter(
     )
 
 
+def test_a_run_that_stopped_in_its_preflight_keeps_nothing(
+    job_cluster: FakeCluster, probe: FakeProbe
+) -> None:
+    # Its probe pods always go, and its diagnostics.json reaches the submitter with its log.
+    probe.result = ProbeResult(ProbeCheck.CONNECTIVITY, "no UDP arrived")
+
+    assert main(EXECUTE) == ExitCode.PREFLIGHT_FAILURE
+
+    annotations = owner_annotations(job_cluster)
+    assert FINISHED_AT_ANNOTATION in annotations
+    assert RETAINED_ANNOTATION not in annotations
+
+
+def test_a_preflight_answers_0_or_4_whatever_the_snapshot_found(
+    job_cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("a bug in phase 10")
+
+    monkeypatch.setattr(commands, "capture", broken)
+
+    assert main([*EXECUTE, "--preflight-only"]) == ExitCode.PASS
+    assert "could not record the run's diagnostics" in capsys.readouterr().err
+
+
+def test_an_owner_that_is_no_longer_the_runs_is_reported_not_raised(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recorded(robot, holds=True)
+
+    def relabelled() -> None:
+        owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
+        owner["metadata"]["labels"] = {}
+        job_cluster.store.replace(CONFIG_MAP, "dokimi-iperf2", owner)
+
+    robot.on_run = relabelled
+
+    assert main(EXECUTE) == ExitCode.PASS
+    assert f"could not mark run {RUN_ID} finished" in capsys.readouterr().err
+
+
 def test_a_node_exporter_left_by_a_crashed_run_is_named_with_its_cleanup(
     job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2090,6 +2200,7 @@ def test_a_node_exporter_left_by_a_crashed_run_is_named_with_its_cleanup(
     main(EXECUTE)
 
     assert (
-        f"was left behind by run {crashed}, and this run uses it. Remove what that run left "
-        f"with: dokimi cleanup {crashed} --namespace dokimi-iperf2" in capsys.readouterr().err
+        f"was left behind by run {crashed}, and this run uses it. Once this run has ended, "
+        f"remove what that run left with: dokimi cleanup {crashed} --namespace dokimi-iperf2"
+        in capsys.readouterr().err
     )

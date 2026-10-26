@@ -25,9 +25,8 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from dokimi.cleanup.retention import Retention
 from dokimi.cluster_name import CLUSTER_ENV_VAR
 from dokimi.k8s.deadlines import job_budget_for
 from dokimi.k8s.identity import ownership_labels
@@ -36,6 +35,10 @@ from dokimi.model import TestDefinition
 from dokimi.run_identity import RunId
 from dokimi.run_images import job_environment
 from dokimi.testtypes.interface import WorkloadImage
+
+if TYPE_CHECKING:
+    # Only a type here: the cleanup package sits above this module, and imports it.
+    from dokimi.cleanup.retention import Retention
 
 __all__ = [
     "DEFINITION_MOUNT_PATH",
@@ -94,7 +97,7 @@ def render_manifests(
     cluster: str,
     service_account: str | None = None,
     preflight_only: bool = False,
-    retention: Retention = Retention.ON_FAILURE,
+    retention: Retention | None = None,
 ) -> list[dict[str, Any]]:
     """Render the objects a submission creates, in the order they must be created.
 
@@ -102,7 +105,7 @@ def render_manifests(
     submission and handed to the Job in its environment (ADR-04-08), like *cluster*, the
     name the operator gave the cluster (ADR-02-07). *preflight_only* is ``dokimi preflight``:
     the same objects, and a Job that stops after phase 4. *retention* says when the run
-    keeps its evidence.
+    keeps its evidence; without it, the Job's own default applies.
     """
     owner = _owner_manifest(run_id, namespace)
     owner_reference = _owner_reference(owner)
@@ -199,7 +202,7 @@ def _job_manifest(
     service_account: str | None,
     owner_reference: dict[str, Any],
     preflight_only: bool = False,
-    retention: Retention = Retention.ON_FAILURE,
+    retention: Retention | None = None,
 ) -> dict[str, Any]:
     labels = ownership_labels(run_id, RUN_COMPONENT)
     definition_path = f"{DEFINITION_MOUNT_PATH}/{definition_file_name(source_suffix)}"
@@ -228,8 +231,7 @@ def _job_manifest(
                     namespace,
                     "--deadline-seconds",
                     str(deadline),
-                    "--retain",
-                    retention.value,
+                    *([] if retention is None else ["--retain", retention.value]),
                     *(["--preflight-only"] if preflight_only else []),
                 ],
                 # The images the run deploys and the cluster's name, resolved on the

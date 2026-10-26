@@ -24,6 +24,7 @@ from dokimi.k8s.resources import (
     Kind,
     KubernetesResources,
     NotFoundError,
+    bounded_api_client,
 )
 
 _VERBS = (
@@ -117,3 +118,15 @@ def test_every_call_the_adapter_makes_has_a_request_timeout(
     adapter.delete(CONFIG_MAP, "ns", "x", uid="u")
 
     assert timeouts == [REQUEST_TIMEOUT_SECONDS] * 6
+
+
+def test_a_call_that_hangs_is_not_read_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    # urllib3 retries a timed-out read three times by default: four timeouts, not one.
+    from kubernetes import client
+
+    monkeypatch.setattr(client.Configuration, "_default", client.Configuration())
+
+    retries = bounded_api_client().configuration.retries
+
+    assert retries.read == 0
+    assert retries.total == 3

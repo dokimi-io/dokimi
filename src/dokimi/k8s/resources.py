@@ -42,6 +42,7 @@ __all__ = [
     "Manifest",
     "NotFoundError",
     "ResourceClient",
+    "bounded_api_client",
 ]
 
 Manifest = dict[str, Any]
@@ -50,6 +51,21 @@ Manifest = dict[str, Any]
 #: a call that hangs would hold that bound open, or a pooled connection cleanup then waits
 #: on. A timed-out call is a :class:`ClusterError` like any other failed one.
 REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+def bounded_api_client() -> Any:
+    """An API client for the loaded credentials, whose calls stay within their timeout.
+
+    urllib3 retries a read that timed out three times by default, which would make a call
+    that hangs take four timeouts. A connection that fails is still retried: that is quick,
+    and usually a blip.
+    """
+    from kubernetes import client
+    from urllib3.util.retry import Retry
+
+    configuration = client.Configuration.get_default_copy()
+    configuration.retries = Retry(total=3, read=0)
+    return client.ApiClient(configuration)
 
 
 @dataclass(frozen=True)
@@ -160,7 +176,7 @@ class KubernetesResources:
                     f"no usable cluster credentials: {error}. Set KUBECONFIG, or run "
                     "inside the cluster."
                 ) from error
-        return cls()
+        return cls(bounded_api_client())
 
     def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
         method = self._method(kind, f"create_namespaced_{kind.method_name}")
