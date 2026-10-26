@@ -826,7 +826,7 @@ kubeconfig context, not from anything in the cluster. You give it, and there is 
 | Run override | `--cluster lab-fra-1` | one run |
 | Installation override | `DOKIMI_CLUSTER=lab-fra-1`, on the machine that submits | one installation |
 
-Without either, `submit` refuses before creating anything, a dry run included:
+Without either, `submit` and `preflight` refuse before creating anything, a dry run included:
 
 ```console
 $ dokimi submit test.yaml

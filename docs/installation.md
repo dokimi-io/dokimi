@@ -132,9 +132,9 @@ The second entry is why the same command works unchanged in a CI job that runs i
 cluster it is testing. The first is how to override it there.
 
 These choose the cluster a run goes to. Its **name**, which labels the results, is separate and
-has no default: `--cluster <name>` on `submit`, or `DOKIMI_CLUSTER` for an installation, as in
-`export DOKIMI_CLUSTER=lab-fra-1` next to the credentials a machine submits with. See
-[Naming the cluster](usage.md#naming-the-cluster).
+has no default: `--cluster <name>` on `submit` and `preflight`, or `DOKIMI_CLUSTER` for an
+installation, as in `export DOKIMI_CLUSTER=lab-fra-1` next to the credentials a machine submits
+with. See [Naming the cluster](usage.md#naming-the-cluster).
 
 Submitting needs only namespaced permissions in the run's namespace: **a run never creates
 a namespace** (ADR-05-13). An administrator creates the namespaces once, and after that
