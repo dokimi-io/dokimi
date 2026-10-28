@@ -21,6 +21,7 @@ from dokimi.k8s.ownership import (
     TEST_ID_LABEL,
     OwnershipError,
     RunOwnership,
+    delete_objects,
     delete_run_owned,
     find_run_owned,
     owner_name,
@@ -265,6 +266,23 @@ def test_dependents_are_deleted_before_owners(
     report = delete_run_owned(cluster, RUN)
 
     assert [obj.is_owner for obj in report.deleted] == [False, True]
+
+
+def test_a_chosen_set_of_objects_is_deleted_only_if_it_is_the_runs(
+    cluster: FakeResources, ownership: RunOwnership
+) -> None:
+    # A caller that picks which of a run's objects go, such as some tests' pods, can't
+    # hand in another run's by mistake.
+    ownership.create(POD, pod("ours"), test_id="pair-002")
+    cluster.put(POD, NAMESPACE, pod("theirs", labels=ownership_labels(OTHER_RUN)))
+    objects = find_run_owned(cluster, RUN, kinds=(POD,)) + find_run_owned(
+        cluster, OTHER_RUN, kinds=(POD,)
+    )
+
+    report = delete_objects(cluster, RUN, objects)
+
+    assert [(obj.name, obj.test_id) for obj in report.deleted] == [("ours", "pair-002")]
+    assert cluster.exists(POD, NAMESPACE, "theirs")
 
 
 def test_a_same_named_replacement_is_not_deleted(

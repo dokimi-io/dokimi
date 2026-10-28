@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dokimi.k8s.cluster import ClusterClient, ClusterError
 from dokimi.k8s.identity import (
@@ -43,6 +43,10 @@ from dokimi.k8s.resources import CONFIG_MAP, JOB
 from dokimi.model import TestDefinition
 from dokimi.run_identity import RunId
 from dokimi.testtypes.interface import WorkloadImage
+
+if TYPE_CHECKING:
+    # Only a type here: the cleanup package sits above this module.
+    from dokimi.cleanup.retention import Retention
 
 __all__ = [
     "CONTAINER_NAME",
@@ -109,6 +113,7 @@ def plan_submission(
     namespace: str | None = None,
     service_account: str | None = None,
     preflight_only: bool = False,
+    retention: Retention | None = None,
 ) -> Submission:
     """Render everything a run needs, without contacting anything.
 
@@ -133,6 +138,7 @@ def plan_submission(
         cluster=cluster,
         service_account=service_account,
         preflight_only=preflight_only,
+        retention=retention,
     )
     return Submission(
         run_id=resolved_run_id,
@@ -280,8 +286,9 @@ def _await_pod(
         if pod is None and not seen_job:
             if find_job(cluster, namespace, run_id) is None:
                 raise RunNotFound(
-                    f"no run {run_id!r} in namespace {namespace!r}. It may have finished "
-                    "and been cleaned up, or it may be in another namespace."
+                    f"no run {run_id!r} in namespace {namespace!r}. A run's Job is removed "
+                    "once its artifacts are fetched, or an hour after it ended, so it may be "
+                    "gone already, or it may be in another namespace."
                 )
             seen_job = True
         if clock() >= deadline:

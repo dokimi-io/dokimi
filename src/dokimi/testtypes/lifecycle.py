@@ -27,11 +27,11 @@ conflict, and settling it either way is a change to :data:`_IMAGE_PULL_REASONS`.
 
 from __future__ import annotations
 
-import enum
 import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.k8s.deadlines import DEFAULT_STARTUP_SECONDS, DeadlineBudget, bound_pod
 from dokimi.k8s.resources import POD, Manifest, NotFoundError, ResourceClient
 from dokimi.testtypes.interface import DeployedWorkload, Role, WorkloadSpec
@@ -45,7 +45,6 @@ __all__ = [
     "IMAGE_PULL_ATTEMPTS",
     "Completes",
     "CompletionTimeoutError",
-    "ErrorCategory",
     "NotReadyError",
     "ReadinessGateError",
     "Starts",
@@ -96,17 +95,6 @@ _PULL_FAILED_REASONS = frozenset({"ErrImagePull", "RegistryUnavailable"})
 
 #: The reasons no retry can fix: a malformed reference, or a pull the pod forbids.
 _UNPULLABLE_REASONS = frozenset({"InvalidImageName", "ErrImageNeverPull"})
-
-
-class ErrorCategory(enum.Enum):
-    """The two of ADR-05-05's error categories the readiness gate can produce.
-
-    The whole taxonomy, and how it maps onto exit codes, is M1-16's; these are its values,
-    spelled as ADR-05-05 spells them.
-    """
-
-    SCHEDULING = "scheduling"
-    IMAGE_PULL = "image_pull"
 
 
 class Starts(Protocol):
@@ -165,9 +153,13 @@ class NotReadyError(RuntimeError):
 class WorkloadLostError(RuntimeError):
     """A pod of a started test disappeared before the test finished."""
 
+    category = ErrorCategory.TOOL_EXECUTION
+
 
 class CompletionTimeoutError(RuntimeError):
-    """A started test did not complete within its timeout."""
+    """A started test did not complete within its timeout. Its client may still be sending."""
+
+    category = ErrorCategory.TIMEOUT
 
 
 def pod_is_ready(pod: Manifest) -> bool:

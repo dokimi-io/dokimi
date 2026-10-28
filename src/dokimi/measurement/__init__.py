@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dokimi.error_categories import ErrorCategory
+
 __all__ = [
     "AUTHORITATIVE_DIRECTION",
     "REQUIRED_LABELS",
@@ -100,8 +102,8 @@ _ESCAPES = {"\\\\": "\\", '\\"': '"', "\\n": "\n"}
 class MeasurementError(RuntimeError):
     """The test ran, and its result could not be validly read: an error, not a finding."""
 
-    #: ADR-05-05's machine-readable error category.
-    category = "measurement"
+    #: What a subclass says went wrong. The base class is never raised itself.
+    category: ErrorCategory
 
     def __init__(self, test_id: str, detail: str) -> None:
         self.test_id = test_id
@@ -112,13 +114,13 @@ class MeasurementError(RuntimeError):
 class MetricsMissingError(MeasurementError):
     """An exporter served no completed result for the test."""
 
-    category = "metrics_missing"
+    category = ErrorCategory.METRICS_MISSING
 
 
 class ExporterParseError(MeasurementError):
     """An exporter served something that isn't a result dokimi can read."""
 
-    category = "exporter_parse"
+    category = ErrorCategory.EXPORTER_PARSE
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.k8s.deadlines import DEFAULT_STARTUP_SECONDS, DeadlineBudget
 from dokimi.k8s.ownership import (
     COMPONENT_LABEL,
@@ -32,7 +33,6 @@ from dokimi.testtypes.iperf2 import Iperf2
 from dokimi.testtypes.lifecycle import (
     DEFAULT_READINESS_TIMEOUT_SECONDS,
     CompletionTimeoutError,
-    ErrorCategory,
     ReadinessGateError,
     await_ready,
     deploy,

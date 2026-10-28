@@ -242,8 +242,33 @@ def test_a_test_that_could_not_be_measured_is_tagged_with_the_error(
     assert test.status == "FAIL"
     assert "metrics_missing: the server's exporter served no result" in test.message
     assert {"outcome:error", "error:metrics_missing"} <= set(test.tags)
-    # Its criteria never ran, so there is no phase-8 record, and the Job says so.
-    assert read_validation(artifacts.directory, "pair-001") is None
+    # Its criteria never ran, and it is still on record as an error, with the same
+    # category as its tag: that is what the run's exit code is decided from.
+    document = read_validation(artifacts.directory, "pair-001")
+    assert document is not None
+    assert document["outcome"] == "error"
+    assert document["error"]["category"] == "metrics_missing"
+    assert document["criteria"] == []
+
+
+def test_an_error_nothing_anticipated_is_still_on_record_as_an_error(
+    tmp_path: Path, run_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(context: execution.RunContext, **arguments: str) -> NetworkTestResult:
+        raise RuntimeError("something nobody planned for")
+
+    monkeypatch.setattr(execution, "run_network_test", fails)
+    artifacts = RunArtifacts(tmp_path, RUN_ID)
+    suite = render_suite(parse_file(EXAMPLES / "worker-01-to-worker-02-udp.yaml"), artifacts)
+
+    test = run_in_process(suite, artifacts.directory).suite.tests[0]
+
+    assert "outcome:error" in test.tags
+    assert not [tag for tag in test.tags if tag.startswith("error:")]
+    document = read_validation(artifacts.directory, "pair-001")
+    assert document is not None
+    assert document["outcome"] == "error"
+    assert document["error"] == {"category": None, "detail": "something nobody planned for"}
 
 
 def test_robot_runs_as_its_own_process_and_rebot_merges_the_report(

@@ -176,7 +176,7 @@ src/dokimi/
     validation/     criteria evaluation
     results/        CSV + JSONL writers
     diagnostics/    post-run snapshot
-    cleanup/        run-scoped teardown
+    cleanup/        phase 11: what a run keeps, and dokimi cleanup
     cli/            local CLI entry point
 robot/              Robot resources and a thin adapter over the core library
 images/             Dockerfiles

@@ -39,6 +39,7 @@ from dokimi.model import (
     Unit,
 )
 from dokimi.testtypes.interface import WorkloadImage
+from dokimi.validation import Outcome
 from tests.fake_cluster import FakeCluster
 
 RUN_ID = "20260101-100000-4f2a9c"
@@ -270,6 +271,19 @@ def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
 def test_every_run_outcome_matches_the_cli_table() -> None:
     # Two modules name ADR-01-08's codes; this is what keeps them the same list.
     assert frozenset(code.value for code in ExitCode if code.value <= 5) == RUN_OUTCOMES
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    [
+        (Outcome.PASS, ExitCode.PASS),
+        (Outcome.FAIL, ExitCode.FAIL),
+        (Outcome.ERROR, ExitCode.ERROR),
+        (None, ExitCode.INTERNAL),
+    ],
+)
+def test_a_completed_runs_outcome_is_its_exit_code(outcome: Outcome | None, code: int) -> None:
+    assert ExitCode.of(outcome) == code
 
 
 @pytest.mark.parametrize("code", sorted(RUN_OUTCOMES))

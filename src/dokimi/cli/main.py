@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import NoReturn
 
 from dokimi import __version__
+from dokimi.cleanup import Retention
 from dokimi.cli.commands import (
     Console,
     attach,
+    clean_up,
     convert,
     execute,
     preflight,
@@ -121,6 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--service-account",
         help="service account for the run's Job, if the cluster needs a specific one",
     )
+    submit_parser.add_argument(
+        "--retain",
+        choices=[retention.value for retention in Retention],
+        default=Retention.ON_FAILURE.value,
+        help="when the run keeps its test pods and record for inspection, for dokimi cleanup "
+        "to remove later: on-failure (the default), always or never",
+    )
     _add_cluster_name_argument(submit_parser)
     _add_cluster_arguments(submit_parser)
     _add_image_argument(submit_parser)
@@ -165,6 +174,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_cluster_arguments(attach_parser)
 
+    cleanup_parser = commands.add_parser(
+        "cleanup",
+        help="remove what a run left in the cluster, or every run older than an age",
+        description=(
+            "Remove everything a run created, found by its labels, without the run's own "
+            "process: its test pods, its node-exporter, its owner and definition, and with "
+            "them its Job. Its Prometheus stays unless --prometheus is given. A run that "
+            "still holds the cluster is refused unless --force is given. Exits 0 when "
+            "nothing is left, 4 when the run still holds the cluster, and 5 when something "
+            "could not be removed."
+        ),
+    )
+    which = cleanup_parser.add_mutually_exclusive_group(required=True)
+    which.add_argument("run_id", metavar="run-id", nargs="?", help="the run to remove")
+    which.add_argument(
+        "--older-than",
+        metavar="AGE",
+        help="remove every run that started more than AGE ago, for example 24h",
+    )
+    cleanup_parser.add_argument(
+        "--prometheus",
+        action="store_true",
+        help="remove the run's Prometheus too, and with it the history it holds",
+    )
+    cleanup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="remove a run that still holds the cluster: only when its Job is gone",
+    )
+    cleanup_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list what would be removed, and remove nothing",
+    )
+    _add_cluster_arguments(cleanup_parser)
+
     image_parser = commands.add_parser(
         "image",
         help="show the images a run would submit and deploy",
@@ -181,6 +226,12 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--namespace", required=True)
     execute_parser.add_argument("--deadline-seconds", type=int, required=True)
     execute_parser.add_argument("--preflight-only", action="store_true")
+    # A default, so that a Job rendered by an older CLI still runs.
+    execute_parser.add_argument(
+        "--retain",
+        choices=[retention.value for retention in Retention],
+        default=Retention.ON_FAILURE.value,
+    )
 
     return parser
 
@@ -304,6 +355,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             kubeconfig=args.kubeconfig,
             context=args.context,
             follow_logs=not args.no_follow,
+            retention=Retention(args.retain),
         )
     if args.command == "preflight":
         return preflight(
@@ -328,6 +380,18 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             context=args.context,
             results_directory=args.results_directory,
         )
+    if args.command == "cleanup":
+        return clean_up(
+            console,
+            run_id=args.run_id,
+            older_than=args.older_than,
+            namespace=args.namespace,
+            prometheus=args.prometheus,
+            force=args.force,
+            dry_run=args.dry_run,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+        )
     if args.command == "image":
         return show_image(console, image_override=args.image_override, images=args.images)
     if args.command == "execute":
@@ -338,6 +402,7 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             namespace=args.namespace,
             deadline_seconds=args.deadline_seconds,
             preflight_only=args.preflight_only,
+            retention=Retention(args.retain),
         )
     raise AssertionError(f"unreachable: argparse accepted {args.command!r}")
 

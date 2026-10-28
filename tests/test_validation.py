@@ -14,18 +14,24 @@ from pathlib import Path
 
 import pytest
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.measurement import Measurement
 from dokimi.model import Comparison, Criterion, Metric, Statistic, Unit
 from dokimi.validation import (
     MAX_LISTED,
     ExpectedPair,
     Outcome,
+    TestError,
+    TestOutcome,
     evaluate,
     format_value,
     outcome_of,
     phrase,
     promql_equivalent,
+    read_outcome,
     read_validation,
+    run_outcome,
+    worst,
     write_validation,
 )
 
@@ -440,6 +446,7 @@ def test_the_validation_record_round_trips_next_to_the_output(tmp_path: Path) ->
     assert document == json.loads(path.read_text(encoding="utf-8"))
     assert document["schema"] == 1
     assert document["outcome"] == "fail"
+    assert document["error"] is None
     (only,) = document["criteria"]
     assert only["phrase"] == "Throughput Should Be At Least 950 megabits per second"
     assert (only["metric"], only["comparison"], only["threshold"], only["unit"]) == (
@@ -464,3 +471,76 @@ def test_the_validation_record_round_trips_next_to_the_output(tmp_path: Path) ->
 
 def test_no_record_is_none(tmp_path: Path) -> None:
     assert read_validation(tmp_path, "pair-001") is None
+
+
+# -- what a test, and the run, came to ---------------------------------------------------
+
+
+def test_a_test_that_ended_before_its_criteria_is_recorded_as_an_error(tmp_path: Path) -> None:
+    passing = evaluate(
+        criterion(threshold="1"), {"pair-001": measured(throughput_bits_per_second=1e9)}, [PAIR]
+    )
+    error = TestError(ErrorCategory.TIMEOUT, "pair-001 did not complete within 75s")
+
+    # Whatever was evaluated before it, the test did not get to the end: an error.
+    write_validation("pair-001", [passing], tmp_path, error=error)
+
+    test = read_outcome(tmp_path, "pair-001")
+    assert test.outcome is Outcome.ERROR
+    assert test.error == error
+    assert test.document is not None
+    assert test.document["error"] == {
+        "category": "timeout",
+        "detail": "pair-001 did not complete within 75s",
+    }
+
+
+def test_a_test_that_recorded_nothing_is_an_error(tmp_path: Path) -> None:
+    test = read_outcome(tmp_path, "pair-001")
+
+    assert test.outcome is Outcome.ERROR
+    assert not test.recorded
+    assert "ended before its outcome was recorded" in test.problem
+
+
+@pytest.mark.parametrize(
+    "content", ["{not json", '{"outcome": "maybe"}'], ids=["unreadable", "unknown outcome"]
+)
+def test_a_record_that_cant_be_read_is_an_error(tmp_path: Path, content: str) -> None:
+    (tmp_path / "pair-001.validation.json").write_text(content, encoding="utf-8")
+
+    test = read_outcome(tmp_path, "pair-001")
+
+    assert test.outcome is Outcome.ERROR
+    assert not test.recorded
+
+
+def test_an_unknown_error_category_is_still_an_error_with_none(tmp_path: Path) -> None:
+    write_validation("pair-001", [], tmp_path, error=TestError(None, "surprise"))
+
+    test = read_outcome(tmp_path, "pair-001")
+
+    assert test.outcome is Outcome.ERROR
+    assert test.error == TestError(None, "surprise")
+
+
+def outcome(value: Outcome) -> TestOutcome:
+    return TestOutcome("pair-001", value, {"outcome": value.value})
+
+
+def test_the_runs_outcome_is_its_worst_test() -> None:
+    assert run_outcome([outcome(Outcome.PASS)], anomaly=False) is Outcome.PASS
+    assert run_outcome([outcome(Outcome.PASS), outcome(Outcome.FAIL)], anomaly=False) is (
+        Outcome.FAIL
+    )
+    # An error outranks a fail: part of the run was not validly measured.
+    assert run_outcome([outcome(Outcome.ERROR), outcome(Outcome.FAIL)], anomaly=False) is (
+        Outcome.ERROR
+    )
+
+
+def test_an_anomaly_or_no_test_at_all_makes_the_run_an_error() -> None:
+    assert run_outcome([outcome(Outcome.PASS)], anomaly=True) is Outcome.ERROR
+    assert run_outcome([outcome(Outcome.FAIL)], anomaly=True) is Outcome.ERROR
+    assert run_outcome([], anomaly=False) is Outcome.ERROR
+    assert worst([]) is Outcome.ERROR

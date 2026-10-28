@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from dokimi.error_categories import ErrorCategory
 from dokimi.execution import (
     PairExecution,
     PairMismatchError,
@@ -41,7 +42,6 @@ from dokimi.testtypes.interface import Role, WorkloadImage
 from dokimi.testtypes.iperf2 import CONTAINER_NAME, Iperf2, UnexpectedTargetError
 from dokimi.testtypes.lifecycle import (
     CompletionTimeoutError,
-    ErrorCategory,
     ReadinessGateError,
     WorkloadLostError,
 )

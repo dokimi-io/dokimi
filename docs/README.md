@@ -24,8 +24,7 @@ a subset of it.
 
 ## Status
 
-Milestone-01 is in progress. The CLI submits a run and follows it, and the in-cluster
-orchestrator parses the definition and plans the run against the cluster's real nodes —
-but preflight, execution, measurement, validation, results and cleanup are still being
-built, so a submitted run currently exits `5` rather than producing a verdict. [Usage](usage.md#what-a-run-does-today)
-says exactly how far a run gets.
+Milestone-01 is in progress. A run goes from submission to its verdict: it checks the
+cluster, runs the test, measures it, evaluates the pass criteria, records where everything
+ran, cleans up, and exits with `0`, `1` or `2`. The CSV and JSONL result files are still
+being built. [Usage](usage.md#what-a-run-does-today) says exactly what a run does.

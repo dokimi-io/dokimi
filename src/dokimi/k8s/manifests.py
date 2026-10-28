@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dokimi.cluster_name import CLUSTER_ENV_VAR
 from dokimi.k8s.deadlines import job_budget_for
@@ -36,8 +36,13 @@ from dokimi.run_identity import RunId
 from dokimi.run_images import job_environment
 from dokimi.testtypes.interface import WorkloadImage
 
+if TYPE_CHECKING:
+    # Only a type here: the cleanup package sits above this module, and imports it.
+    from dokimi.cleanup.retention import Retention
+
 __all__ = [
     "DEFINITION_MOUNT_PATH",
+    "JOB_TTL_SECONDS",
     "OWNER_COMPONENT",
     "RUN_COMPONENT",
     "bind_owner",
@@ -51,6 +56,10 @@ __all__ = [
 DEFINITION_MOUNT_PATH = "/etc/dokimi"
 
 RUN_COMPONENT = "orchestrator"
+
+#: How long a finished run's Job, and with it the artifacts in its log, stays for a
+#: submitter to fetch: ``attach`` can fetch them once, within this hour.
+JOB_TTL_SECONDS = 3600
 
 
 def resource_name(run_id: str, suffix: str = "") -> str:
@@ -88,13 +97,15 @@ def render_manifests(
     cluster: str,
     service_account: str | None = None,
     preflight_only: bool = False,
+    retention: Retention | None = None,
 ) -> list[dict[str, Any]]:
     """Render the objects a submission creates, in the order they must be created.
 
     *image* is the orchestrator's own; *images* are the ones the run deploys, resolved at
     submission and handed to the Job in its environment (ADR-04-08), like *cluster*, the
     name the operator gave the cluster (ADR-02-07). *preflight_only* is ``dokimi preflight``:
-    the same objects, and a Job that stops after phase 4.
+    the same objects, and a Job that stops after phase 4. *retention* says when the run
+    keeps its evidence; without it, the Job's own default applies.
     """
     owner = _owner_manifest(run_id, namespace)
     owner_reference = _owner_reference(owner)
@@ -118,6 +129,7 @@ def render_manifests(
             service_account=service_account,
             owner_reference=owner_reference,
             preflight_only=preflight_only,
+            retention=retention,
         ),
     ]
 
@@ -190,6 +202,7 @@ def _job_manifest(
     service_account: str | None,
     owner_reference: dict[str, Any],
     preflight_only: bool = False,
+    retention: Retention | None = None,
 ) -> dict[str, Any]:
     labels = ownership_labels(run_id, RUN_COMPONENT)
     definition_path = f"{DEFINITION_MOUNT_PATH}/{definition_file_name(source_suffix)}"
@@ -218,6 +231,7 @@ def _job_manifest(
                     namespace,
                     "--deadline-seconds",
                     str(deadline),
+                    *([] if retention is None else ["--retain", retention.value]),
                     *(["--preflight-only"] if preflight_only else []),
                 ],
                 # The images the run deploys and the cluster's name, resolved on the
@@ -265,6 +279,9 @@ def _job_manifest(
             # ADR-01-08: the exit code is the verdict, so the controller must never retry.
             "backoffLimit": 0,
             "activeDeadlineSeconds": deadline,
+            # Its artifacts can be fetched until then. Whoever fetches them deletes the
+            # Job sooner; this removes one that nobody fetched.
+            "ttlSecondsAfterFinished": JOB_TTL_SECONDS,
             "template": {"metadata": {"labels": labels}, "spec": pod_spec},
         },
     }

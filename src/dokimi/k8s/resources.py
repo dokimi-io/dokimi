@@ -25,6 +25,7 @@ from dokimi.k8s.cluster import ClusterError
 
 __all__ = [
     "CONFIG_MAP",
+    "REQUEST_TIMEOUT_SECONDS",
     "DAEMON_SET",
     "DEPLOYMENT",
     "JOB",
@@ -41,9 +42,30 @@ __all__ = [
     "Manifest",
     "NotFoundError",
     "ResourceClient",
+    "bounded_api_client",
 ]
 
 Manifest = dict[str, Any]
+
+#: How long any one call to the API server may take. Every phase of a run is bounded, and
+#: a call that hangs would hold that bound open, or a pooled connection cleanup then waits
+#: on. A timed-out call is a :class:`ClusterError` like any other failed one.
+REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+def bounded_api_client() -> Any:
+    """An API client for the loaded credentials, whose calls stay within their timeout.
+
+    urllib3 retries a read that timed out three times by default, which would make a call
+    that hangs take four timeouts. A connection that fails is still retried: that is quick,
+    and usually a blip.
+    """
+    from kubernetes import client
+    from urllib3.util.retry import Retry
+
+    configuration = client.Configuration.get_default_copy()
+    configuration.retries = Retry(total=3, read=0)
+    return client.ApiClient(configuration)
 
 
 @dataclass(frozen=True)
@@ -154,7 +176,7 @@ class KubernetesResources:
                     f"no usable cluster credentials: {error}. Set KUBECONFIG, or run "
                     "inside the cluster."
                 ) from error
-        return cls()
+        return cls(bounded_api_client())
 
     def create(self, kind: Kind, namespace: str, body: Manifest) -> Manifest:
         method = self._method(kind, f"create_namespaced_{kind.method_name}")
@@ -210,7 +232,7 @@ class KubernetesResources:
         from urllib3.exceptions import HTTPError as TransportError
 
         try:
-            result = method(**kwargs)
+            result = method(**kwargs, _request_timeout=REQUEST_TIMEOUT_SECONDS)
         except TransportError as error:
             # Not an ApiException, and easy to miss: untranslated, it escapes as a
             # traceback that Python exits 1 with, `fail` in ADR-01-08's table.

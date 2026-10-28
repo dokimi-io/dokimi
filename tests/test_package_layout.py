@@ -9,8 +9,12 @@ import pytest
 CORE_MODULES = [
     "dokimi",
     "dokimi.cleanup",
+    "dokimi.cleanup.retention",
+    "dokimi.cleanup.standalone",
+    "dokimi.cleanup.test_pods",
     "dokimi.cli",
     "dokimi.diagnostics",
+    "dokimi.error_categories",
     "dokimi.formats",
     "dokimi.k8s",
     "dokimi.k8s.cluster",

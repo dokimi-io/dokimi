@@ -183,8 +183,8 @@ implementation detail.
 | Code | Meaning |
 | --- | --- |
 | `0` | run completed, overall pass |
-| `1` | run completed, at least one non-optional pair failed |
-| `2` | at least one non-optional pair errored, or a post-run anomaly |
+| `1` | run completed, at least one test failed a criterion |
+| `2` | at least one test could not be validly measured, or a post-run anomaly |
 | `3` | invalid request, detected before anything was created |
 | `4` | run-level preflight failure |
 | `5` | internal or unexpected orchestrator error |
@@ -455,12 +455,12 @@ Further rules:
   metrics.
 - **Partial runs report per-pair outcomes.** With a large matrix, "the run failed" is not a useful
   result.
-- **No automatic retries by default.** Opt in per run with `retry: true`, allowing up to 3 attempts
+- **Planned, not built yet: retries.** No automatic retries by default. Opt in per run with `retry: true`, allowing up to 3 attempts
   for a pair. Retries apply **only** to `error` — a pair that comes back `fail` is never retried,
   because a fail is a legitimate finding about the network and re-rolling it would hide a real
   intermittent fault. The number of attempts taken is recorded alongside the result.
-- **A run with any `error` or `fail` pair cannot be reported as an overall pass**, unless those
-  pairs are explicitly marked `optional: true` at authoring time. `optional` can be set per pair or
+- **A run with any `error` or `fail` pair cannot be reported as an overall pass.** Planned, not
+  built yet: pairs explicitly marked `optional: true` at authoring time won't gate it. `optional` can be set per pair or
   at broader scopes, changes nothing about what category a pair gets, and only controls whether
   that category gates the overall verdict. There is no cap on how many pairs may be marked optional.
 - **Cleanup failures are reported separately and never mask the test outcome.**
@@ -476,8 +476,9 @@ Further rules:
   duration plus a margin, so an orphaned test stops on its own. Labels make cleanup *possible*;
   deadlines make it *unnecessary*. The margin must cover the direct read and the scrape-confirmation
   window, or the deadline will kill pods during a wait it was never told about.
-- **Cleanup is independently invocable** — by `run_id`, or for all runs older than a given age —
-  without the original process or its state. This is what makes crash recovery possible.
+- **Cleanup is independently invocable** — `dokimi cleanup <run-id>`, or `dokimi cleanup
+  --older-than <age>` for every run older than that — without the original process or its state.
+  This is what makes crash recovery possible.
 - **Namespaces are scoped per test type**, not per run: all `iperf2` runs share one namespace, all
   IRTT runs another. Overridable in configuration. This isolates unrelated test types without the
   cost of cluster-level namespace creation permission and slow per-run namespace deletion.
@@ -485,17 +486,20 @@ Further rules:
   the cluster, regardless of test type or namespace — two concurrent runs would contend for the same
   nodes' network capacity. The Job claims the cluster as the first step of phase 4, by writing
   a claim onto its run's owner, and refuses to start (exit `4`, `run_already_active`) if another
-  owner in any namespace holds a claim that is neither finished nor expired. A run removes its
-  test pods, waits until they are gone, and marks itself finished before any other cleanup, and a
+  owner in any namespace holds a claim that is neither finished nor expired. A run removes every
+  test pod that may still be sending, waits until they are gone, and marks itself finished, and a
   crashed run's claim expires with its Job's deadline, so neither retained evidence nor a crash
   blocks later runs indefinitely, and no test still sends once the cluster is free. Two submissions racing to start
   are serialised by a `Lease` named `dokimi-run-lock` in the `dokimi` namespace, which
   `deploy/rbac.yaml` creates; exactly one of them starts.
 - **Cleanup runs automatically on success and retains on failure**, so evidence survives for
-  inspection; flags force either. It runs **after** the post-run diagnostic snapshot, which needs
-  the run's pods and placement to still exist, and is bounded by its own timeout so a stuck snapshot
-  cannot delay cleanup indefinitely. Until M1-16 builds it, the test pods are the exception: they are removed
-  on failure too, before the claim is released, and the run's report is what it keeps.
+  inspection; `submit --retain always` or `never` forces either. A run that didn't pass keeps
+  its owner, its definition and the pods of each test that was measured or never started, until
+  `dokimi cleanup`; a test pod that may still be sending is never kept, and a run that stopped
+  in its preflight keeps nothing. Cleanup runs **after** the
+  post-run diagnostic snapshot, which needs the run's pods and placement to still exist, and the
+  snapshot is bounded by its own timeout so it cannot delay cleanup indefinitely. The run's Job
+  goes once `submit` or `attach` has fetched its reports, or an hour after the run ended.
 
 ### Preflight and readiness
 
@@ -525,7 +529,7 @@ which pairs were down (consolidated across the whole matrix rather than read one
 whether the namespace and Prometheus were still reachable, and the per-pair connectivity findings
 folded in rather than left for the reader to query separately. It is kept on every run, not only
 failing ones, so "which node was pod X on" is answerable after the fact. An anomaly found here
-triggers the same retain-on-failure treatment as a failed run.
+triggers the same retain-on-failure treatment as a failed run, and makes the run exit `2`.
 
 ## Interfaces
 

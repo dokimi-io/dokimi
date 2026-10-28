@@ -23,6 +23,8 @@ what is Robot's: argument passing, the log, and how a failure reads in ``log.htm
 * Each test is tagged with its outcome as it is known so far: ``outcome:pass``,
   ``outcome:fail`` or ``outcome:error``, and for an error ``error:<category>``. The tags
   come from the same classification as the file, never from Robot's status.
+* A test that ends before its criteria, because ``Run Network Test`` raised, is recorded
+  too: its ``<test-id>.validation.json`` says ``error``, with the exception's category.
 """
 
 from __future__ import annotations
@@ -34,13 +36,21 @@ from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 
 from dokimi import __version__, execution
+from dokimi.error_categories import category_of
 from dokimi.formats.robot_suite import (
     RUN_NETWORK_TEST,
     criterion_from_keyword,
     criterion_keyword_names,
 )
 from dokimi.measurement import Measurement, write_measurement
-from dokimi.validation import Evaluation, ExpectedPair, Outcome, evaluate, write_validation
+from dokimi.validation import (
+    Evaluation,
+    ExpectedPair,
+    Outcome,
+    TestError,
+    evaluate,
+    write_validation,
+)
 
 _RUN_NETWORK_TEST_ARGUMENTS = ["type", "protocol", "source", "target", "bandwidth", "duration"]
 
@@ -126,7 +136,10 @@ class DokimiLibrary:
             )
         except Exception as error:
             # Nothing was validly measured, whatever the reason: an error, not a finding.
-            self._tag(context.test_id, Outcome.ERROR, (_category(error),))
+            # Recorded with its category, so the run's verdict sees it as the tags do.
+            category = category_of(error)
+            self._record(context.test_id, error=TestError(category, str(error)))
+            self._tag(context.test_id, Outcome.ERROR, () if category is None else (category,))
             raise
         for role, pod in sorted(result.pods.items(), key=lambda item: item[0].value):
             logger.info(f"{role.value} pod: {pod}")
@@ -171,11 +184,11 @@ class DokimiLibrary:
             raise CriterionFailed(evaluation.message())
         logger.info(evaluation.message())
 
-    def _record(self, test_id: str) -> None:
+    def _record(self, test_id: str, *, error: TestError | None = None) -> None:
         """Write the test's criteria so far next to its output, where the Job reads them."""
         directory = _output_directory()
         if directory is not None:
-            write_validation(test_id, self.evaluations.get(test_id, []), directory)
+            write_validation(test_id, self.evaluations.get(test_id, []), directory, error=error)
 
     def _tag(self, test_id: str, outcome: Outcome, categories: tuple[str, ...] = ()) -> None:
         """Tag the running test with its worst outcome so far, and an error's categories."""
@@ -198,13 +211,6 @@ def _output_directory() -> Path | None:
     if not output_file or str(output_file).upper() == "NONE":
         return None
     return Path(str(output_file)).parent
-
-
-def _category(error: Exception) -> str:
-    """An exception's error category, as the library spells it, if it has one."""
-    category = getattr(error, "category", None)
-    value = getattr(category, "value", category)
-    return value if isinstance(value, str) else ""
 
 
 def _named(args: list[Any], kwargs: dict[str, Any]) -> dict[str, str]:

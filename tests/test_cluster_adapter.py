@@ -9,7 +9,8 @@ user who only needed the namespace to exist. A run no longer creates namespaces 
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from urllib3.exceptions import MaxRetryError, ProtocolError
 
 from dokimi.k8s._kubernetes import KubernetesCluster
 from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.resources import REQUEST_TIMEOUT_SECONDS
 
 NAMESPACE = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "ns"}}
 
@@ -35,7 +37,7 @@ class CoreApi:
         if name in self.failures:
             raise self.failures[name]
 
-    def read_namespace(self, name: str) -> dict[str, Any]:
+    def read_namespace(self, name: str, **_: Any) -> dict[str, Any]:
         self._call("read_namespace")
         return {}
 
@@ -47,7 +49,7 @@ class CoreApi:
         self._call("list_namespaced_pod")
         return client.V1PodList(items=[])
 
-    def list_node(self) -> Any:
+    def list_node(self, **_: Any) -> Any:
         self._call("list_node")
         return client.V1NodeList(items=[])
 
@@ -162,3 +164,46 @@ def test_an_unreachable_api_server_while_listing_nodes_is_a_cluster_error() -> N
 
     with pytest.raises(ClusterError, match="listing nodes: lost contact"):
         adapter(core).list_nodes()
+
+
+# -- request timeouts -------------------------------------------------------------
+
+
+class RecordingApi:
+    """Answers every method with an empty result, and records the timeout it was given."""
+
+    def __init__(self) -> None:
+        self.timeouts: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        def method(*args: Any, **kwargs: Any) -> Any:
+            self.timeouts[name] = kwargs.get("_request_timeout")
+            if name.startswith("list_"):
+                return SimpleNamespace(items=[])
+            if name == "read_namespaced_pod_log":
+                return ChunkedStream(b"done\n")
+            return {}
+
+        return method
+
+
+def test_every_call_is_bounded_by_a_request_timeout() -> None:
+    # A call that hangs would hold a run's phase open, however well the phase is bounded.
+    api = RecordingApi()
+    cluster = KubernetesCluster(client.ApiClient())
+    cluster._core = api
+    cluster._batch = api
+
+    cluster.create({"kind": "ConfigMap", "metadata": {"name": "a", "namespace": "ns"}})
+    cluster.create({"kind": "Job", "metadata": {"name": "a", "namespace": "ns"}})
+    cluster.find_job("ns", "a=b")
+    cluster.find_pod("ns", "a=b")
+    cluster.read_pod("ns", "pod")
+    cluster.list_nodes()
+    list(cluster.stream_logs("ns", "pod", "orchestrator"))
+
+    streamed = api.timeouts.pop("read_namespaced_pod_log")
+    assert set(api.timeouts.values()) == {REQUEST_TIMEOUT_SECONDS}
+    assert len(api.timeouts) == 6
+    # The log stream bounds its connect, not its read: a run can be quiet for its tests.
+    assert streamed == (REQUEST_TIMEOUT_SECONDS, None)

@@ -150,7 +150,7 @@ def test_a_second_run_is_refused_naming_the_active_one(cluster: FakeResources) -
     assert f"run {FIRST} already active" in message
     assert f"ConfigMap {NAMESPACE}/{owner_name(FIRST)}" in message
     assert "claim expires at" in message
-    assert f"kubectl delete configmap -n {NAMESPACE} {owner_name(FIRST)}" in message
+    assert f"dokimi cleanup {FIRST} --namespace {NAMESPACE} --force" in message
     assert claim_of(owner(cluster, SECOND)).claimed_at is None
 
 
@@ -264,6 +264,17 @@ def test_mark_finished_records_when_the_run_ended(cluster: FakeResources) -> Non
 
     assert FINISHED_AT_ANNOTATION in owner(cluster, FIRST)["metadata"]["annotations"]
     assert not claim_of(owner(cluster, FIRST)).is_active(datetime.now(UTC))
+
+
+def test_a_run_that_keeps_its_evidence_says_why_on_its_owner(cluster: FakeResources) -> None:
+    claim(cluster, FIRST)
+
+    mark_finished(cluster, FIRST, namespace=NAMESPACE, retained="fail")
+
+    finished = claim_of(owner(cluster, FIRST))
+    assert finished.retained == "fail"
+    # Kept evidence never holds the cluster.
+    assert not finished.is_active(datetime.now(UTC))
 
 
 def test_mark_finished_refuses_an_owner_that_is_not_this_runs(cluster: FakeResources) -> None:
