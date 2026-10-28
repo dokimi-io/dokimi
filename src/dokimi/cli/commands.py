@@ -6,6 +6,8 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
+import contextlib
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -55,11 +57,14 @@ from dokimi.k8s.ownership import (
     format_timestamp,
     run_selector,
 )
+from dokimi.k8s.port_forward import Channel, PortRelay
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
-from dokimi.k8s.submission import Submission, follow, plan_submission, submit
+from dokimi.k8s.submission import RunNotFound, Submission, follow, plan_submission, submit
 from dokimi.measurement import Measurement, ScrapeReport, confirm_scrape, read_measurement
+from dokimi.metrics.kept import KeptPrometheus, find_kept_prometheus
 from dokimi.metrics.managed import (
     NODE_EXPORTER_COMPONENT,
+    PROMETHEUS_PORT,
     SCRAPE_INTERVAL_SECONDS,
     ManagedPrometheus,
     MonitoringSelection,
@@ -454,6 +459,77 @@ def _report_cleanup(
             f"  kept: {', '.join(f'{obj.kind}/{obj.name}' for obj in result.kept)}, the run's "
             "Prometheus and its history. Add --prometheus to remove it too"
         )
+
+
+def open_prometheus(
+    console: Console,
+    *,
+    run_id: str,
+    namespace: str | None = None,
+    port: int = 0,
+    kubeconfig: str | None = None,
+    context: str | None = None,
+    connect_to: Callable[..., ClusterClient] | None = None,
+    until: Callable[[PortRelay], None] | None = None,
+) -> int:
+    """Forward a local port to a run's kept Prometheus, until interrupted.
+
+    Its pod is found by the run's labels, in the run's namespace, and every connection to
+    the local port gets a port-forward of its own (:class:`~dokimi.k8s.port_forward.PortRelay`),
+    so no ``kubectl`` is needed. It prints the URL, and when the run started and ended, so
+    a query looks at the window that has the run's series. *port* ``0`` picks a free one.
+
+    A run whose Prometheus was removed, or that never deployed one, says so and exits 3,
+    like a run :func:`attach` can't find. *until* replaces waiting for Ctrl-C, for tests.
+    """
+    resolved_run_id = RunId(validate_run_id(run_id))
+    resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
+    cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
+    kept = find_kept_prometheus(cluster.resources(), resolved_run_id, resolved_namespace)
+    if kept is None:
+        raise RunNotFound(
+            f"run {resolved_run_id} has no Prometheus in {resolved_namespace}: it was removed, "
+            "with dokimi cleanup --prometheus or by hand, or the run never deployed one"
+        )
+    pod = kept.pod
+    if pod is None:
+        raise ClusterError(
+            f"run {resolved_run_id}'s Prometheus in {resolved_namespace} can't be reached: "
+            f"{kept.problem}"
+        )
+
+    def open_channel() -> Channel:
+        return cluster.open_port(resolved_namespace, pod, PROMETHEUS_PORT)
+
+    def refused(error: Exception) -> None:
+        console.warn(f"could not forward a connection: {error}")
+
+    with PortRelay(open_channel, port=port, on_error=refused) as relay:
+        host, local_port = relay.address
+        console.say(f"run {resolved_run_id}'s Prometheus: http://{host}:{local_port}")
+        console.say(f"  the run started {format_timestamp(kept.started_at)}, {_ended(kept)}")
+        console.say(f'  its series carry run_id="{resolved_run_id}"')
+        console.say("  forwarding until you press Ctrl-C")
+        console.flush()
+        threading.Thread(target=relay.serve, name="dokimi-prometheus", daemon=True).start()
+        with contextlib.suppress(KeyboardInterrupt):
+            (until or _wait_for_interrupt)(relay)
+    console.say("stopped forwarding")
+    return ExitCode.PASS
+
+
+def _ended(kept: KeptPrometheus) -> str:
+    """When the run ended, as far as anything still says."""
+    if kept.finished_at is not None:
+        return f"ended {format_timestamp(kept.finished_at)}"
+    if kept.owner_found:
+        return "and has not finished yet"
+    return "and its end isn't recorded any more: query from its start"
+
+
+def _wait_for_interrupt(relay: PortRelay) -> None:
+    """Block until Ctrl-C, which ends forwarding: nothing else does."""
+    threading.Event().wait()
 
 
 def execute(

@@ -12,6 +12,7 @@ spellings it is holding.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -22,6 +23,7 @@ from kubernetes.config.config_exception import ConfigException
 from urllib3.exceptions import HTTPError as TransportError
 
 from dokimi.k8s.cluster import ClusterError
+from dokimi.k8s.port_forward import Channel
 from dokimi.k8s.resources import (
     REQUEST_TIMEOUT_SECONDS,
     KubernetesResources,
@@ -172,6 +174,53 @@ class KubernetesCluster:
     def resources(self) -> KubernetesResources:
         """The per-kind client over the same connection and credentials."""
         return KubernetesResources(self._api)
+
+    def open_port(
+        self, namespace: str, pod: str, port: int, *, timeout: float = REQUEST_TIMEOUT_SECONDS
+    ) -> Channel:
+        """A channel to *port* of *pod*, over a websocket port-forward of its own.
+
+        The client library sets no timeout on the websocket it opens, so the opening runs
+        on a thread of its own and is given *timeout*, like every other call here. One that
+        answers later is left to close with its thread.
+        """
+        from kubernetes.stream import portforward
+
+        what = f"forwarding to port {port} of Pod {pod} in {namespace}"
+        opened: list[Any] = []
+        failed: list[BaseException] = []
+
+        def open_forward() -> None:
+            try:
+                opened.append(
+                    portforward(
+                        self._core.connect_get_namespaced_pod_portforward,
+                        pod,
+                        namespace,
+                        ports=str(port),
+                    )
+                )
+            except Exception as error:  # handed to the caller's thread below
+                failed.append(error)
+
+        worker = threading.Thread(target=open_forward, name="dokimi-port-forward", daemon=True)
+        worker.start()
+        worker.join(timeout)
+        if worker.is_alive():
+            raise ClusterError(f"{what}: no answer from the API server within {timeout:g}s")
+        if failed:
+            error = failed[0]
+            # The library wraps every failure as an ApiException with status 0, and the
+            # handshake's HTTP status only in its reason.
+            reason = str(getattr(error, "reason", None) or error)
+            if "403" in reason:
+                raise ClusterError(
+                    f"{what}: refused ({reason}). Opening a port-forward takes `create` on "
+                    f"`pods/portforward` in {namespace}."
+                ) from error
+            raise ClusterError(f"{what}: {reason}") from error
+        channel: Channel = opened[0].socket(port)
+        return channel
 
     def list_nodes(self) -> list[dict[str, Any]]:
         """Every node in the cluster.

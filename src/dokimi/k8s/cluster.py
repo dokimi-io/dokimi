@@ -17,6 +17,7 @@ from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from dokimi.k8s.port_forward import Channel
     from dokimi.k8s.resources import ResourceClient
 
 __all__ = [
@@ -60,6 +61,13 @@ class ClusterClient(Protocol):
 
     def list_nodes(self) -> list[dict[str, Any]]:
         """Every Node object. Read-only, and the only cluster-scoped call a run makes."""
+
+    def open_port(self, namespace: str, pod: str, port: int) -> Channel:
+        """A channel to *port* of *pod*: one port-forward, for one connection.
+
+        Takes ``create`` on ``pods/portforward`` in *namespace*: the submitter's, never the
+        Job's, and only ``dokimi prometheus`` asks for it.
+        """
 
 
 def connect(kubeconfig: str | None = None, context: str | None = None) -> ClusterClient:

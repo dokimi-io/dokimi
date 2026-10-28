@@ -29,6 +29,7 @@ from dokimi.cli.commands import (
     clean_up,
     convert,
     execute,
+    open_prometheus,
     preflight,
     show_image,
     submit_run,
@@ -211,6 +212,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_cluster_arguments(cleanup_parser)
 
+    prometheus_parser = commands.add_parser(
+        "prometheus",
+        help="open a run's kept Prometheus through a local port",
+        description=(
+            "Forward a local port to the Prometheus a run kept, found by the run's labels "
+            "in its namespace, and print its URL and when the run started and ended. Needs "
+            "no kubectl, but `create` on `pods/portforward` in the run's namespace. "
+            "Forwards until Ctrl-C. Exits 3 if the run has no Prometheus any more."
+        ),
+    )
+    prometheus_parser.add_argument(
+        "run_id", metavar="run-id", help="the run whose Prometheus to open"
+    )
+    prometheus_parser.add_argument(
+        "--port",
+        type=_local_port,
+        default=0,
+        help="the local port to listen on, instead of a free one",
+    )
+    _add_cluster_arguments(prometheus_parser)
+
     image_parser = commands.add_parser(
         "image",
         help="show the images a run would submit and deploy",
@@ -250,6 +272,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _local_port(text: str) -> int:
+    """``--port``: a TCP port to listen on, 1 to 65535."""
+    try:
+        port = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a port number") from None
+    if not 0 < port < 65536:
+        raise argparse.ArgumentTypeError(f"{port} is not a port: 1 to 65535")
+    return port
 
 
 def _add_cluster_name_argument(parser: argparse.ArgumentParser) -> None:
@@ -405,6 +438,15 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             prometheus=args.prometheus,
             force=args.force,
             dry_run=args.dry_run,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+        )
+    if args.command == "prometheus":
+        return open_prometheus(
+            console,
+            run_id=args.run_id,
+            namespace=args.namespace,
+            port=args.port,
             kubeconfig=args.kubeconfig,
             context=args.context,
         )

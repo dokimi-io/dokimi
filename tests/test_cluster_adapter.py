@@ -9,6 +9,7 @@ user who only needed the namespace to exist. A run no longer creates namespaces 
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -207,3 +208,83 @@ def test_every_call_is_bounded_by_a_request_timeout() -> None:
     assert len(api.timeouts) == 6
     # The log stream bounds its connect, not its read: a run can be quiet for its tests.
     assert streamed == (REQUEST_TIMEOUT_SECONDS, None)
+
+
+# -- port-forward ---------------------------------------------------------------------------
+
+
+#: The channel a fake forward hands back: only its identity matters here.
+CHANNEL: Any = object()
+
+
+class Forward:
+    """What the client library's ``portforward`` returns: a channel per port."""
+
+    def __init__(self) -> None:
+        self.asked: list[int] = []
+
+    def socket(self, port: int) -> Any:
+        self.asked.append(port)
+        return CHANNEL
+
+
+def forwarding() -> KubernetesCluster:
+    """An adapter whose core API has the method a port-forward is opened through."""
+    core = CoreApi()
+    core.connect_get_namespaced_pod_portforward = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+    return adapter(core)
+
+
+def test_a_port_forward_hands_back_the_channel_to_its_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kubernetes.stream  # noqa: PLC0415
+
+    forward = Forward()
+    calls: list[tuple[Any, ...]] = []
+
+    def portforward(method: Any, name: str, namespace: str, **kwargs: Any) -> Forward:
+        calls.append((name, namespace, kwargs))
+        return forward
+
+    monkeypatch.setattr(kubernetes.stream, "portforward", portforward)
+
+    channel = forwarding().open_port("dokimi-iperf2", "prometheus-pod", 9090)
+
+    assert channel is CHANNEL
+    assert forward.asked == [9090]
+    assert calls == [("prometheus-pod", "dokimi-iperf2", {"ports": "9090"})]
+
+
+def test_a_port_forward_that_never_opens_is_bounded_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The library sets no timeout on its websocket; a hung handshake must not hang us.
+    import kubernetes.stream  # noqa: PLC0415
+
+    never = threading.Event()
+
+    def hangs(*args: Any, **kwargs: Any) -> Forward:
+        never.wait(5)
+        return Forward()
+
+    monkeypatch.setattr(kubernetes.stream, "portforward", hangs)
+
+    with pytest.raises(ClusterError, match=r"no answer from the API server within 0\.1s"):
+        forwarding().open_port("dokimi-iperf2", "prometheus-pod", 9090, timeout=0.1)
+    never.set()
+
+
+def test_a_refused_port_forward_names_the_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+    import kubernetes.stream  # noqa: PLC0415
+
+    def refused(*args: Any, **kwargs: Any) -> Forward:
+        # As the library raises it: status 0, the handshake's status in the reason.
+        raise ApiException(status=0, reason="Handshake status 403 Forbidden")
+
+    monkeypatch.setattr(kubernetes.stream, "portforward", refused)
+
+    with pytest.raises(ClusterError) as error:
+        forwarding().open_port("dokimi-iperf2", "prometheus-pod", 9090)
+
+    assert "takes `create` on `pods/portforward` in dokimi-iperf2" in str(error.value)

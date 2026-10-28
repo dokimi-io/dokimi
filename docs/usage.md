@@ -11,6 +11,7 @@ $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
+$ dokimi prometheus <run-id>         # open the run's kept Prometheus on a local port
 $ dokimi completion zsh              # print the tab-completion script for your shell
 ```
 
@@ -21,6 +22,7 @@ $ dokimi completion zsh              # print the tab-completion script for your 
 - [submit](#submit)
 - [preflight](#preflight)
 - [attach](#attach)
+- [prometheus](#prometheus)
 - [image](#image)
 - [completion](#completion)
 - [The run's reports](#the-runs-reports)
@@ -58,7 +60,7 @@ phase 4 (preflight): monitoring mode managed (requested)
 phase 4 (preflight): Prometheus answers queries
   node-exporter pods  4 of 4 pods ready
   kept after the run; remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
-  query it from your machine with: kubectl port-forward -n dokimi-iperf2 service/run-20261002-120000-a1b2c3-prometheus 9090:9090
+  query it from your machine with: dokimi prometheus 20261002-120000-a1b2c3 --namespace dokimi-iperf2
 phase 4 (preflight): nodes worker-01, worker-02 accept test pods
 phase 4 (preflight): pair-001 scheduled, pulled its image and connected, as run-20261002-120000-a1b2c3-pair-001-preflight-client, run-20261002-120000-a1b2c3-pair-001-preflight-server
   UDP to the server pod at 10.244.2.7:5001 arrived, and kubernetes.default.svc resolved
@@ -492,6 +494,36 @@ the run was submitted with (see [The run's reports](#the-runs-reports)). Reading
 definition takes `get` on the run's ConfigMaps. `--results-directory <dir>` extracts there
 instead, and needs no such read. Like `submit`, it then removes the run's Job, so a run's
 reports can be fetched once.
+
+## prometheus
+
+```console
+$ dokimi prometheus 20260924-200229-ca532a
+run 20260924-200229-ca532a's Prometheus: http://127.0.0.1:54817
+  the run started 2026-09-24T20:02:29Z, ended 2026-09-24T20:05:41Z
+  its series carry run_id="20260924-200229-ca532a"
+  forwarding until you press Ctrl-C
+```
+
+Opens the Prometheus a run kept, from your machine: it listens on a local port and
+forwards every connection to the run's Prometheus pod, until you press Ctrl-C. Open the
+URL in a browser, or point a Grafana data source or `curl` at it. Every series the run
+produced carries its `run_id`, and the time range says which window holds them. A run
+whose owner is already gone, because it kept nothing and its reports were fetched, still
+has its start in its id; its end isn't recorded any more, so query from its start.
+
+`--port <n>` listens on that port instead of a free one. Like `attach`, it finds the run
+by its labels in its namespace, so it works from any machine; pass `--namespace` if the
+run is somewhere else.
+
+It needs no `kubectl`. Each connection opens a port-forward of its own, which takes
+`create` on `pods/portforward` in the run's namespace, besides `list` on Deployments and
+Pods and `get` on ConfigMaps to find the run. A refused port-forward is reported per
+connection, and forwarding goes on.
+
+A run whose Prometheus was removed, with `dokimi cleanup --prometheus` or by hand, or that
+never deployed one, says so and exits `3`, as `attach` does for a run it can't find. A
+Prometheus whose pod isn't ready exits `5`.
 
 ## image
 
@@ -957,10 +989,11 @@ the exact command to retry, with the flags you gave.
 **Every run leaves its Prometheus behind**, on purpose: the run's history outlives the
 run. It has no owner reference, so removing the run's owner leaves it alone, and `dokimi
 cleanup` removes it only with `--prometheus`. Phase 4 prints the command that removes one
-run's Prometheus, and the one that reaches it from your machine:
+run's Prometheus, and the one that reaches it from your machine, [`dokimi
+prometheus`](#prometheus):
 
 ```console
-$ kubectl port-forward -n dokimi-iperf2 service/run-20260924-200229-ca532a-prometheus 9090:9090
+$ dokimi prometheus 20260924-200229-ca532a --namespace dokimi-iperf2
 ```
 
 To remove every kept Prometheus at once:

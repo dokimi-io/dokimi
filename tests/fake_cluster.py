@@ -9,7 +9,9 @@ one is available.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+import socket
+import threading
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 from dokimi.k8s.cluster import ClusterError
@@ -69,6 +71,7 @@ class FakeCluster:
         fail_deleting: bool = False,
         nodes: Sequence[dict[str, Any]] = EXAMPLE_NODES,
         resources: FakeResources | None = None,
+        forwarded: Callable[[socket.socket], None] | None = None,
     ) -> None:
         self.log_lines = list(log_lines)
         self.exit_code = exit_code
@@ -88,6 +91,11 @@ class FakeCluster:
         self.store.fail_deleting = fail_deleting
         self.nodes = list(nodes)
         self.node_reads = 0
+        #: What a port-forward reaches: it gets the far end of each channel, on a thread of
+        #: its own, and answers on it as the pod would. ``None``: every forward is refused.
+        self.forwarded = forwarded
+        #: ``(namespace, pod, port)`` of every port-forward opened.
+        self.forwards: list[tuple[str, str, int]] = []
 
         self.created: list[dict[str, Any]] = []
         self.selectors: list[str] = []
@@ -159,6 +167,14 @@ class FakeCluster:
         self.node_reads += 1
         return list(self.nodes)
 
+    def open_port(self, namespace: str, pod: str, port: int) -> socket.socket:
+        self.forwards.append((namespace, pod, port))
+        if self.forwarded is None:
+            raise ClusterError(f"forwarding to port {port} of Pod {pod}: refused")
+        near, far = socket.socketpair()
+        threading.Thread(target=self.forwarded, args=(far,), daemon=True).start()
+        return near
+
     # -- assertions helpers ---------------------------------------------------
 
     @property
@@ -185,3 +201,4 @@ class ExplodingCluster:
     stream_logs = _explode
     delete_config_maps = _explode
     list_nodes = _explode
+    open_port = _explode
