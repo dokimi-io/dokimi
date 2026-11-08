@@ -18,7 +18,7 @@ ARG ALPINE_DIGEST=sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4ca
 FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
 
 ARG IPERF_VERSION=2.2.1-r0
-ARG PYTHON_VERSION=3.14.8-r0
+ARG PYTHON_VERSION=3.14.10-r1
 
 LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
       org.opencontainers.image.description="dokimi: iperf2 test workload and its exporter" \
