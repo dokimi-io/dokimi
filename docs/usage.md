@@ -11,6 +11,7 @@ $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
+$ dokimi completion zsh              # print the tab-completion script for your shell
 ```
 
 - [What a run does today](#what-a-run-does-today)
@@ -21,6 +22,7 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [preflight](#preflight)
 - [attach](#attach)
 - [image](#image)
+- [completion](#completion)
 - [The run's reports](#the-runs-reports)
 - [Exit codes](#exit-codes)
 - [How nodes are resolved](#how-nodes-are-resolved)
@@ -509,6 +511,43 @@ in a source checkout, is listed as such with how to choose one, and `dokimi imag
 exits `0`: it is a diagnostic, and `submit` is what refuses. See
 [Choosing the orchestrator image](#choosing-the-orchestrator-image) and
 [Choosing the images a run deploys](#choosing-the-images-a-run-deploys).
+
+## completion
+
+```console
+$ eval "$(dokimi completion bash)"
+$ source <(dokimi completion zsh)
+$ dokimi completion fish | source
+```
+
+Prints a script that makes your shell complete `dokimi`: its commands, every flag, the values a
+flag accepts from a fixed set (`--retain`, `--to`, the shells here), the components `--image`
+takes, and files. A definition is completed from `.yaml`, `.yml` and `.robot` files and
+directories, `--kubeconfig` from files, and `--results-directory` from directories. Nothing that
+only the cluster knows is completed, such as run ids, namespaces or contexts, and nothing is
+offered for a value only you know, such as `--run-id`.
+
+The script is generated from the CLI's own parser, so it matches the version that printed it.
+It runs in the shell alone: no Python starts when you press tab.
+
+The lines above load it into the current shell. To have it in every new shell, either load it at
+start-up or save it once:
+
+| Shell | Load it at start-up | Or save it once |
+| --- | --- | --- |
+| bash | `eval "$(dokimi completion bash)"` in `~/.bashrc` | `dokimi completion bash > ~/.local/share/bash-completion/completions/dokimi`, with the bash-completion package installed |
+| zsh | `source <(dokimi completion zsh)` in `~/.zshrc`, after `compinit` | `mkdir -p ~/.zfunc` and `dokimi completion zsh > ~/.zfunc/_dokimi`, with `fpath=(~/.zfunc $fpath)` in `~/.zshrc` before `compinit` |
+| fish | `dokimi completion fish \| source` in `~/.config/fish/config.fish` | `dokimi completion fish > ~/.config/fish/completions/dokimi.fish` |
+
+A saved script stays as it was, so save it again after upgrading dokimi. Loading it at start-up
+always matches the installed version.
+
+It completes the `dokimi` command, so it needs `dokimi` on your `PATH`, as
+`uv tool install .` puts it there ([Installation](installation.md#installing)). `uv run dokimi`
+is not completed.
+
+On bash 3.2, the version macOS ships, use `eval` as above: there, `source <(...)` silently reads
+nothing. Directories are offered without their trailing slash on bash 3.2.
 
 ## The run's reports
 

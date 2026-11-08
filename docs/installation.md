@@ -220,3 +220,9 @@ examples/worker-01-to-worker-02-udp.yaml is valid.
 ```
 
 `validate` contacts nothing, so it works before you have a cluster.
+
+## Shell completion
+
+`dokimi completion bash`, `zsh` or `fish` prints a script that completes dokimi's commands,
+flags and files when you press tab. [Usage](usage.md#completion) says how to load it, once or
+in every new shell.

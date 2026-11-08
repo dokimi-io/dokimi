@@ -35,6 +35,11 @@ jobs:
       # preinstalled on GitHub's Ubuntu runners.
       - name: Shell scripts
         run: shellcheck -x test-env/*.sh images/iperf2/*.sh
+      # The bash completion script is generated, so it is checked as a user's shell gets it.
+      - name: Shell completion script
+        run: |
+          uv run dokimi completion bash > "$RUNNER_TEMP/dokimi.bash"
+          shellcheck -s bash "$RUNNER_TEMP/dokimi.bash"
 
   test:
     name: Tests
@@ -46,6 +51,10 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
+      # The completion tests load each script in its shell. GitHub's Ubuntu runners have
+      # bash only, and in CI a missing shell fails those tests instead of skipping them.
+      - name: zsh and fish, for the completion tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh fish
       - run: uv run pytest
 
   core-without-robot:
@@ -61,6 +70,10 @@ jobs:
       # No extras: the `robot` extra carries Robot Framework, so this environment does
       # not have it. ADR-01-02 requires the core library to work anyway.
       - run: uv sync --locked
+      # The completion tests load each script in its shell. GitHub's Ubuntu runners have
+      # bash only, and in CI a missing shell fails those tests instead of skipping them.
+      - name: zsh and fish, for the completion tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh fish
 
       # Deliberately not `import robot`: this repository has a `robot/` directory at
       # its root, which Python treats as a PEP 420 namespace package when Robot
