@@ -332,6 +332,7 @@ def _fish_quote(text: str) -> str:
         ("dokimi attach -n ", []),
         ("dokimi completion ", ["bash", "fish", "zsh"]),
         ("dokimi submit ", ["a.yaml", "b.yml", "c.robot", "suites/", "with space.yaml"]),
+        ("dokimi submit with\\ sp", ["with space.yaml"]),
     ],
 )
 def test_fish_completes(line: str, expected: list[str], definitions: Path) -> None:

@@ -442,7 +442,22 @@ def _zsh_quote(text: str) -> str:
 # --- fish -----------------------------------------------------------------------------
 #
 # Files are offered only where an argument asks for them (`complete -f` turns them off
-# for everything else).
+# for everything else). Definitions have a function of their own: fish's
+# `__fish_complete_suffix` puts matching files first, but offers every other file too.
+
+_FISH_DEFINITIONS = """\
+function __dokimi_definitions
+    # The word as typed, unescaped, so that `with\\ sp` finds "with space.yaml".
+    set -l token (commandline -ct | string unescape)
+    for path in "$token"*
+        if test -d $path
+            printf '%s/\\n' $path
+        else if string match -qr '\\.(__SUFFIXES__)$' -- $path
+            printf '%s\\n' $path
+        end
+    end
+end
+"""
 
 
 def _fish(commands: Sequence[Command]) -> str:
@@ -453,6 +468,7 @@ def _fish(commands: Sequence[Command]) -> str:
         "#   dokimi completion fish | source",
         "# or save it as ~/.config/fish/completions/dokimi.fish.",
         "",
+        _FISH_DEFINITIONS.replace("__SUFFIXES__", "|".join(_DEFINITION_SUFFIXES)),
         "complete -c dokimi -f",
     ]
     for argument in program.flags:
@@ -465,12 +481,11 @@ def _fish(commands: Sequence[Command]) -> str:
     for command in listed:
         condition = _fish_quote(f"__fish_seen_subcommand_from {command.name}")
         lines.extend(_fish_line(condition, argument) for argument in command.flags)
-        for positional in command.positionals:
-            lines.extend(
-                f"complete -c dokimi -n {condition}{completion}"
-                for completion in _fish_values(positional)
-                if completion
-            )
+        lines.extend(
+            f"complete -c dokimi -n {condition}{_fish_values(positional)}"
+            for positional in command.positionals
+            if positional.values is not Values.NONE
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -478,28 +493,19 @@ def _fish_line(condition: str, argument: Argument) -> str:
     names = " ".join(
         f"-l {flag[2:]}" if flag.startswith("--") else f"-s {flag[1:]}" for flag in argument.flags
     )
-    (values,) = _fish_values(argument) if argument.takes_value else ("",)
+    values = _fish_values(argument) if argument.takes_value else ""
     return f"complete -c dokimi -n {condition} {names}{values} -d {_fish_quote(argument.help)}"
 
 
-def _fish_values(argument: Argument) -> tuple[str, ...]:
-    """What follows the names: whether a value is required, and what to offer for it.
-
-    One entry for a flag, and one line each for a positional argument's suffixes.
-    """
-    if argument.values is Values.DEFINITION:
-        if argument.flags:
-            return (" -r -F",)
-        return tuple(
-            f" -a {_fish_quote(f'(__fish_complete_suffix .{suffix})')}"
-            for suffix in _DEFINITION_SUFFIXES
-        )
+def _fish_values(argument: Argument) -> str:
+    """What follows the names: whether a value is required, and what to offer for it."""
     return {
-        Values.NONE: (" -x" if argument.flags else "",),
-        Values.CHOICES: (f" -x -a {_fish_quote(' '.join(argument.choices))}",),
-        Values.FILE: (" -r -F",),
-        Values.DIRECTORY: (" -x -a '(__fish_complete_directories (commandline -ct))'",),
-        Values.IMAGE: (f" -x -a {_fish_quote(' '.join(_image_prefixes()))}",),
+        Values.NONE: " -x",
+        Values.CHOICES: f" -x -a {_fish_quote(' '.join(argument.choices))}",
+        Values.FILE: " -r -F",
+        Values.DIRECTORY: " -x -a '(__fish_complete_directories (commandline -ct))'",
+        Values.DEFINITION: " -x -a '(__dokimi_definitions)'",
+        Values.IMAGE: f" -x -a {_fish_quote(' '.join(_image_prefixes()))}",
     }[argument.values]
 
 
