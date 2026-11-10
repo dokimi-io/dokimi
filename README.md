@@ -428,7 +428,10 @@ The schema carries **two grains**:
   unit, threshold, comparison, and verdict. Written for every assertion, passing or failing, not
   only on failure.
 
-The effective configuration is written alongside.
+The effective configuration is written alongside. The files are `tests.csv` and
+`tests.jsonl`, `assertions.csv` and `assertions.jsonl`, and `run.json` for the run itself, in
+`<results.directory>/<run-id>/` next to Robot's report; [Usage](docs/usage.md#the-result-files)
+lists every column.
 
 An external result database is **optional and always external to the cluster under test**. A run
 that only needs its own answer does not need one configured. Where one is configured, the write is

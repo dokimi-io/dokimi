@@ -6,6 +6,8 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
+import json
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -31,6 +33,7 @@ from dokimi.cleanup import (
 from dokimi.cli.exit_codes import ExitCode
 from dokimi.cluster_name import cluster_from_job_environment, resolve_cluster
 from dokimi.diagnostics import SNAPSHOT_TIMEOUT_SECONDS, capture, write_report
+from dokimi.error_categories import ErrorCategory
 from dokimi.execution import (
     ARTIFACTS_ROOT,
     PairExecution,
@@ -88,6 +91,18 @@ from dokimi.model import (
 )
 from dokimi.planning import Plan, PlannedPair, discover, plan_run
 from dokimi.preflight import check_cluster, node_exporter_reachability
+from dokimi.results import (
+    ASSERTIONS_CSV,
+    ASSERTIONS_JSONL,
+    RUN_RECORD,
+    TESTS_CSV,
+    TESTS_JSONL,
+    RunIdentity,
+    records_for_assertions,
+    records_for_tests,
+    write_records,
+    write_run_record,
+)
 from dokimi.run_identity import RunId
 from dokimi.run_images import (
     COMPONENTS,
@@ -534,6 +549,11 @@ def execute(
         plan=plan,
         artifacts=RunArtifacts(artifacts_root or ARTIFACTS_ROOT, str(resolved_run_id)),
         expires_at=expires_at,
+        definition=definition,
+        images=run_images,
+        cluster_name=run_cluster,
+        retention=retention,
+        preflight_only=preflight_only,
     )
     #: What the run came to; ``None`` while it hasn't, which is how an exception ends it.
     outcome: Outcome | None = None
@@ -565,7 +585,16 @@ def execute(
         # A run that stopped in phase 4 has nothing to inspect: its probe pods always go,
         # and its diagnostics.json reaches the submitter with its log.
         retained = retention.reason(outcome) if run.past_preflight else None
-        _end_run(console, run, retained, now)
+        # An exception on its way out is why the run has no outcome: its record says so.
+        stopped = sys.exc_info()[1]
+        _end_run(
+            console,
+            run,
+            retained,
+            now,
+            outcome=outcome,
+            stopped=None if stopped is None else str(stopped),
+        )
     return ExitCode.of(outcome)
 
 
@@ -589,6 +618,14 @@ class _Run:
     tests: tuple[TestOutcome, ...] = ()
     #: Whether phase 4 passed, so that the run got as far as its tests.
     past_preflight: bool = False
+    #: What the run was asked to do, for its record (``run.json``).
+    definition: TestDefinition | None = None
+    images: Mapping[str, WorkloadImage] = field(default_factory=dict)
+    cluster_name: str = ""
+    retention: Retention = Retention.ON_FAILURE
+    preflight_only: bool = False
+    #: Prometheus's scrape targets by scrape pool, taken in phase 9b while they exist.
+    scrape_targets: dict[str, dict[str, int]] | None = None
 
 
 def _preflight(
@@ -730,12 +767,83 @@ def _run_tests(
     _report_validation(console, tests)
     merge_reports(executions, run.artifacts, ROBOT_RUNNER())
     console.say(f"phase 9a (reporting): {run.artifacts.log}, {run.artifacts.report}")
-    console.say(
-        "phase 9b (results): the CSV and JSONL result files are not built yet. Each "
-        "test's outcome is in phase 8 above, in its validation.json and in Robot's report"
-    )
+    _write_results(console, run, definition, executions, tests, prometheus)
     console.say()
     return tests
+
+
+def _write_results(
+    console: Console,
+    run: _Run,
+    definition: TestDefinition,
+    executions: Sequence[PairExecution],
+    tests: Sequence[TestOutcome],
+    prometheus: ManagedPrometheus,
+) -> None:
+    """Phase 9b: the CSV and JSONL result files, from what each test itself recorded.
+
+    The measurements are the ones each test's Robot process read and wrote, and the
+    assertions are what its criteria's evaluation recorded: the values the verdict came
+    from, never read back from Prometheus. Also takes Prometheus's scrape targets for the
+    run's record, while they still exist. Never raises: the verdict doesn't depend on its
+    files, and a run whose files couldn't be written says so.
+    """
+    try:
+        measurements: dict[str, Measurement] = {}
+        for execution in executions:
+            found = read_measurement(execution.output.parent, execution.pair.test_id)
+            if found is not None:
+                measurements[found.test_id] = found
+        identity = RunIdentity(str(run.run_id), run.cluster_name, run.run_id.started_at)
+        test_rows = records_for_tests(
+            identity,
+            definition,
+            run.plan,
+            tests,
+            measurements,
+            _history(run.artifacts.directory / MEASUREMENT_REPORT),
+        )
+        assertion_rows = records_for_assertions(identity, tests)
+        write_records(run.artifacts.directory, test_rows, assertion_rows)
+    except Exception as error:  # the verdict stands, whatever happens here
+        console.warn(f"phase 9b (results): could not write the result files: {error}")
+        return
+    console.say(
+        f"phase 9b (results): {len(test_rows)} test(s) in {TESTS_CSV} and {TESTS_JSONL}, "
+        f"{len(assertion_rows)} assertion(s) in {ASSERTIONS_CSV} and {ASSERTIONS_JSONL}"
+    )
+    run.scrape_targets = _scrape_targets(console, prometheus)
+
+
+def _history(report: Path) -> dict[str, bool]:
+    """Whether Prometheus came to hold each test's series, by test id, from phase 7's report."""
+    if not report.is_file():
+        return {}
+    document = json.loads(report.read_text(encoding="utf-8"))
+    return {
+        str(test["test_id"]): bool(test["history_captured"])
+        for test in document.get("tests", [])
+        if "history_captured" in test
+    }
+
+
+def _scrape_targets(console: Console, prometheus: ManagedPrometheus) -> dict[str, dict[str, int]]:
+    """How many of each scrape pool's targets were up or down, for the run's record.
+
+    A supporting exporter counts as used only where its targets were up. Never raises: a
+    Prometheus that can't answer here leaves the count out, with a warning.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    try:
+        targets = PrometheusClient(prometheus.endpoint).targets()
+    except Exception as error:  # a note for the record, never a failure
+        console.warn(f"phase 9b (results): could not read Prometheus's scrape targets: {error}")
+        return counts
+    for target in targets:
+        pool = counts.setdefault(target.scrape_pool, {"up": 0, "down": 0, "unknown": 0})
+        health = target.health if target.health in pool else "unknown"
+        pool[health] += 1
+    return counts
 
 
 MEASUREMENT_REPORT = "measurement.json"
@@ -914,7 +1022,13 @@ def _diagnose(console: Console, cluster: ClusterClient, cluster_name: str, run: 
 
 
 def _end_run(
-    console: Console, run: _Run, retained: str | None, now: Callable[[], datetime]
+    console: Console,
+    run: _Run,
+    retained: str | None,
+    now: Callable[[], datetime],
+    *,
+    outcome: Outcome | None = None,
+    stopped: str | None = None,
 ) -> None:
     """Phase 11: remove what the run doesn't keep, return its artifacts, release the cluster.
 
@@ -949,9 +1063,74 @@ def _end_run(
             f"phase 11 (cleanup): run kept for inspection ({retained}): {kept}, and its "
             f"owner and definition. It no longer holds the cluster. Remove it with: {remove}"
         )
+    _record_run(console, run, outcome, retained, removal, now, stopped=stopped)
     _return_artifacts(console, run.artifacts)
     if removal.complete:
         _finish(console, run, retained, now)
+
+
+def _record_run(
+    console: Console,
+    run: _Run,
+    outcome: Outcome | None,
+    retained: str | None,
+    removal: PodRemoval,
+    now: Callable[[], datetime],
+    *,
+    stopped: str | None = None,
+) -> None:
+    """``run.json``: the run's own record, last, once its verdict and cleanup are known.
+
+    The effective configuration, the images it ran by digest, its plan, its monitoring and
+    scrape targets, its outcome and exit code, what it kept, and whether its cleanup was
+    complete. *outcome* ``None`` is a run that stopped on an error before it reached one,
+    and *stopped* says which; its exit code is then the error's, which the CLI maps.
+    Never raises: the record is returned with the artifacts if it could be written.
+    """
+    counts = {key.value: 0 for key in Outcome}
+    for test in run.tests:
+        counts[test.outcome.value] += 1
+    definition = run.definition
+    record: dict[str, Any] = {
+        "run_id": str(run.run_id),
+        "cluster": run.cluster_name,
+        "namespace": run.namespace,
+        "started_at": run.run_id.started_at,
+        "ended_at": now(),
+        "preflight_only": run.preflight_only,
+        "outcome": None if outcome is None else outcome.value,
+        "exit_code": None if outcome is None else int(ExitCode.of(outcome)),
+        "stopped": stopped,
+        "tests": {"planned": len(run.plan.pairs), **counts},
+        "retained": retained,
+        "cleanup": {
+            "complete": removal.complete,
+            "category": None if removal.complete else ErrorCategory.CLEANUP.value,
+            "problem": removal.problem,
+            "kept_pods": sorted(pod.name for pod in removal.kept),
+        },
+        "configuration": {
+            "definition": None if definition is None else render_yaml(definition),
+            "retain": run.retention.value,
+            "namespace": run.namespace,
+            "cluster": run.cluster_name,
+        },
+        "images": {
+            name: {
+                "reference": image.reference,
+                "digest": image.digest,
+                "source": image.source.value,
+            }
+            for name, image in sorted(run.images.items())
+        },
+        "plan": run.plan.run_metadata(),
+        "monitoring": None if run.prometheus is None else run.prometheus.run_metadata(),
+        "scrape_targets": run.scrape_targets,
+    }
+    try:
+        write_run_record(run.artifacts.directory, record)
+    except Exception as error:  # the record is worth having, never at the run's cost
+        console.warn(f"could not write the run's record ({RUN_RECORD}): {error}")
 
 
 def _say_removed(console: Console, phase: str, removal: PodRemoval) -> None:

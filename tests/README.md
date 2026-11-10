@@ -34,6 +34,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_iperf2_exporter.py`](test_iperf2_exporter.py) | The iperf2 exporter: each pod's own view, every required label, base units, served after the tool exited |
 | [`test_measurement.py`](test_measurement.py) | Phase 7: the direct read of the exporters, what is `metrics_missing` or `exporter_parse`, and Prometheus's confirmation, its timeout and a disagreement |
 | [`test_validation.py`](test_validation.py) | Phase 8: a criterion over the expected pairs in the user's unit, `metrics_missing` and `exporter_parse` never a pass, a metric the test type never produces said once, the message, the PromQL equivalent and the record; a test that ended before its criteria, and the run's outcome |
+| [`test_results.py`](test_results.py) | Phase 9b: a record for every planned test whatever it came to, every assertion passing or not, the values the verdict came from, and both grains as CSV and JSONL |
 | [`test_error_categories.py`](test_error_categories.py) | Every error that ends a test without a valid measurement carries its category |
 | [`test_cleanup.py`](test_cleanup.py) | Phase 11 and standalone cleanup: what a run keeps, which test pods may stay, removing a run by its id or age, and what fetching the artifacts releases |
 | [`test_lifecycle.py`](test_lifecycle.py) | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
