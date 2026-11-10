@@ -48,6 +48,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_cluster_adapter.py`](test_cluster_adapter.py) | How the real Kubernetes adapter translates the client library's failures, and bounds every call by a request timeout |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | The per-kind resource adapter builds real client methods, maps HTTP status to errors, and bounds every call by a request timeout |
 | [`test_cli.py`](test_cli.py) | Every command, and the exit code each produces |
+| [`test_completion.py`](test_completion.py) | Shell completion: the scripts follow the parser, every option that takes a value has a decided completion, and each script completes in a real bash, zsh and fish. A shell that isn't installed is skipped, except in CI |
 | [`test_images.py`](test_images.py) | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | Both Dockerfiles and the release wiring keep their promises |

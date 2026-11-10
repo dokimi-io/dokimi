@@ -22,6 +22,7 @@ from typing import NoReturn
 
 from dokimi import __version__
 from dokimi.cleanup import Retention
+from dokimi.cli import completion
 from dokimi.cli.commands import (
     Console,
     attach,
@@ -216,6 +217,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_image_argument(image_parser)
 
+    completion_parser = commands.add_parser(
+        "completion",
+        help="print a shell completion script for bash, zsh or fish",
+        description=(
+            "Print a script that completes dokimi's commands, flags, fixed values and files "
+            "in your shell. Load it in the current shell with "
+            "'eval \"$(dokimi completion bash)\"', 'source <(dokimi completion zsh)' or "
+            "'dokimi completion fish | source'. To load it in every new shell, save it where "
+            "your shell looks for completions; the usage guide says where."
+        ),
+    )
+    completion_parser.add_argument(
+        "shell", choices=completion.SHELLS, help="the shell to complete in"
+    )
+
     # Not for people: this is what the submitted Job runs, and the CLI/Job contract is
     # one decision (ADR-01-06) rather than two programs that must agree by convention.
     # Passing no `help` is what keeps it out of the command list; `help=SUPPRESS` would
@@ -394,6 +410,9 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
         )
     if args.command == "image":
         return show_image(console, image_override=args.image_override, images=args.images)
+    if args.command == "completion":
+        console.out.write(completion.script(args.shell, build_parser()))
+        return ExitCode.PASS
     if args.command == "execute":
         return execute(
             console,

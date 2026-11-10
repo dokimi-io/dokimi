@@ -173,6 +173,9 @@ can be saved or diffed on its own. By default it contacts nothing.
 Ctrl-C stops the log stream, not the run: the Job is a server-side resource and keeps
 going. The command prints the `attach` line that picks it back up.
 
+`dokimi completion bash|zsh|fish` prints a tab-completion script for your shell
+([completion](docs/usage.md#completion)).
+
 Every command and flag, with real output, is in the [usage guide](docs/usage.md).
 
 ### Exit codes
