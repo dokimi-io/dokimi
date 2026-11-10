@@ -35,7 +35,7 @@ env:
 jobs:
   plan:
     name: Decide whether this run publishes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       publish: ${{ steps.mode.outputs.publish }}
     steps:
@@ -51,7 +51,7 @@ jobs:
   images:
     name: Build, publish, sign and attest the ${{ matrix.name }} image
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -155,7 +155,7 @@ jobs:
   distribution:
     name: Build the CLI distribution against those digests
     needs: [plan, images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write       # attach the distribution to the release
     steps:

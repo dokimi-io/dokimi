@@ -29,7 +29,7 @@ of a run's execution phase, which happens inside the cluster, in an image that h
 
 The WSL2 column was verified on 2026-09-28; the macOS and Linux columns were last verified on 2026-09-25.
 
-| | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-latest`) | Windows 11 through WSL2, x86_64 |
+| | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-24.04`) | Windows 11 through WSL2, x86_64 |
 | --- | --- | --- | --- |
 | Library and CLI: lint, types, test suite | the full suite, with and without Robot Framework | on every pull request, with and without Robot Framework | the full suite, with and without Robot Framework |
 | Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 | built and run, amd64 |
