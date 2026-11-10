@@ -301,6 +301,9 @@ def test_zsh_loads_the_script_from_fpath(tmp_path: Path) -> None:
 # --- fish ------------------------------------------------------------------------------
 #
 # `complete -C` asks fish for the completions of a command line, exactly as a tab would.
+# fish 4 also returns fuzzy matches, `--orchestrator-image` for `--re`, and ranks them after
+# the ones that start with the word typed. Only those first ones are what the script offers,
+# and the same in fish 3, which has no fuzzy matches.
 
 
 def _fish(script: Path, directory: Path, line: str) -> list[str]:
@@ -312,7 +315,10 @@ def _fish(script: Path, directory: Path, line: str) -> list[str]:
         check=True,
         timeout=30,
     )
-    return sorted(entry.split("\t")[0] for entry in result.stdout.splitlines())
+    # The last word, where `\ ` is an escaped space inside it, as fish reads it.
+    typed = re.split(r"(?<!\\) ", line)[-1].replace("\\ ", " ")
+    candidates = (entry.split("\t")[0] for entry in result.stdout.splitlines())
+    return sorted(candidate for candidate in candidates if candidate.startswith(typed))
 
 
 def _fish_quote(text: str) -> str:
