@@ -140,9 +140,12 @@ $ uv run dokimi submit kind-pair.yaml --dry-run --kubeconfig .test-env/kubeconfi
 $ uv run dokimi submit kind-pair.yaml --service-account dokimi
 ```
 
-The first command resolves both nodes read-only and prints the plan. The second runs it:
-phases 2 and 3 in the cluster, then an exit `5` because phases 4 to 11 are still being
-built — see [what a run does today](usage.md#what-a-run-does-today).
+The first command resolves both nodes read-only and prints the plan. The second runs it, in
+the cluster, through to a verdict, and exits with it: `0` if every criterion holds, `1` if one
+doesn't. Robot's report and the run's record come back into `results/<run-id>/`. See
+[what a run does today](usage.md#what-a-run-does-today). On this cluster the example's
+950 Mbit/s may well not hold, and that says nothing about a network: see what this cluster can
+and cannot tell you, below.
 
 Worth trying once, to see the errors a first run can hit: point the definition at
 `dokimi-control-plane` (tainted), `kubectl cordon` a worker, or leave off
