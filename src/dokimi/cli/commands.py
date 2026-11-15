@@ -7,6 +7,8 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 from __future__ import annotations
 
 import contextlib
+import os
+import signal
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -57,7 +59,7 @@ from dokimi.k8s.ownership import (
     format_timestamp,
     run_selector,
 )
-from dokimi.k8s.port_forward import Channel, PortRelay
+from dokimi.k8s.port_forward import Channel, ForwardingNotAllowed, PortRelay
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
 from dokimi.k8s.submission import RunNotFound, Submission, follow, plan_submission, submit
 from dokimi.measurement import Measurement, ScrapeReport, confirm_scrape, read_measurement
@@ -71,7 +73,7 @@ from dokimi.metrics.managed import (
     NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
-    port_forward_command,
+    open_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
@@ -498,6 +500,14 @@ def open_prometheus(
             f"{kept.problem}"
         )
 
+    # Asked before listening: a port-forward refused in its handshake doesn't say why.
+    if cluster.may_port_forward(resolved_namespace) is False:
+        raise ForwardingNotAllowed(
+            f"run {resolved_run_id}'s Prometheus can't be forwarded to: the credentials in use "
+            f"may not open a port-forward in {resolved_namespace}. That takes `create` on "
+            "`pods/portforward` there."
+        )
+
     def open_channel() -> Channel:
         return cluster.open_port(resolved_namespace, pod, PROMETHEUS_PORT)
 
@@ -509,7 +519,7 @@ def open_prometheus(
         console.say(f"run {resolved_run_id}'s Prometheus: http://{host}:{local_port}")
         console.say(f"  the run started {format_timestamp(kept.started_at)}, {_ended(kept)}")
         console.say(f'  its series carry run_id="{resolved_run_id}"')
-        console.say("  forwarding until you press Ctrl-C")
+        console.say(f"  forwarding until you press Ctrl-C, or kill {os.getpid()}")
         console.flush()
         threading.Thread(target=relay.serve, name="dokimi-prometheus", daemon=True).start()
         with contextlib.suppress(KeyboardInterrupt):
@@ -527,9 +537,29 @@ def _ended(kept: KeptPrometheus) -> str:
     return "and its end isn't recorded any more: query from its start"
 
 
+#: The signals that end forwarding like Ctrl-C does: ``kill``'s, and a closed terminal's.
+#: SIGINT is left as the shell set it: a script's background job ignores it on purpose.
+_STOP_SIGNALS = tuple(
+    getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
+)
+
+
 def _wait_for_interrupt(relay: PortRelay) -> None:
-    """Block until Ctrl-C, which ends forwarding: nothing else does."""
-    threading.Event().wait()
+    """Block until Ctrl-C, SIGTERM or SIGHUP, which end forwarding: nothing else does.
+
+    A forward run in the background with ``&`` doesn't get Ctrl-C, so ``kill`` is how it's
+    stopped, and it ends the same way: listener closed, "stopped forwarding", exit 0.
+    """
+    stop = threading.Event()
+    previous = {number: signal.signal(number, lambda *_: stop.set()) for number in _STOP_SIGNALS}
+    try:
+        # A timeout, so that a signal is acted on even while the wait itself can't be
+        # interrupted.
+        while not stop.wait(0.5):
+            pass
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def execute(
@@ -722,7 +752,7 @@ def _preflight(
         if not running:
             console.warn(f"node-exporter {run.node_exporter.name}: {summary}")
     console.say("  kept after the run; remove it with: " + removal_command(prometheus))
-    console.say("  query it from your machine with: " + port_forward_command(prometheus))
+    console.say("  query it from your machine with: " + open_command(prometheus))
 
     report = check_cluster(
         definition,

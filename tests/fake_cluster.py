@@ -96,6 +96,8 @@ class FakeCluster:
         self.forwarded = forwarded
         #: ``(namespace, pod, port)`` of every port-forward opened.
         self.forwards: list[tuple[str, str, int]] = []
+        #: What asking whether a port-forward is allowed answers; ``None``: it couldn't tell.
+        self.port_forward_allowed: bool | None = True
 
         self.created: list[dict[str, Any]] = []
         self.selectors: list[str] = []
@@ -175,6 +177,9 @@ class FakeCluster:
         threading.Thread(target=self.forwarded, args=(far,), daemon=True).start()
         return near
 
+    def may_port_forward(self, namespace: str) -> bool | None:
+        return self.port_forward_allowed
+
     # -- assertions helpers ---------------------------------------------------
 
     @property
@@ -202,3 +207,4 @@ class ExplodingCluster:
     delete_config_maps = _explode
     list_nodes = _explode
     open_port = _explode
+    may_port_forward = _explode

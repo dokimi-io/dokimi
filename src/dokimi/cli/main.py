@@ -42,6 +42,7 @@ from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
 from dokimi.k8s.ownership import OwnershipError
+from dokimi.k8s.port_forward import ForwardingNotAllowed
 from dokimi.k8s.submission import RunNotFound
 from dokimi.metrics.prometheus import PrometheusUnreachableError
 from dokimi.model import ConfigError
@@ -219,7 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Forward a local port to the Prometheus a run kept, found by the run's labels "
             "in its namespace, and print its URL and when the run started and ended. Needs "
             "no kubectl, but `create` on `pods/portforward` in the run's namespace. "
-            "Forwards until Ctrl-C. Exits 3 if the run has no Prometheus any more."
+            "Forwards until Ctrl-C or kill. Exits 3 if the run has no Prometheus any more, "
+            "or if the credentials in use may not open a port-forward."
         ),
     )
     prometheus_parser.add_argument(
@@ -347,7 +349,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FileNotFoundError as error:
         console.fail(f"{error.filename}: no such file")
         return ExitCode.CONFIG_ERROR
-    except RunNotFound as error:
+    except (RunNotFound, ForwardingNotAllowed) as error:
+        # Nothing the cluster got wrong: the run asked for isn't there, or the credentials
+        # in use may not do what was asked of them.
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
     except (

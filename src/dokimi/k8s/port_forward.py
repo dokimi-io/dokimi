@@ -19,7 +19,12 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
-__all__ = ["Channel", "PortRelay"]
+__all__ = ["Channel", "ForwardingNotAllowed", "PortRelay"]
+
+
+class ForwardingNotAllowed(Exception):
+    """The credentials in use may not open a port-forward: nothing is listened on."""
+
 
 _CHUNK = 64 * 1024
 #: How often the accept loop looks whether it should stop.

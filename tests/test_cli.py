@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import signal
 import socket
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -2362,6 +2365,73 @@ def test_a_refused_port_forward_is_reported_and_forwarding_goes_on(
 
     assert code == ExitCode.PASS
     assert "could not forward a connection: forwarding to port 9090" in capsys.readouterr().err
+
+
+def test_credentials_that_may_not_forward_are_told_so_before_anything_listens(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A port-forward refused in its handshake doesn't say why, so it's asked up front.
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+    cluster.port_forward_allowed = False
+
+    assert main(["prometheus", RUN_ID]) == ExitCode.CONFIG_ERROR
+    captured = capsys.readouterr()
+    assert (
+        "may not open a port-forward in dokimi-iperf2. That takes `create` on "
+        "`pods/portforward` there."
+    ) in captured.err
+    assert "http://" not in captured.out
+    assert cluster.forwards == []
+
+
+def test_forwarding_goes_ahead_when_the_api_server_cant_say_whether_it_may(
+    cluster: FakeCluster,
+) -> None:
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+    cluster.port_forward_allowed = None
+
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+        until=lambda relay: None,
+    )
+
+    assert code == ExitCode.PASS
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP"])
+def test_kill_ends_forwarding_as_ctrl_c_does(
+    name: str, cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forward in the background doesn't get Ctrl-C: `kill` is how it's stopped, and it
+    # ends the same way, with "stopped forwarding" and 0, not 143.
+    number = getattr(signal, name)
+    before = signal.getsignal(number)
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+
+    def kill_once_listening() -> None:
+        deadline = time.monotonic() + 5
+        while signal.getsignal(number) == before and time.monotonic() < deadline:
+            time.sleep(0.01)
+        os.kill(os.getpid(), number)
+
+    threading.Thread(target=kill_once_listening, daemon=True).start()
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+    )
+
+    assert code == ExitCode.PASS
+    out = capsys.readouterr().out
+    assert f"forwarding until you press Ctrl-C, or kill {os.getpid()}" in out
+    assert out.rstrip().endswith("stopped forwarding")
+    assert signal.getsignal(number) == before
 
 
 @pytest.mark.parametrize("port", ["0", "65536", "http"])

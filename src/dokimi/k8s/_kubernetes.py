@@ -50,6 +50,7 @@ class KubernetesCluster:
         self._api = api
         self._core = client.CoreV1Api(api)
         self._batch = client.BatchV1Api(api)
+        self._authorization = client.AuthorizationV1Api(api)
 
     @classmethod
     def connect(
@@ -210,17 +211,38 @@ class KubernetesCluster:
             raise ClusterError(f"{what}: no answer from the API server within {timeout:g}s")
         if failed:
             error = failed[0]
-            # The library wraps every failure as an ApiException with status 0, and the
-            # handshake's HTTP status only in its reason.
+            # The library wraps every failure as an ApiException with status 0 and an error
+            # of its own as the reason, a refused handshake included, so nothing here says
+            # whether it was refused. That is asked up front, by may_port_forward.
             reason = str(getattr(error, "reason", None) or error)
-            if "403" in reason:
-                raise ClusterError(
-                    f"{what}: refused ({reason}). Opening a port-forward takes `create` on "
-                    f"`pods/portforward` in {namespace}."
-                ) from error
             raise ClusterError(f"{what}: {reason}") from error
         channel: Channel = opened[0].socket(port)
         return channel
+
+    def may_port_forward(self, namespace: str) -> bool | None:
+        """Whether the credentials in use may open a port-forward in *namespace*.
+
+        Asked of the API server, as ``kubectl auth can-i create pods/portforward`` does,
+        which any authenticated user may ask. ``None`` when it couldn't be asked: then the
+        forwards themselves say what they meet.
+        """
+        review = client.V1SelfSubjectAccessReview(
+            spec=client.V1SelfSubjectAccessReviewSpec(
+                resource_attributes=client.V1ResourceAttributes(
+                    namespace=namespace,
+                    verb="create",
+                    resource="pods",
+                    subresource="portforward",
+                )
+            )
+        )
+        try:
+            answer = self._authorization.create_self_subject_access_review(
+                review, _request_timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        except ApiException, TransportError:
+            return None
+        return bool(answer.status.allowed)
 
     def list_nodes(self) -> list[dict[str, Any]]:
         """Every node in the cluster.

@@ -275,16 +275,74 @@ def test_a_port_forward_that_never_opens_is_bounded_too(
     never.set()
 
 
-def test_a_refused_port_forward_names_the_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_port_forward_gives_the_librarys_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    # What the library raises for a refused handshake on a real API server (kind, 1.37):
+    # status 0 and an error of its own, nothing that says it was refused. Whether it may
+    # forward at all is asked up front instead (may_port_forward).
     import kubernetes.stream  # noqa: PLC0415
 
     def refused(*args: Any, **kwargs: Any) -> Forward:
-        # As the library raises it: status 0, the handshake's status in the reason.
-        raise ApiException(status=0, reason="Handshake status 403 Forbidden")
+        raise ApiException(status=0, reason="'NoneType' object has no attribute 'decode'")
 
     monkeypatch.setattr(kubernetes.stream, "portforward", refused)
 
     with pytest.raises(ClusterError) as error:
         forwarding().open_port("dokimi-iperf2", "prometheus-pod", 9090)
 
-    assert "takes `create` on `pods/portforward` in dokimi-iperf2" in str(error.value)
+    assert str(error.value) == (
+        "forwarding to port 9090 of Pod prometheus-pod in dokimi-iperf2: "
+        "'NoneType' object has no attribute 'decode'"
+    )
+
+
+class AuthorizationApi:
+    """Answers a SelfSubjectAccessReview as it was told to, and records what was asked."""
+
+    def __init__(self, allowed: bool | None = None, failure: BaseException | None = None) -> None:
+        self.allowed = allowed
+        self.failure = failure
+        self.asked: list[Any] = []
+        self.timeouts: list[Any] = []
+
+    def create_self_subject_access_review(self, body: Any, **kwargs: Any) -> Any:
+        self.asked.append(body.spec.resource_attributes)
+        self.timeouts.append(kwargs.get("_request_timeout"))
+        if self.failure is not None:
+            raise self.failure
+        return SimpleNamespace(status=SimpleNamespace(allowed=self.allowed))
+
+
+def asking(authorization: AuthorizationApi) -> KubernetesCluster:
+    cluster = KubernetesCluster(client.ApiClient())
+    cluster._authorization = authorization
+    return cluster
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+def test_whether_a_port_forward_is_allowed_is_asked_as_kubectl_auth_can_i_does(
+    allowed: bool,
+) -> None:
+    authorization = AuthorizationApi(allowed=allowed)
+
+    assert asking(authorization).may_port_forward("dokimi-iperf2") is allowed
+    (attributes,) = authorization.asked
+    assert (
+        attributes.namespace,
+        attributes.verb,
+        attributes.resource,
+        attributes.subresource,
+    ) == ("dokimi-iperf2", "create", "pods", "portforward")
+    assert authorization.timeouts == [REQUEST_TIMEOUT_SECONDS]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _api_error(404),
+        MaxRetryError(None, "/apis/authorization.k8s.io", "connection refused"),  # type: ignore[arg-type]
+    ],
+)
+def test_a_question_the_api_server_cant_answer_leaves_it_to_the_forwards(
+    failure: BaseException,
+) -> None:
+    assert asking(AuthorizationApi(failure=failure)).may_port_forward("dokimi-iperf2") is None

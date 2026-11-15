@@ -45,7 +45,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_artifact_stream.py`](test_artifact_stream.py) | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
 | [`test_manifests.py`](test_manifests.py) | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | Submitting, following and reattaching, and which exit codes are a verdict |
-| [`test_cluster_adapter.py`](test_cluster_adapter.py) | How the real Kubernetes adapter translates the client library's failures, and bounds every call by a request timeout, the opening of a port-forward included |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | How the real Kubernetes adapter translates the client library's failures, and bounds every call by a request timeout, the opening of a port-forward included, and asks whether a port-forward is allowed as `kubectl auth can-i` does |
 | [`test_port_forward.py`](test_port_forward.py) | The local port `dokimi prometheus` listens on: each connection relayed both ways through a channel of its own, a late answer after the client stopped sending, and a refused channel ending only its connection |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | The per-kind resource adapter builds real client methods, maps HTTP status to errors, and bounds every call by a request timeout |
 | [`test_cli.py`](test_cli.py) | Every command, and the exit code each produces |

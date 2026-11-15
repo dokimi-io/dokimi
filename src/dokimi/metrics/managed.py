@@ -77,7 +77,7 @@ __all__ = [
     "managed_manifests",
     "node_exporter_manifest",
     "node_exporter_status",
-    "port_forward_command",
+    "open_command",
     "provide_node_exporter",
     "provision_managed_prometheus",
     "removal_command",
@@ -695,7 +695,7 @@ def provision_managed_prometheus(
     )
 
 
-def port_forward_command(prometheus: ManagedPrometheus) -> str:
+def open_command(prometheus: ManagedPrometheus) -> str:
     """How to reach a kept Prometheus from the submitter's machine: it is in-cluster only.
 
     ``dokimi prometheus`` forwards a local port to it, with no ``kubectl`` needed.

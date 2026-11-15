@@ -47,7 +47,7 @@ from dokimi.metrics.managed import (
     managed_manifests,
     node_exporter_manifest,
     node_exporter_status,
-    port_forward_command,
+    open_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
@@ -493,7 +493,7 @@ def test_a_node_exporter_already_gone_is_not_an_error() -> None:
 def test_a_kept_prometheus_is_reached_through_a_port_forward() -> None:
     prometheus = provision_managed_prometheus(owned(FakeResources()), NAMESPACE)
 
-    assert port_forward_command(prometheus) == (
+    assert open_command(prometheus) == (
         f"dokimi prometheus {prometheus.run_id} --namespace {NAMESPACE}"
     )
 

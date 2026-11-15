@@ -69,6 +69,9 @@ class ClusterClient(Protocol):
         Job's, and only ``dokimi prometheus`` asks for it.
         """
 
+    def may_port_forward(self, namespace: str) -> bool | None:
+        """Whether :meth:`open_port` is allowed in *namespace*; ``None`` if that's unknown."""
+
 
 def connect(kubeconfig: str | None = None, context: str | None = None) -> ClusterClient:
     """Load cluster credentials and return a client.
