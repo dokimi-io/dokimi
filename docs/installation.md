@@ -146,6 +146,7 @@ exist fails with a message saying so. What each command needs in that namespace:
 | `submit`, `preflight` | `create` on Jobs and ConfigMaps; `get` on Pods and their `log`, and `list` on Jobs and Pods, to follow the run; and, once the reports are fetched, `get` and `delete` on ConfigMaps and `list` and `delete` on Jobs, to remove the run |
 | `attach` | the same, without `create`; `get` on ConfigMaps also finds the run's `results.directory` |
 | `cleanup` | `get` on ConfigMaps, and `list` and `delete` on ConfigMaps, Pods, Services, ServiceAccounts, Jobs, Deployments, DaemonSets and StatefulSets |
+| `prometheus` | `list` on Deployments and Pods and `get` on ConfigMaps, to find the run's Prometheus, and `create` on `pods/portforward`, to reach it |
 
 A missing `delete` after a fetch is only a warning: the cluster removes the Job an hour
 after the run ended, and `dokimi cleanup` removes the rest.
@@ -220,3 +221,9 @@ examples/worker-01-to-worker-02-udp.yaml is valid.
 ```
 
 `validate` contacts nothing, so it works before you have a cluster.
+
+## Shell completion
+
+`dokimi completion bash`, `zsh` or `fish` prints a script that completes dokimi's commands,
+flags and files when you press tab. [Usage](usage.md#completion) says how to load it, once or
+in every new shell.

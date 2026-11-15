@@ -6,8 +6,12 @@ API server; no phase of a run happens on this side of the cluster boundary (ADR-
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import signal
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -58,18 +62,21 @@ from dokimi.k8s.ownership import (
     format_timestamp,
     run_selector,
 )
+from dokimi.k8s.port_forward import Channel, ForwardingNotAllowed, PortRelay
 from dokimi.k8s.resources import CONFIG_MAP, POD, NotFoundError, ResourceClient
-from dokimi.k8s.submission import Submission, follow, plan_submission, submit
+from dokimi.k8s.submission import RunNotFound, Submission, follow, plan_submission, submit
 from dokimi.measurement import Measurement, ScrapeReport, confirm_scrape, read_measurement
+from dokimi.metrics.kept import KeptPrometheus, find_kept_prometheus
 from dokimi.metrics.managed import (
     NODE_EXPORTER_COMPONENT,
+    PROMETHEUS_PORT,
     SCRAPE_INTERVAL_SECONDS,
     ManagedPrometheus,
     MonitoringSelection,
     NodeExporter,
     detect_supporting_exporters,
     node_exporter_status,
-    port_forward_command,
+    open_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
@@ -471,6 +478,105 @@ def _report_cleanup(
         )
 
 
+def open_prometheus(
+    console: Console,
+    *,
+    run_id: str,
+    namespace: str | None = None,
+    port: int = 0,
+    kubeconfig: str | None = None,
+    context: str | None = None,
+    connect_to: Callable[..., ClusterClient] | None = None,
+    until: Callable[[PortRelay], None] | None = None,
+) -> int:
+    """Forward a local port to a run's kept Prometheus, until interrupted.
+
+    Its pod is found by the run's labels, in the run's namespace, and every connection to
+    the local port gets a port-forward of its own (:class:`~dokimi.k8s.port_forward.PortRelay`),
+    so no ``kubectl`` is needed. It prints the URL, and when the run started and ended, so
+    a query looks at the window that has the run's series. *port* ``0`` picks a free one.
+
+    A run whose Prometheus was removed, or that never deployed one, says so and exits 3,
+    like a run :func:`attach` can't find. *until* replaces waiting for Ctrl-C, for tests.
+    """
+    resolved_run_id = RunId(validate_run_id(run_id))
+    resolved_namespace = namespace_for(TestType.IPERF2.value, namespace)
+    cluster = (connect_to or connect)(kubeconfig=kubeconfig, context=context)
+    kept = find_kept_prometheus(cluster.resources(), resolved_run_id, resolved_namespace)
+    if kept is None:
+        raise RunNotFound(
+            f"run {resolved_run_id} has no Prometheus in {resolved_namespace}: it was removed, "
+            "with dokimi cleanup --prometheus or by hand, or the run never deployed one"
+        )
+    pod = kept.pod
+    if pod is None:
+        raise ClusterError(
+            f"run {resolved_run_id}'s Prometheus in {resolved_namespace} can't be reached: "
+            f"{kept.problem}"
+        )
+
+    # Asked before listening: a port-forward refused in its handshake doesn't say why.
+    if cluster.may_port_forward(resolved_namespace) is False:
+        raise ForwardingNotAllowed(
+            f"run {resolved_run_id}'s Prometheus can't be forwarded to: the credentials in use "
+            f"may not open a port-forward in {resolved_namespace}. That takes `create` on "
+            "`pods/portforward` there."
+        )
+
+    def open_channel() -> Channel:
+        return cluster.open_port(resolved_namespace, pod, PROMETHEUS_PORT)
+
+    def refused(error: Exception) -> None:
+        console.warn(f"could not forward a connection: {error}")
+
+    with PortRelay(open_channel, port=port, on_error=refused) as relay:
+        host, local_port = relay.address
+        console.say(f"run {resolved_run_id}'s Prometheus: http://{host}:{local_port}")
+        console.say(f"  the run started {format_timestamp(kept.started_at)}, {_ended(kept)}")
+        console.say(f'  its series carry run_id="{resolved_run_id}"')
+        console.say(f"  forwarding until you press Ctrl-C, or kill {os.getpid()}")
+        console.flush()
+        threading.Thread(target=relay.serve, name="dokimi-prometheus", daemon=True).start()
+        with contextlib.suppress(KeyboardInterrupt):
+            (until or _wait_for_interrupt)(relay)
+    console.say("stopped forwarding")
+    return ExitCode.PASS
+
+
+def _ended(kept: KeptPrometheus) -> str:
+    """When the run ended, as far as anything still says."""
+    if kept.finished_at is not None:
+        return f"ended {format_timestamp(kept.finished_at)}"
+    if kept.owner_found:
+        return "and has not finished yet"
+    return "and its end isn't recorded any more: query from its start"
+
+
+#: The signals that end forwarding like Ctrl-C does: ``kill``'s, and a closed terminal's.
+#: SIGINT is left as the shell set it: a script's background job ignores it on purpose.
+_STOP_SIGNALS = tuple(
+    getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
+)
+
+
+def _wait_for_interrupt(relay: PortRelay) -> None:
+    """Block until Ctrl-C, SIGTERM or SIGHUP, which end forwarding: nothing else does.
+
+    A forward run in the background with ``&`` doesn't get Ctrl-C, so ``kill`` is how it's
+    stopped, and it ends the same way: listener closed, "stopped forwarding", exit 0.
+    """
+    stop = threading.Event()
+    previous = {number: signal.signal(number, lambda *_: stop.set()) for number in _STOP_SIGNALS}
+    try:
+        # A timeout, so that a signal is acted on even while the wait itself can't be
+        # interrupted.
+        while not stop.wait(0.5):
+            pass
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def execute(
     console: Console,
     *,
@@ -683,7 +789,7 @@ def _preflight(
         if not running:
             console.warn(f"node-exporter {run.node_exporter.name}: {summary}")
     console.say("  kept after the run; remove it with: " + removal_command(prometheus))
-    console.say("  query it from your machine with: " + port_forward_command(prometheus))
+    console.say("  query it from your machine with: " + open_command(prometheus))
 
     report = check_cluster(
         definition,

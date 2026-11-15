@@ -22,12 +22,14 @@ from typing import NoReturn
 
 from dokimi import __version__
 from dokimi.cleanup import Retention
+from dokimi.cli import completion
 from dokimi.cli.commands import (
     Console,
     attach,
     clean_up,
     convert,
     execute,
+    open_prometheus,
     preflight,
     show_image,
     submit_run,
@@ -40,6 +42,7 @@ from dokimi.images import ImageResolutionError
 from dokimi.k8s.cluster import ClusterError
 from dokimi.k8s.exclusivity import RunExclusivityError
 from dokimi.k8s.ownership import OwnershipError
+from dokimi.k8s.port_forward import ForwardingNotAllowed
 from dokimi.k8s.submission import RunNotFound
 from dokimi.metrics.prometheus import PrometheusUnreachableError
 from dokimi.model import ConfigError
@@ -210,11 +213,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_cluster_arguments(cleanup_parser)
 
+    prometheus_parser = commands.add_parser(
+        "prometheus",
+        help="open a run's kept Prometheus through a local port",
+        description=(
+            "Forward a local port to the Prometheus a run kept, found by the run's labels "
+            "in its namespace, and print its URL and when the run started and ended. Needs "
+            "no kubectl, but `create` on `pods/portforward` in the run's namespace. "
+            "Forwards until Ctrl-C or kill. Exits 3 if the run has no Prometheus any more, "
+            "or if the credentials in use may not open a port-forward."
+        ),
+    )
+    prometheus_parser.add_argument(
+        "run_id", metavar="run-id", help="the run whose Prometheus to open"
+    )
+    prometheus_parser.add_argument(
+        "--port",
+        type=_local_port,
+        default=0,
+        help="the local port to listen on, instead of a free one",
+    )
+    _add_cluster_arguments(prometheus_parser)
+
     image_parser = commands.add_parser(
         "image",
         help="show the images a run would submit and deploy",
     )
     _add_image_argument(image_parser)
+
+    completion_parser = commands.add_parser(
+        "completion",
+        help="print a shell completion script for bash, zsh or fish",
+        description=(
+            "Print a script that completes dokimi's commands, flags, fixed values and files "
+            "in your shell. Load it in the current shell with "
+            "'eval \"$(dokimi completion bash)\"', 'source <(dokimi completion zsh)' or "
+            "'dokimi completion fish | source'. To load it in every new shell, save it where "
+            "your shell looks for completions; the usage guide says where."
+        ),
+    )
+    completion_parser.add_argument(
+        "shell", choices=completion.SHELLS, help="the shell to complete in"
+    )
 
     # Not for people: this is what the submitted Job runs, and the CLI/Job contract is
     # one decision (ADR-01-06) rather than two programs that must agree by convention.
@@ -234,6 +274,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _local_port(text: str) -> int:
+    """``--port``: a TCP port to listen on, 1 to 65535."""
+    try:
+        port = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a port number") from None
+    if not 0 < port < 65536:
+        raise argparse.ArgumentTypeError(f"{port} is not a port: 1 to 65535")
+    return port
 
 
 def _add_cluster_name_argument(parser: argparse.ArgumentParser) -> None:
@@ -298,7 +349,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FileNotFoundError as error:
         console.fail(f"{error.filename}: no such file")
         return ExitCode.CONFIG_ERROR
-    except RunNotFound as error:
+    except (RunNotFound, ForwardingNotAllowed) as error:
+        # Nothing the cluster got wrong: the run asked for isn't there, or the credentials
+        # in use may not do what was asked of them.
         console.fail(str(error))
         return ExitCode.CONFIG_ERROR
     except (
@@ -392,8 +445,20 @@ def _dispatch(console: Console, args: argparse.Namespace) -> int:
             kubeconfig=args.kubeconfig,
             context=args.context,
         )
+    if args.command == "prometheus":
+        return open_prometheus(
+            console,
+            run_id=args.run_id,
+            namespace=args.namespace,
+            port=args.port,
+            kubeconfig=args.kubeconfig,
+            context=args.context,
+        )
     if args.command == "image":
         return show_image(console, image_override=args.image_override, images=args.images)
+    if args.command == "completion":
+        console.out.write(completion.script(args.shell, build_parser()))
+        return ExitCode.PASS
     if args.command == "execute":
         return execute(
             console,

@@ -40,15 +40,17 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_lifecycle.py`](test_lifecycle.py) | Deploying a pair, the per-test readiness gate and its error categories, IPv4 addressing, and that `start()` is never called before the gate passes |
 | [`test_prometheus.py`](test_prometheus.py) | The Prometheus client, and phase 4's query-access check |
 | [`test_preflight.py`](test_preflight.py) | Phase 4's cluster checks: each failure by the check it names, the first pair in probe mode, the node-exporter warning, and the time phase 4 may take |
-| [`test_managed_prometheus.py`](test_managed_prometheus.py) | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, and that it is kept unless removal is asked for |
+| [`test_managed_prometheus.py`](test_managed_prometheus.py) | The managed Prometheus: mode selection, what it scrapes, supporting exporters, the node-exporter it deploys when there is none, staying off the tested nodes, that it is kept unless removal is asked for, and finding a kept one after the run |
 | [`test_execution.py`](test_execution.py) | Phases 5, 6 and 9a with a fake runner, and what `Run Network Test` does against an in-memory API server |
 | [`test_robot_execution.py`](test_robot_execution.py) | What Robot Framework does with the rendered suite: YAML and Robot run identically, the criteria are evaluated, tagged with their outcome and recorded next to the pair's output, and a real `robot` and `rebot` produce `log.html`. Skipped without Robot Framework |
 | [`test_artifact_stream.py`](test_artifact_stream.py) | A run's artifacts through the Job's log and back: exact round trip, never printed, refused when altered, truncated or reaching outside its directory |
 | [`test_manifests.py`](test_manifests.py) | What a submission renders, and the properties those manifests must have |
 | [`test_submission.py`](test_submission.py) | Submitting, following and reattaching, and which exit codes are a verdict |
-| [`test_cluster_adapter.py`](test_cluster_adapter.py) | How the real Kubernetes adapter translates the client library's failures, and bounds every call by a request timeout |
+| [`test_cluster_adapter.py`](test_cluster_adapter.py) | How the real Kubernetes adapter translates the client library's failures, and bounds every call by a request timeout, the opening of a port-forward included, and asks whether a port-forward is allowed as `kubectl auth can-i` does |
+| [`test_port_forward.py`](test_port_forward.py) | The local port `dokimi prometheus` listens on: each connection relayed both ways through a channel of its own, a late answer after the client stopped sending, and a refused channel ending only its connection |
 | [`test_kubernetes_adapter.py`](test_kubernetes_adapter.py) | The per-kind resource adapter builds real client methods, maps HTTP status to errors, and bounds every call by a request timeout |
 | [`test_cli.py`](test_cli.py) | Every command, and the exit code each produces |
+| [`test_completion.py`](test_completion.py) | Shell completion: the scripts follow the parser, every option that takes a value has a decided completion, and each script completes in a real bash, zsh and fish. A shell that isn't installed is skipped, except in CI |
 | [`test_images.py`](test_images.py) | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | Both Dockerfiles and the release wiring keep their promises |

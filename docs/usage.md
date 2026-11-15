@@ -11,6 +11,8 @@ $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
+$ dokimi prometheus <run-id>         # open the run's kept Prometheus on a local port
+$ dokimi completion zsh              # print the tab-completion script for your shell
 ```
 
 - [What a run does today](#what-a-run-does-today)
@@ -20,7 +22,9 @@ $ dokimi attach <run-id>             # resume streaming a run already going
 - [submit](#submit)
 - [preflight](#preflight)
 - [attach](#attach)
+- [prometheus](#prometheus)
 - [image](#image)
+- [completion](#completion)
 - [The run's reports](#the-runs-reports)
 - [Exit codes](#exit-codes)
 - [How nodes are resolved](#how-nodes-are-resolved)
@@ -55,7 +59,7 @@ phase 4 (preflight): monitoring mode managed (requested)
 phase 4 (preflight): Prometheus answers queries
   node-exporter pods  4 of 4 pods ready
   kept after the run; remove it with: kubectl delete deployment,service,configmap -n dokimi-iperf2 -l ...
-  query it from your machine with: kubectl port-forward -n dokimi-iperf2 service/run-20261002-120000-a1b2c3-prometheus 9090:9090
+  query it from your machine with: dokimi prometheus 20261002-120000-a1b2c3 --namespace dokimi-iperf2
 phase 4 (preflight): nodes worker-01, worker-02 accept test pods
 phase 4 (preflight): pair-001 scheduled, pulled its image and connected, as run-20261002-120000-a1b2c3-pair-001-preflight-client, run-20261002-120000-a1b2c3-pair-001-preflight-server
   UDP to the server pod at 10.244.2.7:5001 arrived, and kubernetes.default.svc resolved
@@ -490,6 +494,54 @@ definition takes `get` on the run's ConfigMaps. `--results-directory <dir>` extr
 instead, and needs no such read. Like `submit`, it then removes the run's Job, so a run's
 reports can be fetched once.
 
+## prometheus
+
+```console
+$ dokimi prometheus 20260924-200229-ca532a
+run 20260924-200229-ca532a's Prometheus: http://127.0.0.1:54817
+  the run started 2026-09-24T20:02:29Z, ended 2026-09-24T20:05:41Z
+  its series carry run_id="20260924-200229-ca532a"
+  forwarding until you press Ctrl-C, or kill 48213
+```
+
+Opens the Prometheus a run kept, from your machine: it listens on a local port and
+forwards every connection to the run's Prometheus pod, until you press Ctrl-C. Open the
+URL in a browser, or point a Grafana data source or `curl` at it. Every series the run
+produced carries its `run_id`, and the time range says which window holds them. A run
+whose owner is already gone, because it kept nothing and its reports were fetched, still
+has its start in its id; its end isn't recorded any more, so query from its start.
+
+Query at the run's time, not now. Prometheus marks a series stale five minutes after its
+last sample, so an instant query for now finds nothing once the run is that old. Give the
+time the command printed:
+
+```console
+$ curl -s 'http://127.0.0.1:54817/api/v1/query' \
+    --data-urlencode 'query=dokimi_throughput_bits_per_second{run_id="20260924-200229-ca532a"}' \
+    --data-urlencode 'time=2026-09-24T20:05:41Z'
+```
+
+To keep your terminal, run it in the background with `&`. Ctrl-C doesn't reach a
+background job, so stop it with `kill %1`, or `kill` and the process id it printed, or
+bring it back with `fg` and press Ctrl-C. Either way it stops the same: it closes the local
+port, says "stopped forwarding" and exits `0`. Nothing is left behind in the cluster: a
+port-forward isn't an object there.
+
+`--port <n>` listens on that port instead of a free one. Like `attach`, it finds the run
+by its labels in its namespace, so it works from any machine; pass `--namespace` if the
+run is somewhere else.
+
+It needs no `kubectl`. Each connection opens a port-forward of its own, which takes
+`create` on `pods/portforward` in the run's namespace, besides `list` on Deployments and
+Pods and `get` on ConfigMaps to find the run. It asks the API server whether it may
+before it listens, as `kubectl auth can-i create pods/portforward` does. If it may not, it
+says so and exits `3`. A port-forward that fails later is reported per connection, and
+forwarding goes on.
+
+A run whose Prometheus was removed, with `dokimi cleanup --prometheus` or by hand, or that
+never deployed one, says so and exits `3`, as `attach` does for a run it can't find. A
+Prometheus whose pod isn't ready exits `5`.
+
 ## image
 
 ```console
@@ -508,6 +560,43 @@ in a source checkout, is listed as such with how to choose one, and `dokimi imag
 exits `0`: it is a diagnostic, and `submit` is what refuses. See
 [Choosing the orchestrator image](#choosing-the-orchestrator-image) and
 [Choosing the images a run deploys](#choosing-the-images-a-run-deploys).
+
+## completion
+
+```console
+$ eval "$(dokimi completion bash)"
+$ source <(dokimi completion zsh)
+$ dokimi completion fish | source
+```
+
+Prints a script that makes your shell complete `dokimi`: its commands, every flag, the values a
+flag accepts from a fixed set (`--retain`, `--to`, the shells here), the components `--image`
+takes, and files. A definition is completed from `.yaml`, `.yml` and `.robot` files and
+directories, `--kubeconfig` from files, and `--results-directory` from directories. Nothing that
+only the cluster knows is completed, such as run ids, namespaces or contexts, and nothing is
+offered for a value only you know, such as `--run-id`.
+
+The script is generated from the CLI's own parser, so it matches the version that printed it.
+It runs in the shell alone: no Python starts when you press tab.
+
+The lines above load it into the current shell. To have it in every new shell, either load it at
+start-up or save it once:
+
+| Shell | Load it at start-up | Or save it once |
+| --- | --- | --- |
+| bash | `eval "$(dokimi completion bash)"` in `~/.bashrc` | `dokimi completion bash > ~/.local/share/bash-completion/completions/dokimi`, with the bash-completion package installed |
+| zsh | `source <(dokimi completion zsh)` in `~/.zshrc`, after `compinit` | `mkdir -p ~/.zfunc` and `dokimi completion zsh > ~/.zfunc/_dokimi`, with `fpath=(~/.zfunc $fpath)` in `~/.zshrc` before `compinit` |
+| fish | `dokimi completion fish \| source` in `~/.config/fish/config.fish` | `dokimi completion fish > ~/.config/fish/completions/dokimi.fish` |
+
+A saved script stays as it was, so save it again after upgrading dokimi. Loading it at start-up
+always matches the installed version.
+
+It completes the `dokimi` command, so it needs `dokimi` on your `PATH`, as
+`uv tool install .` puts it there ([Installation](installation.md#installing)). `uv run dokimi`
+is not completed.
+
+On bash 3.2, the version macOS ships, use `eval` as above: there, `source <(...)` silently reads
+nothing. Directories are offered without their trailing slash on bash 3.2.
 
 ## The run's reports
 
@@ -966,10 +1055,11 @@ the exact command to retry, with the flags you gave.
 **Every run leaves its Prometheus behind**, on purpose: the run's history outlives the
 run. It has no owner reference, so removing the run's owner leaves it alone, and `dokimi
 cleanup` removes it only with `--prometheus`. Phase 4 prints the command that removes one
-run's Prometheus, and the one that reaches it from your machine:
+run's Prometheus, and the one that reaches it from your machine, [`dokimi
+prometheus`](#prometheus):
 
 ```console
-$ kubectl port-forward -n dokimi-iperf2 service/run-20260924-200229-ca532a-prometheus 9090:9090
+$ dokimi prometheus 20260924-200229-ca532a --namespace dokimi-iperf2
 ```
 
 To remove every kept Prometheus at once:
