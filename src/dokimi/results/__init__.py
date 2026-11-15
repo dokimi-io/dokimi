@@ -30,6 +30,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -137,6 +138,10 @@ def records_for_tests(
     *measurements* and *history* are by test id: what each test read directly, and whether
     Prometheus came to hold it. A test without a measurement has empty metric columns,
     and its outcome says why.
+
+    A record carries the run's start but not its end. These records are written before
+    the run ends, in phase 9b, and the run's end, its exit code and its cleanup are only
+    known in phase 11. So they are in ``run.json``, which is written then, and not here.
     """
     outcomes = {test.test_id: test for test in tests}
     records = []
@@ -149,7 +154,7 @@ def records_for_tests(
             "cluster": identity.cluster,
             "run_started_at": format_timestamp(identity.started_at),
             "test_id": pair.test_id,
-            "repetition": "" if measurement is None else measurement.labels.get("repetition", ""),
+            "repetition": None if measurement is None else _repetition(measurement.labels),
             "test_type": definition.test_type.value,
             "protocol": definition.protocol.value,
             "source_node": pair.source.name,
@@ -168,7 +173,7 @@ def records_for_tests(
         }
         for column in METRIC_COLUMNS:
             value = None if measurement is None else measurement.values.get(f"dokimi_{column}")
-            record[column] = value
+            record[column] = _finite(value)
         records.append(record)
     return records
 
@@ -245,7 +250,7 @@ def write_run_record(directory: Path, record: Mapping[str, Any]) -> Path:
     path = directory / RUN_RECORD
     document = {"schema": SCHEMA_VERSION, **record}
     path.write_text(
-        json.dumps(document, indent=2, default=_json_default) + "\n",
+        json.dumps(document, indent=2, default=_json_default, allow_nan=False) + "\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -278,6 +283,22 @@ def _detail(test: TestOutcome | None) -> str | None:
     return None
 
 
+def _repetition(labels: Mapping[str, str]) -> int | None:
+    """The ``repetition`` label as the number it counts, or none where it isn't one."""
+    value = labels.get("repetition", "")
+    return int(value) if value.isdecimal() else None
+
+
+def _finite(value: float | None) -> float | None:
+    """A metric value, or none where it isn't a finite number.
+
+    An exporter's ``NaN`` or ``+Inf`` parses as a float, and validation makes its test an
+    ``exporter_parse`` error. JSON has no such number, so the value is left out, ``null``
+    and an empty cell, and the record's outcome and category say why.
+    """
+    return None if value is None or not math.isfinite(value) else value
+
+
 def _number(value: Decimal) -> int | float:
     """A definition's exact number, as JSON and CSV write it: an int where it is whole."""
     return int(value) if value == value.to_integral_value() else float(value)
@@ -305,7 +326,12 @@ def _csv(columns: Sequence[str], records: Iterable[Mapping[str, Any]]) -> str:
 
 def _jsonl(columns: Sequence[str], records: Iterable[Mapping[str, Any]]) -> str:
     return "".join(
-        json.dumps({column: record.get(column) for column in columns}, default=_json_default) + "\n"
+        json.dumps(
+            {column: record.get(column) for column in columns},
+            default=_json_default,
+            allow_nan=False,
+        )
+        + "\n"
         for record in records
     )
 

@@ -39,6 +39,7 @@ from dokimi.validation import (
 from tests.fake_cluster import node
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "worker-01-to-worker-02-udp.yaml"
+USAGE = Path(__file__).resolve().parent.parent / "docs" / "usage.md"
 DEFINITION = parse_file(EXAMPLE)
 IDENTITY = RunIdentity(
     "20261002-120000-a1b2c3", "lab-fra-1", datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
@@ -111,7 +112,7 @@ def test_a_test_record_carries_the_run_the_test_and_its_parameters(tmp_path: Pat
         "cluster": "lab-fra-1",
         "run_started_at": "2026-10-02T12:00:00Z",
         "test_id": "pair-001",
-        "repetition": "1",
+        "repetition": 1,
         "test_type": "iperf2",
         "protocol": "udp",
         "source_node": "worker-01",
@@ -133,6 +134,49 @@ def test_the_metric_values_are_the_ones_the_test_read(tmp_path: Path) -> None:
     for name, value in MEASURED.items():
         assert record[name.removeprefix("dokimi_")] == value
     assert record["history_captured"] is None
+
+
+def test_a_value_that_is_not_a_finite_number_is_left_out_of_both_files(tmp_path: Path) -> None:
+    # An exporter's NaN or Inf parses as a float, but JSON has no such number: a bare NaN
+    # would make the line invalid for any strict reader. Validation already made the test
+    # an exporter_parse error, which its record says.
+    values = {
+        **MEASURED,
+        "dokimi_jitter_seconds": float("nan"),
+        "dokimi_throughput_bits_per_second": float("inf"),
+        "dokimi_packet_loss_percent": float("-inf"),
+    }
+    measurement = Measurement("pair-001", "inbound", values, measured().labels)
+    tests = [read_outcome(tmp_path, "pair-001")]
+    test_rows = records_for_tests(IDENTITY, DEFINITION, PLAN, tests, {"pair-001": measurement}, {})
+
+    write_records(tmp_path, test_rows, [])
+
+    def strict(constant: str) -> None:
+        raise AssertionError(f"{constant} is not JSON")
+
+    line = (tmp_path / "tests.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    record = json.loads(line, parse_constant=strict)
+    assert record["jitter_seconds"] is None
+    assert record["throughput_bits_per_second"] is None
+    assert record["packet_loss_percent"] is None
+    assert record["transferred_bytes"] == MEASURED["dokimi_transferred_bytes"]
+    with (tmp_path / "tests.csv").open(encoding="utf-8", newline="") as file:
+        rows = list(csv.reader(file))
+    first = dict(zip(TEST_COLUMNS, rows[1], strict=True))
+    assert first["jitter_seconds"] == first["throughput_bits_per_second"] == ""
+    assert first["packet_loss_percent"] == ""
+
+
+def test_a_repetition_is_a_number_and_none_without_a_measurement(tmp_path: Path) -> None:
+    tests, measurements = recorded(tmp_path)
+
+    measured_test, unmeasured = records_for_tests(
+        IDENTITY, DEFINITION, PLAN, tests, measurements, {}
+    )
+
+    assert measured_test["repetition"] == 1
+    assert unmeasured["repetition"] is None
 
 
 def test_a_planned_test_that_wrote_nothing_is_an_error_with_its_reason(tmp_path: Path) -> None:
@@ -226,6 +270,17 @@ def test_files_with_nothing_in_them_still_have_their_header(tmp_path: Path) -> N
 
     assert (tmp_path / "tests.csv").read_text(encoding="utf-8") == ",".join(TEST_COLUMNS) + "\n"
     assert (tmp_path / "assertions.jsonl").read_text(encoding="utf-8") == ""
+
+
+def test_the_usage_guide_names_every_column(tmp_path: Path) -> None:
+    # The columns are an interface: one appended without a line in the guide would be
+    # an undocumented one.
+    guide = USAGE.read_text(encoding="utf-8")
+    section = guide[guide.index("### The result files") : guide.index("### validation.json")]
+
+    missing = [c for c in (*TEST_COLUMNS, *ASSERTION_COLUMNS) if f"`{c}`" not in section]
+
+    assert missing == []
 
 
 def test_the_run_record_leads_with_its_schema(tmp_path: Path) -> None:

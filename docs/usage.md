@@ -560,7 +560,9 @@ criterion and pair, each as CSV and as JSONL, the same records serialized twice.
 written from what each test itself recorded, its directly read measurement and what its
 criteria came to, so a value in them is the value the verdict was computed from. Each
 carries `schema`, `1` today: a column may be added at the end, and removing, renaming or
-reordering one raises it. An empty CSV cell is a JSON `null`.
+reordering one raises it. An empty CSV cell is a JSON `null`. A metric an exporter reported
+as `NaN` or `Inf` is empty too, since JSON has no such number; its test is an `error` with
+the category `exporter_parse`.
 
 `tests.csv` and `tests.jsonl`, one record per planned test, whatever it came to:
 
