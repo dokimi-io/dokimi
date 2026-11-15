@@ -36,8 +36,7 @@ $ dokimi completion zsh              # print the tab-completion script for your 
 
 ## What a run does today
 
-Milestone-01 is not finished: the CSV and JSONL result files are not built yet. Everything
-else a run does works. It parses its definition, resolves its two nodes against the
+A run goes from submission to its verdict, and leaves its results in files. It parses its definition, resolves its two nodes against the
 cluster, plans the pair, claims the cluster, starts its own Prometheus, with a
 node-exporter when the cluster has none, and checks that it answers. It checks that the
 cluster can run the pair, and then **runs the test through Robot Framework**: it renders
@@ -78,7 +77,7 @@ phase 8 (validation): pair-001 fail, 2 criterion(s)
   pass  Packet Loss Should Be At Most 0 percent: 0 percent
 
 phase 9a (reporting): /work/artifacts/20261002-120000-a1b2c3/log.html, .../report.html
-phase 9b (results): the CSV and JSONL result files are not built yet. Each test's outcome is in phase 8 above, in its validation.json and in Robot's report
+phase 9b (results): 1 test(s) in tests.csv and tests.jsonl, 2 assertion(s) in assertions.csv and assertions.jsonl
 
 phase 10 (diagnostics): 5 pod(s), 1 pair(s), none down
   run-20261002-120000-a1b2c3-pair-001-client on worker-01: Running
@@ -615,6 +614,9 @@ results/20261002-120000-a1b2c3/
   pairs/         one output.xml per pair, what its test read directly
                  (<test-id>.measurement.json), and what its criteria came to
                  (<test-id>.validation.json)
+  tests.csv, tests.jsonl            one record per test: what it measured and came to
+  assertions.csv, assertions.jsonl  one record per criterion and pair, passing ones included
+  run.json          the run's record: its configuration, images, outcome and cleanup
   measurement.json  every test's directly read values, and what Prometheus held of them
   diagnostics.json  where every pod ran, how it ended, and any anomaly (phase 10)
 ```
@@ -639,6 +641,52 @@ Two consequences of carrying them in the log:
   block that didn't arrive whole leaves the Job in place, so you can reattach.
 - **The Job's raw log ends with a block of base64.** `kubectl logs` shows it; `submit` and
   `attach` never do.
+
+### The result files
+
+Every run writes its results, without being asked: one record per test, and one per
+criterion and pair, each as CSV and as JSONL, the same records serialized twice. They are
+written from what each test itself recorded, its directly read measurement and what its
+criteria came to, so a value in them is the value the verdict was computed from. Each
+carries `schema`, `1` today: a column may be added at the end, and removing, renaming or
+reordering one raises it. An empty CSV cell is a JSON `null`. A metric an exporter reported
+as `NaN` or `Inf` is empty too, since JSON has no such number; its test is an `error` with
+the category `exporter_parse`.
+
+`tests.csv` and `tests.jsonl`, one record per planned test, whatever it came to:
+
+| Column | What it holds |
+| --- | --- |
+| `schema`, `run_id`, `cluster`, `run_started_at` | The record's version, and the run |
+| `test_id`, `repetition`, `test_type`, `protocol`, `source_node`, `target_node` | The test |
+| `duration_seconds`, `target_bandwidth_bits_per_second` | What the definition asked for |
+| `outcome`, `error_category`, `error_detail` | `pass`, `fail` or `error`, and for an error why: its category, or its criteria's |
+| `measurement_source`, `measurement_direction`, `history_captured` | Where the values come from (`direct`, `inbound`), and whether Prometheus came to hold them |
+| `jitter_seconds`, `packet_loss_percent`, `test_duration_seconds`, `throughput_bits_per_second`, `transferred_bytes` | Every result metric, in base units, empty where the test has none |
+
+`assertions.csv` and `assertions.jsonl`, one record per criterion and pair, passing or not:
+
+| Column | What it holds |
+| --- | --- |
+| `schema`, `run_id`, `cluster`, `test_id`, `source_node`, `target_node` | The record's version, the run and the pair |
+| `criterion` | The criterion as the suite writes it |
+| `metric`, `statistic`, `comparison`, `threshold`, `unit` | The criterion's fields; the threshold as written |
+| `measured` | The measured value in the criterion's unit, as a decimal string: exactly what was compared |
+| `outcome`, `error_category`, `error_detail` | `pass`, `fail` or `error`, and for an error why |
+| `promql_equivalent` | How to find the pairs that violate it in the run's Prometheus |
+
+`run.json`, written last, once the run's verdict and cleanup are known:
+
+| Field | What it holds |
+| --- | --- |
+| `schema`, `run_id`, `cluster`, `namespace`, `started_at`, `ended_at`, `preflight_only` | The run |
+| `outcome`, `exit_code` | What it came to; both `null` for a run that stopped on an error, and `stopped` says which |
+| `tests` | How many tests were planned, and how many passed, failed and errored |
+| `retained` | Why the run kept its evidence, or `null` |
+| `cleanup` | `complete`, and if not, the `cleanup` category and the problem; the test pods it kept |
+| `configuration` | The effective configuration: the definition as YAML, `--retain`, the namespace and the cluster's name |
+| `images` | Each image it ran: its reference, its digest where it is pinned by one, and where it came from |
+| `plan`, `monitoring`, `scrape_targets` | The plan, the Prometheus it used, and how many of each scrape pool's targets were up or down |
 
 ### validation.json
 

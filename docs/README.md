@@ -26,5 +26,5 @@ a subset of it.
 
 Milestone-01 is in progress. A run goes from submission to its verdict: it checks the
 cluster, runs the test, measures it, evaluates the pass criteria, records where everything
-ran, cleans up, and exits with `0`, `1` or `2`. The CSV and JSONL result files are still
-being built. [Usage](usage.md#what-a-run-does-today) says exactly what a run does.
+ran, writes its results as CSV and JSONL, cleans up, and exits with `0`, `1` or `2`.
+[Usage](usage.md#what-a-run-does-today) says exactly what a run does.

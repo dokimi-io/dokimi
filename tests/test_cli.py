@@ -534,10 +534,14 @@ def test_a_failed_cluster_check_exits_4_and_runs_nothing(
     assert "cluster not ready (dns): the probe of pair-001 (worker-01 -> worker-02)" in err
     assert "Traceback" not in err
     assert robot.runs == []
-    # No test results: phase 10's snapshot is all the run writes. It records the probe's
-    # pods, which were still there, without making the pair look started or an anomaly.
+    # No test results: phase 10's snapshot and the run's own record are all it writes. The
+    # snapshot records the probe's pods, which were still there, without making the pair
+    # look started or an anomaly.
     run_artifacts = tmp_path / "artifacts" / RUN_ID
-    assert sorted(path.name for path in run_artifacts.iterdir()) == ["diagnostics.json"]
+    assert sorted(path.name for path in run_artifacts.iterdir()) == ["diagnostics.json", "run.json"]
+    record = json.loads((run_artifacts / "run.json").read_text())
+    assert (record["outcome"], record["exit_code"]) == (None, None)
+    assert record["stopped"].startswith("cluster not ready (dns)")
     report = json.loads((run_artifacts / "diagnostics.json").read_text())
     assert report["pairs"][0]["started"] is False
     assert {pod["test_id"] for pod in report["pods"]} == {"pair-001-preflight"}
@@ -1734,6 +1738,78 @@ def test_phase_8_prints_each_tests_outcome_as_its_robot_process_decided_it(
     assert "  pass  Packet Loss Should Be At Most 0 percent: 0 percent" in out
     # The worst test outcome is the run's exit code.
     assert code == ExitCode.FAIL
+
+
+def test_phase_9b_writes_the_result_files_from_what_the_tests_recorded(
+    job_cluster: FakeCluster,
+    robot: FakeRobotRunner,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Acceptance criteria: both files, without being asked for, every assertion in them,
+    # and the values the verdict came from.
+    pair = ExpectedPair("pair-001", "worker-01", "worker-02")
+    measurement = Measurement("pair-001", "inbound", MEASURED, {})
+    robot.measures = MEASURED
+    robot.validates = [
+        evaluate(criterion, {"pair-001": measurement}, [pair])
+        for criterion in parse_file(EXAMPLE).criteria
+    ]
+
+    main(EXECUTE)
+
+    out = capsys.readouterr().out
+    assert (
+        "phase 9b (results): 1 test(s) in tests.csv and tests.jsonl, "
+        "2 assertion(s) in assertions.csv and assertions.jsonl"
+    ) in out
+    artifacts = tmp_path / "artifacts" / RUN_ID
+    (test,) = [json.loads(line) for line in (artifacts / "tests.jsonl").read_text().splitlines()]
+    assert (test["test_id"], test["outcome"], test["cluster"]) == (
+        "pair-001",
+        "fail",
+        "test-cluster",
+    )
+    assert test["throughput_bits_per_second"] == MEASURED["dokimi_throughput_bits_per_second"]
+    assertions = [
+        json.loads(line) for line in (artifacts / "assertions.jsonl").read_text().splitlines()
+    ]
+    assert [(a["metric"], a["outcome"], a["measured"]) for a in assertions] == [
+        ("throughput", "fail", "49.983531"),
+        ("packetLoss", "pass", "0.0"),
+    ]
+    assert (artifacts / "tests.csv").is_file()
+    assert (artifacts / "assertions.csv").is_file()
+
+
+def test_the_run_record_says_what_the_run_came_to_and_what_it_kept(
+    job_cluster: FakeCluster, robot: FakeRobotRunner, tmp_path: Path
+) -> None:
+    pair = ExpectedPair("pair-001", "worker-01", "worker-02")
+    measurement = Measurement("pair-001", "inbound", MEASURED, {})
+    robot.measures = MEASURED
+    robot.validates = [
+        evaluate(criterion, {"pair-001": measurement}, [pair])
+        for criterion in parse_file(EXAMPLE).criteria
+    ]
+
+    code = main(EXECUTE)
+
+    record = json.loads((tmp_path / "artifacts" / RUN_ID / "run.json").read_text())
+    assert record["schema"] == 1
+    assert (record["run_id"], record["cluster"]) == (RUN_ID, "test-cluster")
+    assert (record["outcome"], record["exit_code"], record["stopped"]) == ("fail", code, None)
+    assert record["tests"] == {"planned": 1, "pass": 0, "fail": 1, "error": 0}
+    assert record["retained"] == "fail"
+    assert record["cleanup"]["complete"] is True
+    assert record["cleanup"]["category"] is None
+    assert "worker-01" in record["configuration"]["definition"]
+    assert record["configuration"]["retain"] == "on-failure"
+    assert set(record["images"]) >= {"iperf2", "orchestrator"}
+    assert record["plan"]["planned_tests"] == 1
+    assert record["monitoring"]["monitoring_mode"] == "managed"
+    # The supporting exporters' targets, up or down, while they still existed.
+    assert record["scrape_targets"] == {"node-exporter": {"up": 1, "down": 0, "unknown": 0}}
 
 
 def test_a_test_with_no_criteria_is_an_error_in_phase_8(
