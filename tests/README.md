@@ -54,7 +54,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_images.py`](test_images.py) | Orchestrator image resolution and override precedence |
 | [`test_run_images.py`](test_run_images.py) | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | Both Dockerfiles and the release wiring keep their promises |
-| [`test_test_env.py`](test_test_env.py) | The test environment's configs, scripts, README and CI workflow agree with each other |
+| [`test_test_env.py`](test_test_env.py) | The test environment's configs, scripts, README and CI workflow agree with each other, and the acceptance run's definitions and worker choice |
 | [`test_workflows.py`](test_workflows.py) | Every GitHub Action the workflows use is pinned to a commit, and every runner to an Ubuntu release |
 | [`test_tests_readme.py`](test_tests_readme.py) | This README lists every test file, and only those |
 | [`test_rbac.py`](test_rbac.py) | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |

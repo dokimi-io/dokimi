@@ -201,6 +201,32 @@ The worker names differ by tool: kind calls them `dokimi-worker`, `-worker2` and
 `-worker3`, and k3d calls them `k3d-dokimi-agent-0` to `-agent-2`. `nodes` prints
 whichever this cluster has.
 
+## The acceptance run
+
+`acceptance.py` is Milestone-01's end-to-end check (M1-17). It submits real runs through the
+CLI, as a user would, and checks what each one exits with, what reaches `results/<run-id>/`,
+and what it leaves in the cluster:
+
+```console
+$ test-env/test-env.sh up kind-kindnet
+$ out=$(test-env/test-env.sh images) && eval "$out"
+$ kubectl apply -f deploy/rbac.yaml
+$ export KUBECONFIG=.test-env/kubeconfig
+$ uv run python test-env/acceptance.py                # every scenario
+$ uv run python test-env/acceptance.py happy-path     # or some of them
+```
+
+| Scenario | What it checks |
+| --- | --- |
+| `happy-path` | A passing run exits `0`, brings back `output.xml`, `log.html`, `report.html`, the CSV and JSONL result files, `run.json` and `diagnostics.json`, and leaves only its Prometheus |
+| `unknown-node` | A node the cluster doesn't have is a config error, exit `3`, and nothing is created |
+
+It uses the first two schedulable workers, or `--source` and `--target`. Its passing run asks
+for 1 megabit per second at a 10 megabit target and at most 10 percent loss: little enough that
+any cluster that runs the test at all meets it, since this environment's numbers say nothing
+about real hardware. Every run it starts is removed again at the end, its Prometheus included,
+unless `--keep` is given. CI runs it on `kind-kindnet`, after `check`.
+
 ## Things that will catch you out
 
 - **Side-load an image you built, not a public image you re-tagged.** Re-tagging a pulled
