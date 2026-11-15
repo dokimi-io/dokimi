@@ -58,6 +58,7 @@ _FREE = frozenset(
         "older_than",
         "cluster_name",
         "image_override",
+        "port",
     }
 )
 

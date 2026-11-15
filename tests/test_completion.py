@@ -22,7 +22,17 @@ from dokimi.cli.exit_codes import ExitCode
 from dokimi.cli.main import build_parser, main
 from dokimi.run_images import COMPONENTS
 
-LISTED = ("validate", "convert", "submit", "preflight", "attach", "cleanup", "image", "completion")
+LISTED = (
+    "validate",
+    "convert",
+    "submit",
+    "preflight",
+    "attach",
+    "cleanup",
+    "prometheus",
+    "image",
+    "completion",
+)
 IMAGE_PREFIXES = sorted(f"{component}=" for component in COMPONENTS)
 
 
@@ -160,6 +170,7 @@ def _bash(script: Path, directory: Path, *words: str) -> list[str]:
         (["dokimi", "attach", "-n", ""], []),
         (["dokimi", "attach", "--results-directory", ""], ["suites"]),
         (["dokimi", "cleanup", ""], []),
+        (["dokimi", "prometheus", "--port", ""], []),
         (["dokimi", "completion", ""], ["bash", "fish", "zsh"]),
         (["dokimi", "ex"], []),
     ],

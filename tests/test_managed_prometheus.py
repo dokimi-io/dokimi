@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from dokimi.k8s.deadlines import DeadlineBudget, bound_pod
-from dokimi.k8s.exclusivity import claim_run
+from dokimi.k8s.exclusivity import claim_run, mark_finished
 from dokimi.k8s.ownership import (
     COMPONENT_LABEL,
     PROMETHEUS_COMPONENT,
@@ -25,8 +25,11 @@ from dokimi.k8s.ownership import (
     RunOwnership,
     delete_run_owned,
     owner_manifest,
+    owner_name,
+    ownership_labels,
 )
 from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, POD, SERVICE, Manifest
+from dokimi.metrics.kept import find_kept_prometheus
 from dokimi.metrics.managed import (
     EXPORTER_JOB,
     EXPORTER_PORT_NAME,
@@ -44,7 +47,7 @@ from dokimi.metrics.managed import (
     managed_manifests,
     node_exporter_manifest,
     node_exporter_status,
-    port_forward_command,
+    open_command,
     provide_node_exporter,
     provision_managed_prometheus,
     removal_command,
@@ -490,8 +493,8 @@ def test_a_node_exporter_already_gone_is_not_an_error() -> None:
 def test_a_kept_prometheus_is_reached_through_a_port_forward() -> None:
     prometheus = provision_managed_prometheus(owned(FakeResources()), NAMESPACE)
 
-    assert port_forward_command(prometheus) == (
-        f"kubectl port-forward -n {NAMESPACE} service/{NAME} 9090:9090"
+    assert open_command(prometheus) == (
+        f"dokimi prometheus {prometheus.run_id} --namespace {NAMESPACE}"
     )
 
 
@@ -620,3 +623,90 @@ def test_a_status_not_reported_yet_is_said_so_rather_than_guessed() -> None:
     exporter = with_status(cluster)
 
     assert node_exporter_status(cluster, exporter) == (True, "pods not reported yet")
+
+
+# -- the kept Prometheus, after the run ------------------------------------------------------
+
+
+def prometheus_pod(
+    cluster: FakeResources, name: str, *, ready: bool = True, run: RunId = RUN
+) -> None:
+    """The pod the Prometheus Deployment would run: the fake has no controller."""
+    status = "True" if ready else "False"
+    cluster.put(
+        POD,
+        NAMESPACE,
+        {
+            "metadata": {
+                "name": name,
+                "labels": ownership_labels(run, component=PROMETHEUS_COMPONENT),
+            },
+            "status": {
+                "phase": "Running" if ready else "Pending",
+                "conditions": [{"type": "Ready", "status": status}],
+            },
+        },
+    )
+
+
+def test_a_kept_prometheus_is_found_by_its_runs_labels() -> None:
+    cluster = FakeResources()
+    provision_managed_prometheus(owned(cluster), NAMESPACE)
+    prometheus_pod(cluster, f"{NAME}-7d9f6c5b8-x2kqp")
+    finished = datetime(2026, 9, 24, 14, 33, 40, tzinfo=UTC)
+    mark_finished(cluster, RUN, namespace=NAMESPACE, now=lambda: finished)
+
+    kept = find_kept_prometheus(cluster, RUN, NAMESPACE)
+
+    assert kept is not None
+    assert kept.pod == f"{NAME}-7d9f6c5b8-x2kqp"
+    assert kept.problem is None
+    assert kept.started_at == datetime(2026, 9, 24, 14, 30, 12, tzinfo=UTC)
+    assert kept.finished_at == finished
+
+
+def test_a_removed_prometheus_is_none() -> None:
+    # Removed with `dokimi cleanup --prometheus`, or never deployed: the cluster's own
+    # Prometheus was used.
+    cluster = FakeResources()
+    owned(cluster)
+
+    assert find_kept_prometheus(cluster, RUN, NAMESPACE) is None
+
+
+def test_another_runs_prometheus_is_never_found() -> None:
+    cluster = FakeResources()
+    other = RunId("20260924-150000-zzzzzz")
+    provision_managed_prometheus(owned(cluster, other), NAMESPACE)
+    prometheus_pod(cluster, "theirs", run=other)
+    owned(cluster)
+
+    assert find_kept_prometheus(cluster, RUN, NAMESPACE) is None
+
+
+def test_a_prometheus_without_a_ready_pod_says_why() -> None:
+    cluster = FakeResources()
+    provision_managed_prometheus(owned(cluster), NAMESPACE)
+    prometheus_pod(cluster, "starting", ready=False)
+
+    kept = find_kept_prometheus(cluster, RUN, NAMESPACE)
+
+    assert kept is not None
+    assert kept.pod is None
+    assert kept.problem == "none of its pods is ready (starting Pending)"
+
+
+def test_a_run_whose_owner_is_gone_has_no_recorded_end() -> None:
+    # A run that kept nothing loses its owner once its reports are fetched; its
+    # Prometheus stays, and its start is still in its id.
+    cluster = FakeResources()
+    provision_managed_prometheus(owned(cluster), NAMESPACE)
+    prometheus_pod(cluster, "ready")
+    owner = cluster.get(CONFIG_MAP, NAMESPACE, owner_name(RUN))
+    cluster.delete(CONFIG_MAP, NAMESPACE, owner_name(RUN), uid=owner["metadata"]["uid"])
+
+    kept = find_kept_prometheus(cluster, RUN, NAMESPACE)
+
+    assert kept is not None
+    assert (kept.finished_at, kept.owner_found) == (None, False)
+    assert kept.started_at == RUN.started_at

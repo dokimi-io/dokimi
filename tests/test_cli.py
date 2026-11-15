@@ -6,8 +6,17 @@ as values rather than as "non-zero".
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import signal
+import socket
+import sys
+import threading
+import time
 import urllib.parse
+import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +44,7 @@ from dokimi.k8s.ownership import (
     owner_name,
     ownership_labels,
 )
+from dokimi.k8s.port_forward import PortRelay
 from dokimi.k8s.resources import CONFIG_MAP, DAEMON_SET, DEPLOYMENT, JOB, POD
 from dokimi.measurement import Measurement
 from dokimi.metrics.prometheus import PrometheusClient, Response
@@ -729,8 +739,7 @@ def test_execute_says_how_to_reach_its_kept_prometheus(
     main(EXECUTE)
 
     assert (
-        "query it from your machine with: kubectl port-forward -n dokimi-iperf2 "
-        f"service/run-{RUN_ID}-prometheus 9090:9090"
+        f"query it from your machine with: dokimi prometheus {RUN_ID} --namespace dokimi-iperf2"
     ) in capsys.readouterr().out
 
 
@@ -2204,3 +2213,230 @@ def test_a_node_exporter_left_by_a_crashed_run_is_named_with_its_cleanup(
         f"remove what that run left with: dokimi cleanup {crashed} --namespace dokimi-iperf2"
         in capsys.readouterr().err
     )
+
+
+# -- prometheus ---------------------------------------------------------------
+
+
+def kept_prometheus(fake: FakeCluster, *, ready: bool = True) -> str:
+    """A run's kept Prometheus, with the pod its Deployment runs. Returns the pod's name."""
+    from dokimi.k8s.ownership import RunOwnership  # noqa: PLC0415
+    from dokimi.metrics.managed import provision_managed_prometheus  # noqa: PLC0415
+
+    provision_managed_prometheus(RunOwnership(fake.store, RunId(RUN_ID)), "dokimi-iperf2")
+    name = f"run-{RUN_ID}-prometheus-7d9f6c5b8-x2kqp"
+    fake.store.put(
+        POD,
+        "dokimi-iperf2",
+        {
+            "metadata": {
+                "name": name,
+                "labels": ownership_labels(RunId(RUN_ID), component="prometheus"),
+            },
+            "status": {
+                "phase": "Running" if ready else "Pending",
+                "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+            },
+        },
+    )
+    return name
+
+
+def serves_http(body: bytes) -> Callable[[socket.socket], None]:
+    """The far end of a port-forward, answering one HTTP request as Prometheus would."""
+
+    def answer(channel: socket.socket) -> None:
+        request = b""
+        while b"\r\n\r\n" not in request:
+            chunk = channel.recv(4096)
+            if not chunk:
+                return
+            request += chunk
+        channel.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            + b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(body)
+            + body
+        )
+        channel.close()
+
+    return answer
+
+
+def test_prometheus_forwards_a_local_port_to_the_runs_kept_prometheus(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Acceptance criterion: it opens the kept Prometheus through a port-forward, with no
+    # kubectl, and prints its URL and the run's time range.
+    submitted(cluster, RUN_ID)
+    pod = kept_prometheus(cluster)
+    cluster.forwarded = serves_http(b'{"status":"success"}')
+    answers: list[bytes] = []
+
+    def query(relay: PortRelay) -> None:
+        host, port = relay.address
+        with urllib.request.urlopen(f"http://{host}:{port}/api/v1/query?query=up", timeout=5) as r:
+            answers.append(r.read())
+
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+        until=query,
+    )
+
+    assert code == ExitCode.PASS
+    assert answers == [b'{"status":"success"}']
+    assert cluster.forwards == [("dokimi-iperf2", pod, 9090)]
+    out = capsys.readouterr().out
+    assert f"run {RUN_ID}'s Prometheus: http://127.0.0.1:" in out
+    assert "the run started 2026-01-01T10:00:00Z, and has not finished yet" in out
+    assert f'its series carry run_id="{RUN_ID}"' in out
+    assert "stopped forwarding" in out
+
+
+def test_prometheus_says_when_the_run_ended(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dokimi.k8s.exclusivity import mark_finished  # noqa: PLC0415
+
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+    mark_finished(
+        cluster.store,
+        RunId(RUN_ID),
+        namespace="dokimi-iperf2",
+        now=lambda: datetime(2026, 1, 1, 10, 3, 10, tzinfo=UTC),
+    )
+
+    commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+        until=lambda relay: None,
+    )
+
+    assert "started 2026-01-01T10:00:00Z, ended 2026-01-01T10:03:10Z" in capsys.readouterr().out
+
+
+def test_a_run_whose_prometheus_was_removed_says_so_and_exits_3(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    submitted(cluster, RUN_ID)
+
+    assert main(["prometheus", RUN_ID]) == ExitCode.CONFIG_ERROR
+    assert (
+        f"run {RUN_ID} has no Prometheus in dokimi-iperf2: it was removed, with dokimi "
+        "cleanup --prometheus or by hand, or the run never deployed one"
+    ) in capsys.readouterr().err
+    assert cluster.forwards == []
+
+
+def test_a_prometheus_without_a_ready_pod_is_not_forwarded_to(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster, ready=False)
+
+    assert main(["prometheus", RUN_ID]) == ExitCode.INTERNAL
+    assert "none of its pods is ready" in capsys.readouterr().err
+    assert cluster.forwards == []
+
+
+def test_a_refused_port_forward_is_reported_and_forwarding_goes_on(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Without `create` on `pods/portforward`, each connection is refused, and says why.
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+
+    def connect_once(relay: PortRelay) -> None:
+        with socket.create_connection(relay.address, timeout=5) as connection:
+            connection.sendall(b"GET / HTTP/1.1\r\n\r\n")
+            with contextlib.suppress(OSError):
+                connection.recv(1024)
+        time.sleep(0.2)
+
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+        until=connect_once,
+    )
+
+    assert code == ExitCode.PASS
+    assert "could not forward a connection: forwarding to port 9090" in capsys.readouterr().err
+
+
+def test_credentials_that_may_not_forward_are_told_so_before_anything_listens(
+    cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A port-forward refused in its handshake doesn't say why, so it's asked up front.
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+    cluster.port_forward_allowed = False
+
+    assert main(["prometheus", RUN_ID]) == ExitCode.CONFIG_ERROR
+    captured = capsys.readouterr()
+    assert (
+        "may not open a port-forward in dokimi-iperf2. That takes `create` on "
+        "`pods/portforward` there."
+    ) in captured.err
+    assert "http://" not in captured.out
+    assert cluster.forwards == []
+
+
+def test_forwarding_goes_ahead_when_the_api_server_cant_say_whether_it_may(
+    cluster: FakeCluster,
+) -> None:
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+    cluster.port_forward_allowed = None
+
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+        until=lambda relay: None,
+    )
+
+    assert code == ExitCode.PASS
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP"])
+def test_kill_ends_forwarding_as_ctrl_c_does(
+    name: str, cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forward in the background doesn't get Ctrl-C: `kill` is how it's stopped, and it
+    # ends the same way, with "stopped forwarding" and 0, not 143.
+    number = getattr(signal, name)
+    before = signal.getsignal(number)
+    submitted(cluster, RUN_ID)
+    kept_prometheus(cluster)
+
+    def kill_once_listening() -> None:
+        deadline = time.monotonic() + 5
+        while signal.getsignal(number) == before and time.monotonic() < deadline:
+            time.sleep(0.01)
+        os.kill(os.getpid(), number)
+
+    threading.Thread(target=kill_once_listening, daemon=True).start()
+    code = commands.open_prometheus(
+        commands.Console(out=sys.stdout, err=sys.stderr),
+        run_id=RUN_ID,
+        connect_to=lambda **_kwargs: cluster,
+    )
+
+    assert code == ExitCode.PASS
+    out = capsys.readouterr().out
+    assert f"forwarding until you press Ctrl-C, or kill {os.getpid()}" in out
+    assert out.rstrip().endswith("stopped forwarding")
+    assert signal.getsignal(number) == before
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "http"])
+def test_prometheus_refuses_a_port_that_isnt_one(port: str) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["prometheus", RUN_ID, "--port", port])
+
+    assert exit_info.value.code == ExitCode.CONFIG_ERROR

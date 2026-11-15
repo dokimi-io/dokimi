@@ -156,6 +156,7 @@ $ dokimi submit test.yaml --dry-run  # render the matrix and the manifests
 $ dokimi submit test.yaml            # create the run and stream its logs
 $ dokimi preflight test.yaml         # check the cluster for that run, and run no test
 $ dokimi attach <run-id>             # resume streaming a run already going
+$ dokimi prometheus <run-id>         # open the run's kept Prometheus on a local port
 ```
 
 `submit` needs the cluster's name, `--cluster <name>` or `DOKIMI_CLUSTER`, which labels every
@@ -633,8 +634,9 @@ Prometheus produced their results.
 - **Kept after the run.** The objects carry the run's labels, so they stay attributable and
   removable by `run_id`, but they have no ownerReference, so deleting the run's owner does not
   cascade to them. Cleanup keeps them unless removal is requested. A kept Prometheus never blocks
-  the next run: exclusivity reads run owners only. Phase 4 prints the `kubectl` commands that
-  reach it through a port-forward and that remove it. What each one keeps is bounded to 512 MB of data in a 1 GiB volume.
+  the next run: exclusivity reads run owners only. `dokimi prometheus <run-id>` opens it on a
+  local port, with no `kubectl`, and phase 4 prints that command and the one that removes it.
+  What each one keeps is bounded to 512 MB of data in a 1 GiB volume.
 - **It runs as `dokimi-prometheus`**, a service account that `deploy/rbac.yaml` creates with
   read-only discovery rights. The images are upstream `quay.io/prometheus/prometheus:v3.15.0`
   and `quay.io/prometheus/node-exporter:v1.12.1`, both pinned by digest, and chosen like every
