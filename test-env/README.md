@@ -219,7 +219,7 @@ $ uv run python test-env/acceptance.py happy-path     # or some of them
 | Scenario | What it checks |
 | --- | --- |
 | `happy-path` | A passing run exits `0`, brings back `output.xml`, `log.html`, `report.html`, the CSV and JSONL result files, `run.json` and `diagnostics.json`, and leaves only its Prometheus |
-| `unknown-node` | A node the cluster doesn't have is a config error, exit `3`, and nothing is created |
+| `unknown-node` | A node the cluster doesn't have stops the run in phase 3 with exit `3`, names the node, and leaves nothing in the cluster |
 
 It uses the first two schedulable workers, or `--source` and `--target`. Its passing run asks
 for 1 megabit per second at a 10 megabit target and at most 10 percent loss: little enough that

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dokimi.k8s.identity import COMPONENT_LABEL, MANAGED_BY, MANAGED_BY_LABEL, RUN_ID_LABEL
+from dokimi.k8s.identity import COMPONENT_LABEL, RUN_ID_LABEL
 from dokimi.k8s.ownership import PROMETHEUS_COMPONENT
 
 #: The namespace the iperf2 test type runs in, as the CLI derives it.
@@ -182,15 +182,6 @@ class Acceptance:
         """Every object in the cluster that carries *run_id*'s label."""
         return _kubectl_items("all,configmaps", f"{RUN_ID_LABEL}={run_id}")
 
-    def runs_in_cluster(self) -> set[str]:
-        """The run ids any dokimi-managed owner or Job in the cluster carries."""
-        items = _kubectl_items("configmaps,jobs", f"{MANAGED_BY_LABEL}={MANAGED_BY}")
-        return {
-            str(i["metadata"]["labels"][RUN_ID_LABEL])
-            for i in items
-            if _labels(i).get(RUN_ID_LABEL)
-        }
-
 
 def _labels(item: Mapping[str, Any]) -> dict[str, str]:
     return dict((item.get("metadata") or {}).get("labels") or {})
@@ -213,6 +204,21 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _describe(items: Iterable[Mapping[str, Any]]) -> str:
     return ", ".join(f"{i['kind']}/{i['metadata']['name']}" for i in items) or "nothing"
+
+
+def _settled(
+    a: Acceptance, run_id: str, *, keep: Callable[[Mapping[str, Any]], bool]
+) -> list[dict[str, Any]]:
+    """What of *run_id* is still in the cluster besides what *keep* allows, once it settles.
+
+    The CLI removes the Job once it has the reports, and its pods go a moment later.
+    """
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while True:
+        left = [item for item in a.run_owned(run_id) if not keep(item)]
+        if not left or time.monotonic() > deadline:
+            return left
+        time.sleep(3)
 
 
 # --- scenarios ---------------------------------------------------------------------------
@@ -256,29 +262,30 @@ def happy_path(a: Acceptance) -> None:
             "run.json says its cleanup was complete",
         )
 
-    # The CLI removes the Job once it has the reports; its pods go a moment later.
-    deadline = time.monotonic() + SETTLE_SECONDS
-    while True:
-        left = [
-            i
-            for i in a.run_owned(result.run_id)
-            if _labels(i).get(COMPONENT_LABEL) != PROMETHEUS_COMPONENT
-        ]
-        if not left or time.monotonic() > deadline:
-            break
-        time.sleep(3)
+    left = _settled(
+        a,
+        result.run_id,
+        keep=lambda item: _labels(item).get(COMPONENT_LABEL) == PROMETHEUS_COMPONENT,
+    )
     a.check(not left, f"only its Prometheus is left in the cluster (also: {_describe(left)})")
 
 
 def unknown_node(a: Acceptance) -> None:
-    """A node the cluster doesn't have: a config error, exit 3, and nothing created."""
-    before = a.runs_in_cluster()
+    """A node the cluster doesn't have: a config error, exit 3, and nothing deployed.
+
+    The nodes are resolved in the Job, in phase 3, so the run is submitted. It stops before
+    phase 4 deploys anything, and once the CLI has fetched its log, nothing of it is left.
+    """
     result = a.submit("unknown-node", PASSING, target="no-such-node")
     a.check(result.exit_code == 3, f"it exits 3 (got {result.exit_code})")
-    a.check("no-such-node" in result.stderr, "the error names the node")
-    a.check(result.run_id is None, "no run was submitted")
-    created = a.runs_in_cluster() - before
-    a.check(not created, f"nothing was created in the cluster ({sorted(created) or 'nothing'})")
+    a.check(
+        "'no-such-node' does not exist" in result.stdout + result.stderr,
+        "the run's output names the node that doesn't exist",
+    )
+    if result.run_id is None:
+        return
+    left = _settled(a, result.run_id, keep=lambda item: False)
+    a.check(not left, f"nothing of the run is left in the cluster ({_describe(left)})")
 
 
 SCENARIOS: dict[str, Callable[[Acceptance], None]] = {
