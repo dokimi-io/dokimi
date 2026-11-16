@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -69,6 +71,7 @@ class Criterion:
     comparison: str
     threshold: float
     unit: str
+    statistic: str | None = None
 
 
 #: The passing run's criteria: both kinds the milestone evaluates, minimum throughput and
@@ -77,13 +80,36 @@ PASSING = (
     Criterion("throughput", "atLeast", 1, "megabits per second"),
     Criterion("packetLoss", "atMost", 10, "percent"),
 )
+#: A criterion no emulated cluster meets, so the run measures and then fails.
+FAILING = (Criterion("throughput", "atLeast", 100, "gigabits per second"),)
+#: A criterion on a metric iperf2 never produces: no data, so an error, never a pass. It
+#: stands in for an exporter that serves no result, which only unit tests cover so far.
+NEVER_MEASURED = (Criterion("latency", "atMost", 1, "milliseconds", statistic="avg"),)
+
+#: Denies ingress to the test's iperf2 servers only. The client's trigger, the run's Job
+#: and its Prometheus are untouched, so the preflight fails at the one check this is for:
+#: the probe from client to server can't connect.
+ISOLATE_SERVERS = f"""\
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dokimi-acceptance-isolate-servers
+  namespace: {NAMESPACE}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: iperf2
+      {COMPONENT_LABEL}: server
+  policyTypes: [Ingress]
+"""
 
 
 def definition(name: str, source: str, target: str, criteria: Sequence[Criterion]) -> str:
     """A YAML test definition for one directed UDP pair, with its results in ``./results``."""
     validation = "".join(
         f"  - metric: {c.metric}\n"
-        f"    comparison: {c.comparison}\n"
+        + (f"    statistic: {c.statistic}\n" if c.statistic else "")
+        + f"    comparison: {c.comparison}\n"
         f"    threshold: {c.threshold:g}\n"
         f"    unit: {c.unit}\n"
         for c in criteria
@@ -168,15 +194,25 @@ class Acceptance:
             self.runs.append(run_id)
         return Result(completed.returncode, completed.stdout, completed.stderr, run_id)
 
-    def submit(
-        self, name: str, criteria: Sequence[Criterion], *, target: str | None = None
-    ) -> Result:
-        """Write a definition into a directory of its own and submit it, following the run."""
+    def write(self, name: str, criteria: Sequence[Criterion], *, target: str | None = None) -> Path:
+        """Write a definition into a directory of its own. Returns the definition's path."""
         directory = self.work / name
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "test.yaml"
         path.write_text(definition(name, self.source, target or self.target, criteria))
-        return self.dokimi("submit", str(path), "--service-account", SERVICE_ACCOUNT, cwd=directory)
+        return path
+
+    def submit(
+        self, name: str, criteria: Sequence[Criterion], *, target: str | None = None
+    ) -> Result:
+        """Write a definition and submit it, following the run to its end."""
+        path = self.write(name, criteria, target=target)
+        return self.dokimi(
+            "submit", str(path), "--service-account", SERVICE_ACCOUNT, cwd=path.parent
+        )
+
+    def reports(self, name: str, run_id: str) -> Path:
+        return self.work / name / "results" / run_id
 
     def run_owned(self, run_id: str) -> list[dict[str, Any]]:
         """Every object in the cluster that carries *run_id*'s label."""
@@ -199,7 +235,15 @@ def _kubectl_items(kinds: str, selector: str) -> list[dict[str, Any]]:
 
 
 def _jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _run_record(reports: Path) -> dict[str, Any]:
+    path = reports / "run.json"
+    record: dict[str, Any] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return record
 
 
 def _describe(items: Iterable[Mapping[str, Any]]) -> str:
@@ -262,11 +306,7 @@ def happy_path(a: Acceptance) -> None:
             "run.json says its cleanup was complete",
         )
 
-    left = _settled(
-        a,
-        result.run_id,
-        keep=lambda item: _labels(item).get(COMPONENT_LABEL) == PROMETHEUS_COMPONENT,
-    )
+    left = _settled(a, result.run_id, keep=_is_prometheus)
     a.check(not left, f"only its Prometheus is left in the cluster (also: {_describe(left)})")
 
 
@@ -288,9 +328,174 @@ def unknown_node(a: Acceptance) -> None:
     a.check(not left, f"nothing of the run is left in the cluster ({_describe(left)})")
 
 
+def preflight_failure(a: Acceptance) -> None:
+    """A cluster that fails its preflight: one "cluster not ready" error, exit 4, no results.
+
+    A NetworkPolicy isolates the test's servers while the run is submitted, so the
+    preflight's probe from client to server can't connect.
+    """
+    subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=ISOLATE_SERVERS,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    try:
+        result = a.submit("preflight-failure", PASSING)
+    finally:
+        subprocess.run(
+            ["kubectl", "delete", "-f", "-", "--ignore-not-found"],
+            input=ISOLATE_SERVERS,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+    output = result.stdout + result.stderr
+    a.check(result.exit_code == 4, f"it exits 4 (got {result.exit_code})")
+    a.check(
+        output.count("dokimi: cluster not ready (connectivity)") == 1,
+        "one error says the cluster is not ready, and names the connectivity check",
+    )
+    if result.run_id is None:
+        return
+    reports = a.reports("preflight-failure", result.run_id)
+    for name in ("output.xml", "log.html", "tests.jsonl", "assertions.jsonl"):
+        a.check(not (reports / name).exists(), f"no {name}: no test ran")
+    record = _run_record(reports)
+    a.check(
+        "cluster not ready" in str(record.get("stopped")) and record.get("exit_code") is None,
+        f"run.json says why it stopped, with no verdict ({record.get('stopped')!r})",
+    )
+    left = _settled(a, result.run_id, keep=_is_prometheus)
+    a.check(not left, f"it keeps nothing but its Prometheus ({_describe(left)})")
+
+
+def failing_criterion(a: Acceptance) -> None:
+    """A criterion the cluster doesn't meet: exit 1, the pair and its value named, and the
+    run's evidence kept until ``dokimi cleanup`` removes it."""
+    result = a.submit("failing-criterion", FAILING)
+    a.check(result.exit_code == 1, f"it exits 1 (got {result.exit_code})")
+    pair = f"{a.source} -> {a.target} (pair-001)"
+    a.check(
+        re.search(re.escape(pair) + r": [0-9.]+ gigabits per second", result.stdout) is not None,
+        f"the failure names the pair and its value ({pair}: … gigabits per second)",
+    )
+    if result.run_id is None:
+        return
+    reports = a.reports("failing-criterion", result.run_id)
+    assertions = _jsonl(reports / "assertions.jsonl")
+    a.check(
+        [(r["outcome"], r["measured"] is not None) for r in assertions] == [("fail", True)],
+        "assertions.jsonl holds the criterion, failed, with the value measured",
+    )
+    a.check(_run_record(reports).get("retained") == "fail", "run.json says what it kept, and why")
+    _kept_until_cleanup(a, result.run_id)
+
+
+def never_measured(a: Acceptance) -> None:
+    """A criterion with no data behind it: metrics_missing, exit 2, never a pass."""
+    result = a.submit("never-measured", NEVER_MEASURED)
+    a.check(result.exit_code == 2, f"it exits 2 (got {result.exit_code})")
+    a.check("metrics_missing" in result.stdout, "the run's output says metrics_missing")
+    if result.run_id is None:
+        return
+    reports = a.reports("never-measured", result.run_id)
+    found = [(t["outcome"], t["error_category"]) for t in _jsonl(reports / "tests.jsonl")]
+    a.check(
+        found == [("error", "metrics_missing")],
+        f"tests.jsonl says error, metrics_missing ({found})",
+    )
+    a.check(
+        all(r["outcome"] == "error" for r in _jsonl(reports / "assertions.jsonl")),
+        "no assertion passed",
+    )
+    _kept_until_cleanup(a, result.run_id)
+
+
+def reattach(a: Acceptance) -> None:
+    """The CLI stops following mid-run, the run carries on, and attach shows its result.
+
+    Ctrl-C reaches the CLI while the test is running. The run isn't affected, and
+    ``attach``, a new process with only the run id, follows it to its end and fetches the
+    same reports a following ``submit`` would have.
+    """
+    path = a.write("reattach", PASSING)
+    follow = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "dokimi.cli.main",
+            "submit",
+            str(path),
+            "--service-account",
+            SERVICE_ACCOUNT,
+        ],
+        cwd=path.parent,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        # A script's background process has SIGINT ignored; Ctrl-C is what's under test.
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+    )
+    seen = []
+    assert follow.stdout is not None
+    for line in follow.stdout:
+        seen.append(line)
+        if line.startswith("phase 6 (execution)"):
+            follow.send_signal(signal.SIGINT)
+            break
+    rest, _ = follow.communicate(timeout=60)
+    output = "".join(seen) + rest
+    match = _SUBMITTED.search(output)
+    run_id = match["run_id"] if match else None
+    if run_id is not None:
+        a.runs.append(run_id)
+    a.check(
+        run_id is not None and follow.returncode == 130,
+        f"Ctrl-C mid-run exits 130 (got {follow.returncode})",
+    )
+    a.check(f"dokimi attach {run_id}" in output, "and says how to reattach")
+    if run_id is None:
+        return
+    directory = a.work / "reattach" / "attached"
+    attached = a.dokimi("attach", run_id, "--results-directory", str(directory))
+    a.check(
+        attached.exit_code == 0,
+        f"attach follows the run to its end and exits 0 (got {attached.exit_code})",
+    )
+    reports = directory / run_id
+    missing = [name for name in ARTIFACTS if not (reports / name).is_file()]
+    a.check(not missing, f"attach fetched every report (missing: {', '.join(missing) or 'none'})")
+    a.check(_run_record(reports).get("outcome") == "pass", "the run passed, unaffected")
+
+
+def _is_prometheus(item: Mapping[str, Any]) -> bool:
+    return _labels(item).get(COMPONENT_LABEL) == PROMETHEUS_COMPONENT
+
+
+def _kept_until_cleanup(a: Acceptance, run_id: str) -> None:
+    """A run that didn't pass keeps its owner, definition and test pods; cleanup removes them."""
+    kept = {(item["kind"], _labels(item).get(COMPONENT_LABEL, "")) for item in a.run_owned(run_id)}
+    a.check(
+        {("Pod", "client"), ("Pod", "server")} <= kept
+        and sum(1 for kind, _ in kept if kind == "ConfigMap") >= 1,
+        f"it keeps its test pods, owner and definition ({sorted(kept)})",
+    )
+    removed = a.dokimi("cleanup", run_id)
+    a.check(removed.exit_code == 0, f"dokimi cleanup {run_id} exits 0 (got {removed.exit_code})")
+    left = _settled(a, run_id, keep=_is_prometheus)
+    a.check(not left, f"after which only its Prometheus is left ({_describe(left)})")
+
+
 SCENARIOS: dict[str, Callable[[Acceptance], None]] = {
     "happy-path": happy_path,
     "unknown-node": unknown_node,
+    "preflight-failure": preflight_failure,
+    "failing-criterion": failing_criterion,
+    "never-measured": never_measured,
+    "reattach": reattach,
 }
 
 

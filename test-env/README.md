@@ -220,11 +220,17 @@ $ uv run python test-env/acceptance.py happy-path     # or some of them
 | --- | --- |
 | `happy-path` | A passing run exits `0`, brings back `output.xml`, `log.html`, `report.html`, the CSV and JSONL result files, `run.json` and `diagnostics.json`, and leaves only its Prometheus |
 | `unknown-node` | A node the cluster doesn't have stops the run in phase 3 with exit `3`, names the node, and leaves nothing in the cluster |
+| `preflight-failure` | With a NetworkPolicy isolating the test's servers, the preflight's probe can't connect: one `cluster not ready (connectivity)` error, exit `4`, no test results, and only the Prometheus left |
+| `failing-criterion` | A criterion no emulated cluster meets: exit `1`, the pair and its value named, and the test pods, owner and definition kept until `dokimi cleanup` |
+| `never-measured` | A latency criterion, which iperf2 never measures: `metrics_missing`, exit `2`, never a pass |
+| `reattach` | Ctrl-C while the test runs stops the CLI with `130`, not the run; `dokimi attach` follows it to its end, exits `0` and fetches every report |
 
 It uses the first two schedulable workers, or `--source` and `--target`. Its passing run asks
 for 1 megabit per second at a 10 megabit target and at most 10 percent loss: little enough that
 any cluster that runs the test at all meets it, since this environment's numbers say nothing
-about real hardware. Every run it starts is removed again at the end, its Prometheus included,
+about real hardware. The failing run asks for 100 gigabits per second, and the erroring one for a
+latency, which iperf2 doesn't measure. `preflight-failure` needs a CNI that enforces
+NetworkPolicy, which every profile but `kind-flannel` does. Every run it starts is removed again at the end, its Prometheus included,
 unless `--keep` is given. CI runs it on `kind-kindnet`, after `check`.
 
 ## Things that will catch you out

@@ -402,15 +402,39 @@ def test_the_acceptance_run_follows_the_default_profiles_check() -> None:
     )
 
 
-def test_the_acceptance_definitions_are_valid(tmp_path: pathlib.Path) -> None:
+@pytest.mark.parametrize(
+    ("criteria", "metrics"),
+    [
+        ("PASSING", ["throughput", "packetLoss"]),
+        ("FAILING", ["throughput"]),
+        ("NEVER_MEASURED", ["latency"]),
+    ],
+)
+def test_the_acceptance_definitions_are_valid(
+    criteria: str, metrics: list[str], tmp_path: pathlib.Path
+) -> None:
     acceptance = _acceptance()
     path = tmp_path / "test.yaml"
-    path.write_text(acceptance.definition("happy-path", "node-a", "node-b", acceptance.PASSING))
+    path.write_text(
+        acceptance.definition("a-test", "node-a", "node-b", getattr(acceptance, criteria))
+    )
 
     definition = parse_file(path)
 
     assert (definition.source_node, definition.target_node) == ("node-a", "node-b")
-    assert [c.metric.value for c in definition.criteria] == ["throughput", "packetLoss"]
+    assert [c.metric.value for c in definition.criteria] == metrics
+
+
+def test_the_acceptance_isolates_only_the_test_servers() -> None:
+    policy = yaml.safe_load(_acceptance().ISOLATE_SERVERS)
+
+    # A policy on the whole namespace would also cut the run's Job and its Prometheus off,
+    # and the preflight would fail for a different reason than the one under test.
+    assert policy["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "iperf2",
+        "app.kubernetes.io/component": "server",
+    }
+    assert policy["spec"]["policyTypes"] == ["Ingress"]
 
 
 def test_the_acceptance_run_picks_only_workers_a_pair_can_run_on() -> None:
