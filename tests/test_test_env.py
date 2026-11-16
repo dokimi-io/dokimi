@@ -461,3 +461,22 @@ def test_the_acceptance_run_picks_only_workers_a_pair_can_run_on() -> None:
     }
 
     assert _acceptance().schedulable_workers(nodes) == ["preferred-not", "worker-a", "worker-b"]
+
+
+def test_the_acceptance_submitter_is_granted_nothing_beyond_its_namespace() -> None:
+    documents = list(yaml.safe_load_all(_acceptance().submitter_grant()))
+
+    assert [d["kind"] for d in documents] == ["ServiceAccount", "Role", "RoleBinding"]
+    assert {d["metadata"]["namespace"] for d in documents} == {"dokimi-iperf2"}
+    role = documents[1]
+    assert {(r["apiGroups"][0], r["resources"][0]): set(r["verbs"]) for r in role["rules"]} == {
+        ("", "configmaps"): {"create", "get", "delete"},
+        ("batch", "jobs"): {"create", "list", "delete"},
+        ("", "pods"): {"get", "list"},
+        ("", "pods/log"): {"get"},
+    }
+    assert documents[2]["roleRef"] == {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": role["metadata"]["name"],
+    }

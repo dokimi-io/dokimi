@@ -224,6 +224,8 @@ $ uv run python test-env/acceptance.py happy-path     # or some of them
 | `failing-criterion` | A criterion no emulated cluster meets: exit `1`, the pair and its value named, and the test pods, owner and definition kept until `dokimi cleanup` |
 | `never-measured` | A latency criterion, which iperf2 never measures: `metrics_missing`, exit `2`, never a pass |
 | `reattach` | Ctrl-C while the test runs stops the CLI with `130`, not the run; `dokimi attach` follows it to its end, exits `0` and fetches every report |
+| `concurrent` | Two submissions at the same moment: one runs and exits `0`, the other is refused with `run_already_active`, exit `4`, names the run holding the cluster, and leaves nothing |
+| `namespaced-submitter` | A submitter with only the namespaced permissions the [installation guide](../docs/installation.md#cluster-credentials) lists for `submit`, through a kubeconfig of its own, runs and removes a passing run, with nothing forbidden |
 
 It uses the first two schedulable workers, or `--source` and `--target`. Its passing run asks
 for 1 megabit per second at a 10 megabit target and at most 10 percent loss: little enough that

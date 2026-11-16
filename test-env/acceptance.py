@@ -188,11 +188,28 @@ class Acceptance:
             text=True,
             check=False,
         )
-        match = _SUBMITTED.search(completed.stderr)
+        return self._result(completed.returncode, completed.stdout, completed.stderr)
+
+    def started(self, *args: str, cwd: Path) -> subprocess.Popen[str]:
+        """The CLI, started and not waited for, so that two can run at the same moment."""
+        return subprocess.Popen(
+            [sys.executable, "-m", "dokimi.cli.main", *args],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def finished(self, process: subprocess.Popen[str]) -> Result:
+        stdout, stderr = process.communicate()
+        return self._result(process.returncode, stdout, stderr)
+
+    def _result(self, exit_code: int, stdout: str, stderr: str) -> Result:
+        match = _SUBMITTED.search(stderr)
         run_id = match["run_id"] if match else None
         if run_id is not None:
             self.runs.append(run_id)
-        return Result(completed.returncode, completed.stdout, completed.stderr, run_id)
+        return Result(exit_code, stdout, stderr, run_id)
 
     def write(self, name: str, criteria: Sequence[Criterion], *, target: str | None = None) -> Path:
         """Write a definition into a directory of its own. Returns the definition's path."""
@@ -471,6 +488,130 @@ def reattach(a: Acceptance) -> None:
     a.check(_run_record(reports).get("outcome") == "pass", "the run passed, unaffected")
 
 
+def concurrent(a: Acceptance) -> None:
+    """Two submissions at the same moment: one runs, the other is refused and leaves nothing.
+
+    Both Jobs start; the first to claim the cluster runs its test, and the other stops in
+    its preflight with `run_already_active`, naming the run that holds the cluster.
+    """
+    processes = []
+    for name in ("concurrent-a", "concurrent-b"):
+        path = a.write(name, PASSING)
+        processes.append(
+            a.started("submit", str(path), "--service-account", SERVICE_ACCOUNT, cwd=path.parent)
+        )
+    results = [a.finished(process) for process in processes]
+    a.check(
+        sorted(r.exit_code for r in results) == [0, 4],
+        f"one exits 0 and the other 4 (got {[r.exit_code for r in results]})",
+    )
+    winner = next((r for r in results if r.exit_code == 0), None)
+    loser = next((r for r in results if r.exit_code == 4), None)
+    if winner is None or loser is None or winner.run_id is None or loser.run_id is None:
+        return
+    refusal = loser.stdout + loser.stderr
+    a.check("run_already_active" in refusal, "the refused one says run_already_active")
+    a.check(winner.run_id in refusal, "and names the run that holds the cluster")
+    left = _settled(a, loser.run_id, keep=lambda item: False)
+    a.check(not left, f"the refused one leaves nothing ({_describe(left)})")
+    left = _settled(a, winner.run_id, keep=_is_prometheus)
+    a.check(not left, f"the one that ran leaves only its Prometheus ({_describe(left)})")
+
+
+#: What `submit` needs in the run's namespace, word for word from the installation guide's
+#: table. A submitter with nothing more, and nothing cluster-wide, must be able to run.
+SUBMITTER_RULES = (
+    ("", "configmaps", ("create", "get", "delete")),
+    ("batch", "jobs", ("create", "list", "delete")),
+    ("", "pods", ("get", "list")),
+    ("", "pods/log", ("get",)),
+)
+SUBMITTER = "dokimi-acceptance-submitter"
+
+
+def submitter_grant() -> str:
+    """The submitter's ServiceAccount, its Role of :data:`SUBMITTER_RULES`, and the binding."""
+    rules = "".join(
+        f"  - apiGroups: [{json.dumps(group)}]\n"
+        f"    resources: [{resource}]\n"
+        f"    verbs: [{', '.join(verbs)}]\n"
+        for group, resource, verbs in SUBMITTER_RULES
+    )
+    return (
+        "apiVersion: v1\nkind: ServiceAccount\n"
+        f"metadata: {{name: {SUBMITTER}, namespace: {NAMESPACE}}}\n"
+        "---\n"
+        f"apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\n"
+        f"metadata: {{name: {SUBMITTER}, namespace: {NAMESPACE}}}\nrules:\n{rules}"
+        "---\n"
+        f"apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\n"
+        f"metadata: {{name: {SUBMITTER}, namespace: {NAMESPACE}}}\n"
+        f"roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: Role, name: {SUBMITTER}}}\n"
+        f"subjects: [{{kind: ServiceAccount, name: {SUBMITTER}, namespace: {NAMESPACE}}}]\n"
+    )
+
+
+def namespaced_submitter(a: Acceptance) -> None:
+    """A submitter with only the namespaced permissions the installation guide lists.
+
+    A ServiceAccount of its own, with a Role holding exactly the guide's `submit` row in the
+    run's namespace, submits a passing run through a kubeconfig built from its token.
+    """
+    grant = submitter_grant()
+    kubectl = ["kubectl", "-n", NAMESPACE]
+    subprocess.run(
+        [*kubectl, "apply", "-f", "-"], input=grant, text=True, capture_output=True, check=True
+    )
+    try:
+        token = subprocess.run(
+            [*kubectl, "create", "token", SUBMITTER, "--duration", "1h"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        config = json.loads(
+            subprocess.run(
+                ["kubectl", "config", "view", "--minify", "--raw", "-o", "json"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        )
+        config["users"] = [{"name": SUBMITTER, "user": {"token": token}}]
+        for context in config["contexts"]:
+            context["context"]["user"] = SUBMITTER
+        kubeconfig = a.work / "submitter.kubeconfig"
+        kubeconfig.write_text(json.dumps(config))
+        kubeconfig.chmod(0o600)
+
+        path = a.write("namespaced-submitter", PASSING)
+        result = a.dokimi(
+            "submit",
+            str(path),
+            "--service-account",
+            SERVICE_ACCOUNT,
+            "--kubeconfig",
+            str(kubeconfig),
+            cwd=path.parent,
+        )
+    finally:
+        subprocess.run(
+            [*kubectl, "delete", "-f", "-", "--ignore-not-found"],
+            input=grant,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+    output = result.stdout + result.stderr
+    if not a.check(result.exit_code == 0, f"it exits 0 (got {result.exit_code})"):
+        print(result.stderr[-3000:])
+    a.check("forbidden" not in output.lower(), "nothing it did was forbidden")
+    if result.run_id is None:
+        return
+    left = _settled(a, result.run_id, keep=_is_prometheus)
+    a.check(not left, f"it could remove its run: only the Prometheus is left ({_describe(left)})")
+
+
 def _is_prometheus(item: Mapping[str, Any]) -> bool:
     return _labels(item).get(COMPONENT_LABEL) == PROMETHEUS_COMPONENT
 
@@ -496,6 +637,8 @@ SCENARIOS: dict[str, Callable[[Acceptance], None]] = {
     "failing-criterion": failing_criterion,
     "never-measured": never_measured,
     "reattach": reattach,
+    "concurrent": concurrent,
+    "namespaced-submitter": namespaced_submitter,
 }
 
 
