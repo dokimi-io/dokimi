@@ -46,6 +46,11 @@ can act on.
   otherwise.
 - Tab completion for bash, zsh and fish: `dokimi completion <shell>`.
 
+**Installing**
+
+- On PyPI as `dokimi-io`: `uv tool install dokimi-io` gives the `dokimi` command. The release
+  also carries the wheel.
+
 **Images**
 
 - The orchestrator and `iperf2` images, for amd64 and arm64, signed, and pinned by digest in the

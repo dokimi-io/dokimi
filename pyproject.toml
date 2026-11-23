@@ -1,5 +1,5 @@
 [project]
-name = "dokimi"
+name = "dokimi-io"
 version = "0.1.0"
 description = "Test orchestration framework for functional and non-functional validation of Kubernetes clusters"
 readme = "README.md"

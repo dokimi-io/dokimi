@@ -87,18 +87,25 @@ IP inside the cluster, which it reached on every version tried.
 
 ## Installing
 
-Install the CLI from the release, as a tool of its own:
+Install the CLI from PyPI, as a tool of its own:
 
 ```console
-$ uv tool install https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi-0.1.0-py3-none-any.whl
+$ uv tool install dokimi-io
 $ dokimi --version
 dokimi 0.1.0
+```
+
+On PyPI it is called **`dokimi-io`**, because `dokimi` there is an unrelated project; the command
+it installs is `dokimi`. `pipx install dokimi-io` works too. Each release also carries the wheel
+itself, for an installation without PyPI:
+
+```console
+$ uv tool install https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi_io-0.1.0-py3-none-any.whl
 ```
 
 A released CLI knows the images built with it, by digest: a run uses the orchestrator and
 `iperf2` images of its own release unless you choose others. The release page,
 [v0.1.0](https://github.com/dokimi-io/dokimi/releases/tag/v0.1.0), lists their references.
-dokimi is not on PyPI yet.
 
 ### From source
 
