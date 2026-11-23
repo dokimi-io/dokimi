@@ -27,19 +27,20 @@ of a run's execution phase, which happens inside the cluster, in an image that h
 
 ### Where each part was tested
 
-The WSL2 column was verified on 2026-09-28; the macOS and Linux columns were last verified on 2026-09-25.
+The WSL2 column was verified on 2026-11-12; the macOS and Linux columns were last verified on 2026-09-25.
 
 | | macOS 26.6.2, Apple silicon | Linux x86_64 (GitHub Actions `ubuntu-24.04`) | Windows 11 through WSL2, x86_64 |
 | --- | --- | --- | --- |
 | Library and CLI: lint, types, test suite | the full suite, with and without Robot Framework | on every pull request, with and without Robot Framework | the full suite, with and without Robot Framework |
-| Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 | built and run, amd64 |
-| Against a real cluster | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37 | — (the acceptance run, M1-17) | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37, and the three first-run errors [Setup](setup.md#a-cluster-to-submit-runs-against) lists |
+| Orchestrator image | built and run, arm64 | built and run on every pull request, amd64 | built and run, amd64, with the `iperf2` image's own CI checks |
+| Against a real cluster | validate, dry-run, submit, attach and planning, on kind with Kubernetes v1.37 | — (the acceptance run, M1-17) | runs to a verdict on kind and k3d with Kubernetes v1.37: a pass, a failed criterion and an error, each with the exit code and the evidence [Usage](usage.md#what-a-run-does-today) describes; `preflight`, ready and with an image that cannot be pulled; one run at a time; `cleanup`; the three first-run errors [Setup](setup.md#a-cluster-to-submit-runs-against) lists; shell completion in bash, zsh and fish |
 | [Test environment](../test-env/README.md) | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time | the same, whenever `test-env/` changes and weekly | all seven profiles provisioned, checked and torn down; the two default profiles provisioned a second time |
 
 macOS and Linux use Python 3.14.0 through `uv` 0.12.18. On macOS the container runtime was
 OrbStack 2.2.3 (Docker 29.4.0); on Linux, the Docker engine GitHub's runners ship. WSL2 was
-WSL 2.7.14 with kernel 6.18.33.2 and Ubuntu 22.04, using Python 3.14.7 through `uv` 0.12.18 and
-the Docker engine 28.3.2 installed in the distribution rather than Docker Desktop.
+WSL 3.0.5 with kernel 6.18.58.1 and Ubuntu 22.04, in mirrored networking mode, using Python
+3.14.7 through `uv` 0.12.18 and the Docker engine 28.3.2 installed in the distribution rather
+than Docker Desktop.
 
 **Not tested with:** Docker Desktop, colima or Podman on any platform, including Docker
 Desktop's WSL2 integration. Docker Desktop and colima provide the same Docker API and are
@@ -78,6 +79,12 @@ What differs from a Linux machine is all about the kernel the test environment's
 - **`kernel.panic_on_oops` is already `1`**, so `up` does not report it as changed.
 - **`br_netfilter` was already loaded** on the tested machine, so `kind-flannel` came up without
   `--load-modules` and without `sudo`. `up` checks for it either way.
+
+One difference is in WSL itself rather than the kernel. In mirrored networking mode, WSL 2.7.14
+accepted a connection to a closed port on `127.0.0.1` instead of refusing it, so
+`test_the_tcp_trigger_gives_up_after_its_attempts` in `tests/test_iperf2.py` fails there. WSL
+3.0.3 and 3.0.5 refuse it, and the test passes. The connection dokimi itself makes goes to a pod
+IP inside the cluster, which it reached on every version tried.
 
 ## Installing
 
