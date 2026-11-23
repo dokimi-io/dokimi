@@ -1,17 +1,16 @@
 """The test-type interface: what every test type declares, and the values it trades in.
 
-[ADR-02-01] makes a test type a plugin behind a stable interface, designed up front and
-validated on paper against IRTT in ``designs/test-type-interface.md`` of the ADR
-repository. :class:`TestTypePlugin` is that interface in code. It is named ``Plugin``
+A test type is a plugin behind a stable interface, designed up front and validated on
+paper against IRTT. :class:`TestTypePlugin` is that interface in code. It is named ``Plugin``
 because :class:`dokimi.model.TestType` is already the enum that *names* a test type in a
 definition; the two are deliberately different things — one is data a user writes, the
 other is the code that data selects.
 
-Every method exists from Milestone-01. What ADR-02-01 defers is one *use* of the
+Every method exists from Milestone-01. What is deferred is one *use* of the
 interface, not a part of it: the orchestrator cross-checking requested criteria against
 :meth:`TestTypePlugin.capabilities` before deploying anything is Milestone-02 work. Until
 then a mismatched criterion runs, produces no matching metric and surfaces as an
-``error``, never a ``pass`` ([ADR-05-05]).
+``error``, never a ``pass``.
 
 The values that cross the interface are plain, frozen data. Pod specs are manifest
 dictionaries in the API's own camelCase shape, the same shape
@@ -56,12 +55,12 @@ __all__ = [
 
 T = TypeVar("T")
 
-#: The address family test traffic uses. [ADR-05-03]: IPv4 in Milestone-01 when both
+#: The address family test traffic uses: IPv4 in Milestone-01 when both
 #: families are available, and the family used is recorded with the result.
 ADDRESS_FAMILY = "IPv4"
 
 #: The container port name that marks an exporter. The managed Prometheus scrapes exactly
-#: the ports of a run's pods that carry this name ([ADR-03-02]), so every exporter names
+#: the ports of a run's pods that carry this name, so every exporter names
 #: its port this way, whatever number it serves on.
 EXPORTER_PORT_NAME = "metrics"
 
@@ -69,7 +68,7 @@ EXPORTER_PORT_NAME = "metrics"
 class NoIPv4AddressError(RuntimeError):
     """A pod that passed the gate has no IPv4 address: an IPv6-only pod network.
 
-    Milestone-01 measures over IPv4 only ([ADR-05-03]). Sending an IPv6 address on
+    Milestone-01 measures over IPv4 only. Sending an IPv6 address on
     instead would fail later, inside the pod, with a less useful message.
     """
 
@@ -79,8 +78,8 @@ class Capability(enum.Enum):
 
     A small enum that grows as test types are added — IRTT brings ``RTT`` and
     ``ONE_WAY_DELAY`` in Milestone-03. Growing it is data, not a signature change. The
-    values spell the criterion metric each capability backs ([ADR-02-05]'s logical
-    names), so the Milestone-02 pre-deployment check is a lookup, not a translation
+    values spell the criterion metric each capability backs (its logical
+    name), so the Milestone-02 pre-deployment check is a lookup, not a translation
     table.
     """
 
@@ -137,7 +136,7 @@ class WorkloadImage:
 class ImagePair:
     """The images for the client and server roles.
 
-    Often the same image: [ADR-05-04] builds one image per test type, and both roles of
+    Often the same image: there is one image per test type, and both roles of
     ``iperf2`` run the same binary. A pair still, because the interface must not assume
     that of every tool.
     """
@@ -156,7 +155,7 @@ class Parameter:
     *parse* turns the written value into a typed one, raising
     :class:`~dokimi.model.ConfigError` on anything malformed — the same error every
     other phase-2 validation raises, so a bad parameter is a ``config_error`` detected
-    before anything is deployed ([ADR-04-03], [ADR-04-05]).
+    before anything is deployed.
     """
 
     name: str
@@ -194,7 +193,7 @@ class TestParameters:
 class ParameterSchema:
     """Every parameter a test type accepts. Unknown names are refused, not ignored.
 
-    Refusing rather than ignoring is [ADR-04-03]'s reasoning, and it matters more for a
+    Refusing rather than ignoring is the configuration schema's rule, and it matters more for a
     measurement tool than for most: a silently ignored typo is a test that ran at the
     wrong rate and reported success.
     """
@@ -239,10 +238,10 @@ class ParameterSchema:
 
 @dataclass(frozen=True, slots=True)
 class ExporterSpec:
-    """Where a test type's sidecar exporter serves, and what it reads ([ADR-02-02]).
+    """Where a test type's sidecar exporter serves, and what it reads.
 
     The orchestrator reads ``http://<pod-ip>:<port><path>`` directly for the verdict and
-    Prometheus scrapes the same endpoint for history ([ADR-03-01]). *results_directory*
+    Prometheus scrapes the same endpoint for history. *results_directory*
     is the volume the tool writes its native output to and the exporter parses — shared
     between the two containers of a pod, which is what lets the exporter keep serving a
     completed result after the tool has exited.
@@ -271,10 +270,10 @@ class WorkloadSpec:
     #: could possibly be started.
     pods: Mapping[Role, Manifest]
     #: What a result from this workload cannot be interpreted without: images and their
-    #: digests, the warm-up pass, the connectivity mode ([ADR-05-03], [ADR-04-04]).
+    #: digests, the warm-up pass, the connectivity mode.
     run_metadata: Mapping[str, str] = field(default_factory=dict)
-    #: The discarded warm-up pass the workload runs before measuring, ``0`` if none
-    #: ([ADR-04-04]). Typed, because the pods' deadline is budgeted from it.
+    #: The discarded warm-up pass the workload runs before measuring, ``0`` if none.
+    #: Typed, because the pods' deadline is budgeted from it.
     warmup_seconds: float = 0.0
 
     def pod_name(self, role: Role) -> str:
@@ -302,10 +301,10 @@ class DeployedWorkload:
         return self.spec.namespace
 
     def pod_ip(self, role: Role) -> str:
-        """The pod's IPv4 address, which [ADR-05-03]'s direct pod addressing sends to.
+        """The pod's IPv4 address, which direct pod addressing sends to.
 
         From ``status.podIPs``, not ``status.podIP``: on a dual-stack cluster whose primary
-        family is IPv6, ``podIP`` is the IPv6 address, and ADR-05-03 chooses IPv4 whenever
+        family is IPv6, ``podIP`` is the IPv6 address, and IPv4 is chosen whenever
         both families are available. ``podIP`` is read only when ``podIPs`` is absent.
         """
         status = self.pods[role].get("status") or {}
@@ -334,8 +333,8 @@ class Placement:
     test_id: str
     source_node: str
     target_node: str
-    #: What the operator called the cluster: a required label on every result
-    #: ([ADR-02-07]), so the exporter is given it when the pod is created.
+    #: What the operator called the cluster: a required label on every result,
+    #: so the exporter is given it when the pod is created.
     cluster: str
 
     def node_for(self, role: Role) -> str:
@@ -344,13 +343,13 @@ class Placement:
 
 
 class TestTypePlugin(Protocol):
-    """One test type ([ADR-02-01], ``designs/test-type-interface.md``)."""
+    """One test type."""
 
     #: The name a definition selects it by, :class:`dokimi.model.TestType`'s value.
     name: str
 
     def images(self) -> ImagePair:
-        """Container images required for the client and server roles ([ADR-05-04])."""
+        """Container images required for the client and server roles."""
         ...
 
     def parameter_schema(self) -> ParameterSchema:
@@ -381,7 +380,7 @@ class TestTypePlugin(Protocol):
         ...
 
     def exporter(self) -> ExporterSpec:
-        """The sidecar exporter that publishes this test type's metrics ([ADR-02-02])."""
+        """The sidecar exporter that publishes this test type's metrics."""
         ...
 
     def cleanup(self, deployed: DeployedWorkload) -> None:

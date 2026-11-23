@@ -2,10 +2,9 @@
 
 Phase 3. Discovery reads the cluster's nodes once (:mod:`~dokimi.planning.nodes`)
 and planning resolves the definition against that snapshot
-(:mod:`~dokimi.planning.plan`). Bounded concurrency with node exclusivity is
-ADR-04-04's default and the scheduler stays here in Python rather than inside Robot's
-execution model (ADR-04-01, ADR-04-04); Milestone-01 plans one explicit pair,
-sequentially.
+(:mod:`~dokimi.planning.plan`). Bounded concurrency with node exclusivity is the default
+execution strategy, and the scheduler stays here in Python rather than inside Robot's
+execution model; Milestone-01 plans one explicit pair, sequentially.
 """
 
 from __future__ import annotations

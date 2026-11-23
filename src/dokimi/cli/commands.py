@@ -1,7 +1,7 @@
 """What each CLI command does, independent of how its arguments were parsed.
 
 Phase 1 and nothing else. Everything here either runs entirely locally or talks to the
-API server; no phase of a run happens on this side of the cluster boundary (ADR-01-06).
+API server; no phase of a run happens on this side of the cluster boundary.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ ROBOT_RUNNER: Callable[[], RobotRunner] = SubprocessRobotRunner
 PREFLIGHT_PLUGIN: Probes | None = None
 
 #: How long phase 7 waits for Prometheus to hold a test's series: ``None`` is
-#: ADR-03-01's three scrape intervals, at least 60 s. Module-level so a test can shorten it.
+#: three scrape intervals, at least 60 s. Module-level so a test can shorten it.
 SCRAPE_CONFIRMATION_TIMEOUT_SECONDS: float | None = None
 
 #: How long phase 4 waits for the run's Prometheus to answer a query. Module-level so a
@@ -186,7 +186,7 @@ def convert(console: Console, *, path: Path, to: str) -> int:
     """Render a definition in the other format. Never touches a cluster.
 
     ``--to robot`` is ``render_robot()``, the same function phase 5 of every run calls,
-    so this prints exactly the suite a run executes (ADR-01-08, ADR-04-05).
+    so this prints exactly the suite a run executes.
     """
     definition = parse_file(path)
     renderers = {"robot": render_robot, "yaml": render_yaml}
@@ -228,13 +228,13 @@ def submit_run(
     *preflight_only* submits the same run, whose Job stops after phase 4 (:func:`preflight`).
 
     Every image is resolved here, before anything else happens: the orchestrator's, and
-    the ones the run deploys (ADR-04-08). A source build given no override for one of them
+    the ones the run deploys. A source build given no override for one of them
     stops with a config_error, rather than a Job that fails once it is running. So does a
-    run without a cluster name, which has no default (ADR-02-07).
+    run without a cluster name, which has no default.
     """
     definition = parse_file(path)
     # Refused before anything is created, a dry run included: a run that could only
-    # fail in phase 2 should never be submitted (ADR-05-05's config_error).
+    # fail in phase 2 should never be submitted (a config_error).
     monitoring = select_monitoring(definition.monitoring_mode)
     run_images = resolve_run_images(
         parse_image_options(images, orchestrator_image=image_override),
@@ -256,8 +256,8 @@ def submit_run(
     )
 
     if dry_run:
-        # ADR-01-06: a dry run uses local discovery only, "or a provided kubeconfig for
-        # read-only cluster info". Provided means provided: the ambient KUBECONFIG is not
+        # A dry run uses local discovery only, or a kubeconfig provided for read-only
+        # cluster info. Provided means provided: the ambient KUBECONFIG is not
         # consulted, so a plain dry run stays one that cannot contact anything.
         plan = None
         if kubeconfig is not None or context is not None:
@@ -302,7 +302,7 @@ def preflight(
     """Check the cluster for *path*'s run, and run no test: the standalone preflight.
 
     The same run as :func:`submit_run` submits, whose Job stops after phase 4. So it is
-    the same code as a run's own preflight, not a second implementation of it (ADR-05-07):
+    the same code as a run's own preflight, not a second implementation of it:
     it claims the cluster, provisions the run's Prometheus, deploys the first pair in probe
     mode, and removes the pair again. It exits 0 if every check passed and 4 if one failed.
 
@@ -998,7 +998,7 @@ def _confirm_measurements(
 ) -> None:
     """Phase 7, the Job's half: does Prometheus hold what each test's direct read found?
 
-    Before teardown, while the exporters still serve (ADR-03-01). A test whose series
+    Before teardown, while the exporters still serve. A test whose series
     never arrive is a warning naming it, and a value that differs is a diagnostic of its
     own; neither changes the verdict, which is the direct read's. Never raises.
     """
@@ -1273,7 +1273,7 @@ def _return_artifacts(console: Console, artifacts: RunArtifacts) -> None:
     """Write the run's artifact directory into the log, last, for the CLI to extract.
 
     Also after a failed run: whatever was written is worth having. Never at the cost of
-    the run's own outcome (ADR-05-15, provisional).
+    the run's own outcome.
     """
     if not artifacts.directory.is_dir():
         return
@@ -1342,7 +1342,7 @@ def _follow(
         ended = True
         return code
     except KeyboardInterrupt:
-        # ADR-01-06: the Job is a server-side resource. Leaving is not stopping.
+        # The Job is a server-side resource. Leaving is not stopping.
         console.warn("")
         console.warn(
             f"stopped following run {run_id}. The run is unaffected and continues in the "

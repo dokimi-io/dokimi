@@ -1,6 +1,6 @@
 """The canonical criterion record.
 
-ADR-02-05 (OQ-30) decided that a pass criterion is **one record** that every authoring
+A pass criterion is **one record** that every authoring
 format renders, rather than a phrasing in one format that the others approximate:
 ``metric``, optional ``statistic``, ``comparison``, ``threshold``, ``unit``, and a
 reserved ``scope``.
@@ -11,7 +11,7 @@ enforcing them per format is how the formats drift apart:
 * the unit must belong to the metric's dimension, and
 * ``latency`` requires a statistic while the others must not carry one.
 
-Both are ``config_error`` (ADR-05-05), raised before anything is deployed.
+Both are ``config_error``, raised before anything is deployed.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class Comparison(enum.Enum):
 class Statistic(enum.Enum):
     """Which view of a measured quantity a criterion asserts over.
 
-    ADR-02-04 makes min/avg/max a ``stat`` label rather than three metric names, because
+    Min/avg/max are a ``stat`` label rather than three metric names, because
     they are three views of one measured quantity rather than different quantities.
     """
 
@@ -101,8 +101,8 @@ class Criterion:
     unit: Unit
     statistic: Statistic | None = None
 
-    #: Reserved by ADR-02-05 for scoping a criterion to part of the matrix
-    #: (OQ-32, deferred to Milestone-02). Present so the record does not change shape
+    #: Reserved for scoping a criterion to part of the matrix
+    #: (deferred to Milestone-02). Present so the record does not change shape
     #: when it arrives; must be ``None`` until then.
     scope: None = None
 

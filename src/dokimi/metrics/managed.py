@@ -1,15 +1,15 @@
 """The managed Prometheus: deployed by the run, scraping the run's exporters, kept after it.
 
-[ADR-03-02] ``managed`` mode, which is what Milestone-01 runs. What that means here:
+The ``managed`` monitoring mode, which is what Milestone-01 runs. What that means here:
 
 * **One Prometheus per run**, in the run's namespace: a ``ConfigMap`` holding its
   configuration, a ``Deployment`` and a ``Service``, all labelled as owned by the run
   (``app.kubernetes.io/component: prometheus``).
-* **Kept by default.** ADR-03-02 removes a managed Prometheus only on an explicit flag,
-  so that "the run's history outlives cleanup" holds in every mode. It therefore carries
+* **Kept by default.** A managed Prometheus is removed only on an explicit flag, so that
+  the run's history outlives cleanup in every mode. It therefore carries
   no ownerReference — deleting the run's owner must not cascade to it — and
   :func:`~dokimi.k8s.ownership.delete_run_owned` keeps it unless ``remove_kept`` is set.
-  It never blocks a later run: exclusivity reads run owners only ([ADR-05-13]). What it
+  It never blocks a later run: exclusivity reads run owners only. What it
   keeps is bounded: :data:`RETENTION_SIZE` on disk, in a volume of :data:`VOLUME_SIZE`.
 * **Off the test's nodes where it can be.** A Prometheus scraping and compacting on the
   source or target node competes with the measurement for CPU and network, so it
@@ -18,9 +18,9 @@
   ``run-id`` label with a container port named :data:`EXPORTER_PORT_NAME`. A kept
   Prometheus from an earlier run therefore never records a later run's results.
 * **The scrape interval is ours**, :data:`SCRAPE_INTERVAL_SECONDS`, so it is known and
-  recorded in the run metadata ([ADR-03-01]).
+  recorded in the run metadata.
 * **An already-present node-exporter or kube-state-metrics is reused**, never duplicated.
-* **A node-exporter is deployed when none is present**, as ADR-03-02 asks: a DaemonSet
+* **A node-exporter is deployed when none is present**: a DaemonSet
   owned by the run, so cleanup removes it with the run. kube-state-metrics is not: it
   describes the cluster's objects, not the nodes a test measures on, and its absence is
   recorded instead. See :func:`provide_node_exporter` for what the DaemonSet may do.
@@ -86,7 +86,7 @@ __all__ = [
     "select_monitoring",
 ]
 
-#: Upstream Prometheus, pinned by digest ([ADR-05-04]'s pinning rule). Not an image this
+#: Upstream Prometheus, pinned by digest like every workload image. Not an image this
 #: project builds: it is infrastructure, not a test workload, and upstream publishes it.
 #: Upstream does not sign it, so the digest is what makes it the image we reviewed. The
 #: digest is the multi-architecture index, identical on quay.io and Docker Hub.
@@ -98,7 +98,7 @@ PROMETHEUS_PORT = 9090
 #: Pre-provisioned by ``deploy/rbac.yaml``, with read access for service discovery.
 PROMETHEUS_SERVICE_ACCOUNT = "dokimi-prometheus"
 #: Ours to choose in managed mode, and short, because a Milestone-01 test lasts seconds:
-#: ADR-03-01's scrape confirmation waits ``3 × interval``, at least 60 s, which this keeps
+#: the scrape confirmation waits ``3 × interval``, at least 60 s, which this keeps
 #: at the minimum.
 SCRAPE_INTERVAL_SECONDS = 5
 #: The scrape job for the run's exporters.
@@ -139,7 +139,7 @@ _UID = 65534  # the upstream images' "nobody"
 
 @dataclass(frozen=True, slots=True)
 class MonitoringSelection:
-    """Which mode a run actually uses, and why, for the prominent log ADR-03-02 asks for."""
+    """Which mode a run uses and why, logged so the user knows which Prometheus answered."""
 
     requested: MonitoringMode
     selected: MonitoringMode
@@ -243,7 +243,7 @@ def render_config(
     interval = f"{SCRAPE_INTERVAL_SECONDS}s"
     exporters: dict[str, Any] = {
         "job_name": EXPORTER_JOB,
-        # The exporter's labels are the metric contract (ADR-02-04, ADR-02-07); a target
+        # The exporter's labels are the metric contract; a target
         # label must never overwrite one of them.
         "honor_labels": True,
         "kubernetes_sd_configs": [
@@ -644,7 +644,7 @@ class ManagedPrometheus:
         return f"http://{self.name}.{self.namespace}.svc:{PROMETHEUS_PORT}"
 
     def run_metadata(self) -> dict[str, str]:
-        """What a result from this run cannot be interpreted without ([ADR-03-01])."""
+        """What a result from this run cannot be interpreted without."""
         found: dict[str, str] = {exporter.kind: str(exporter) for exporter in self.supporting}
         if self.node_exporter is not None:
             found[NODE_EXPORTER_COMPONENT] = str(self.node_exporter)

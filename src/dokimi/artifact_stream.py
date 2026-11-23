@@ -1,9 +1,5 @@
 """A run's artifacts, carried back to the submitter in the Job's own log.
 
-**Provisional:** [ADR-05-15] is still proposed. It recommends this transport, and this
-module implements that recommendation until the ADR is decided; if the decision lands
-elsewhere, this is the module that changes.
-
 The Job's filesystem disappears with its pod, and a completed pod cannot be exec'd
 into. What the submitter can always read, for as long as the pod exists, is its log:
 ``submit`` streams it, and ``attach`` streams it again from anywhere. So at the end of a

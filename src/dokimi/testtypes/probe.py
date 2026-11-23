@@ -1,4 +1,4 @@
-"""A test type's probe mode: what the run-level preflight asks of a plugin ([ADR-05-07]).
+"""A test type's probe mode: what the run-level preflight asks of a plugin.
 
 The preflight's scheduling, image-pull and connectivity checks reuse the first planned
 pair rather than a synthetic pod or image. So a plugin that can be preflighted builds
@@ -7,7 +7,7 @@ difference: its client is started as a test would be, makes a short exchange wit
 server, resolves a cluster name, reports both, and exits instead of measuring.
 
 Kept out of :class:`~dokimi.testtypes.interface.TestTypePlugin`, as ``completion()`` is:
-[ADR-02-01]'s interface gains it before a second test type. Until then the preflight
+the test-type interface gains it before a second test type. Until then the preflight
 fails closed on a plugin that has no probe mode, rather than skip the checks.
 """
 

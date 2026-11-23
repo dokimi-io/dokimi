@@ -1,22 +1,22 @@
-"""Phase 7: the measurement, read directly from the exporters (ADR-03-01, M1-12).
+"""Phase 7: the measurement, read directly from the exporters (M1-12).
 
 **The direct read is authoritative.** Once a test has completed, each of its pods'
 exporters is read over ``/metrics``, the same surface Prometheus scrapes: one format, one
 code path, so a disagreement between the two readers says something about delivery, not
 about two endpoints. The verdict is evaluated against what this read returns, in phase 8.
 
-**The receiver's view decides.** Each pod exports its own view, labelled ``direction``
-(ADR-02-02). The ``inbound`` one, the server's, is what arrived: its throughput, and for
+**The receiver's view decides.** Each pod exports its own view, labelled ``direction``.
+The ``inbound`` one, the server's, is what arrived: its throughput, and for
 UDP the packet loss and jitter only the receiver can see. The sender's view is read too,
 and must be complete, but decides nothing.
 
-**Absent data is an error, never a pass** (ADR-02-05):
+**Absent data is an error, never a pass**:
 
 * :class:`MetricsMissingError` (``metrics_missing``): an exporter that can't be reached,
   serves no series for the test, or doesn't hold a completed result;
 * :class:`ExporterParseError` (``exporter_parse``): a line that isn't exposition format,
-  a value that isn't a number, or a ``dokimi_`` series without a required label, which
-  ADR-02-07 makes an exporter defect.
+  a value that isn't a number, or a ``dokimi_`` series without a required label, which is
+  an exporter defect.
 
 **Then Prometheus is asked** (:func:`confirm_scrape`), before teardown, whether the same
 series reached it, for at most :func:`scrape_confirmation_timeout`. One that didn't is a
@@ -59,7 +59,7 @@ __all__ = [
     "write_measurement",
 ]
 
-#: ADR-02-07's required label set. ``direction`` (ADR-02-02) is required on top.
+#: The label set every result metric must carry. ``direction`` is required on top.
 REQUIRED_LABELS = (
     "cluster",
     "run_id",
@@ -139,11 +139,11 @@ class Measurement:
     test_id: str
     #: The view the values come from: :data:`AUTHORITATIVE_DIRECTION`.
     direction: str
-    #: Each result metric's value, in its base unit (ADR-02-03).
+    #: Each result metric's value, in its base unit.
     values: Mapping[str, float]
     #: The authoritative series' labels: what identifies it in Prometheus too.
     labels: Mapping[str, str]
-    #: Which path the values came from (ADR-03-01): always the direct read.
+    #: Which path the values came from: always the direct read.
     source: str = "direct"
 
     def to_json(self) -> str:
@@ -331,7 +331,7 @@ def read_measurement(directory: Path, test_id: str) -> Measurement | None:
 
 
 def scrape_confirmation_timeout(scrape_interval: float) -> float:
-    """ADR-03-01's starting proposal: three scrape intervals, and at least a minute."""
+    """Three scrape intervals, and at least a minute."""
     return max(3 * scrape_interval, 60.0)
 
 

@@ -1,8 +1,8 @@
 """Run identity: the ``run_id`` every other part of a run is joined on.
 
-[ADR-02-07] (restating [ADR-02-04]) makes ``run_id`` the join key of the whole
-architecture — the same value labels the Prometheus series, the Kubernetes resources and
-the result artifact rows. It is generated once at setup and stable for the whole run.
+``run_id`` is the join key of the whole architecture — the same value labels the
+Prometheus series, the Kubernetes resources and the result artifact rows. It is generated
+once at setup and stable for the whole run.
 
 The accepted format is "a sortable ``<timestamp>-<short-random>``, not a UUID". The exact
 spec was left as follow-up work; this module settles it::
@@ -16,7 +16,7 @@ spec was left as follow-up work; this module settles it::
   equal chronological order, which is the property the format was chosen for.
 * **Six characters of** ``[0-9a-z]``, from :mod:`secrets` — 36**6, about 2.2 billion
   values per second. Two runs cannot legitimately start in the same second anyway (run
-  exclusivity, [ADR-05-02]); the suffix exists so that a refused second submission and the
+  exclusivity); the suffix exists so that a refused second submission and the
   run it lost to are still told apart in logs.
 * **Lowercase, digits and hyphens only**, 22 characters. That is simultaneously a valid
   Kubernetes label value, a valid part of a DNS-1123 object name, a valid Prometheus label
@@ -50,7 +50,7 @@ RUN_ID_PATTERN = re.compile(r"(?P<timestamp>\d{8}-\d{6})-(?P<suffix>[0-9a-z]{6})
 class InvalidRunIdError(ConfigError, ValueError):
     """A string that is not a ``run_id`` in the format this module defines.
 
-    A ``config_error`` (exit 3, ADR-01-11): a run id only ever comes from outside as part
+    A ``config_error`` (exit 3): a run id only ever comes from outside as part
     of the request, so a malformed one is an invalid request wherever it is detected.
     """
 

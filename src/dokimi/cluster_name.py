@@ -1,18 +1,18 @@
-"""The ``cluster`` a run executes against, as its operator named it ([ADR-02-07]).
+"""The ``cluster`` a run executes against, as its operator named it.
 
 ``cluster`` is a required label on every metric and a column of the result artifact, so
-that results from different clusters stay separable in history. [ADR-02-07] decides how it
-is populated, and this module is that decision in code:
+that results from different clusters stay separable in history. These rules decide how it
+is populated, and this module is where they become code:
 
 * **Supplied by the operator at submission, required, no default.** ``--cluster`` for one
-  run, ``DOKIMI_CLUSTER`` for one installation, the same two levels every image has
-  ([ADR-04-08]). Nothing is derived: not the kubeconfig context, not the ``kube-system``
+  run, ``DOKIMI_CLUSTER`` for one installation, the same two levels every image has.
+  Nothing is derived: not the kubeconfig context, not the ``kube-system``
   UID. A silently defaulted name would merge distinct clusters in exactly the history this
   label exists to keep apart.
 * **Resolved on the submitter's side and passed into the Job**, whose environment the
   submitter's never reaches. ``submit`` writes it into the Job as ``DOKIMI_CLUSTER``; the
   Job reads that back and never falls back to anything.
-* **A DNS label** (``OQ-103``, decided 2026-10-13): lowercase letters, digits and hyphens,
+* **A DNS label**: lowercase letters, digits and hyphens,
   starting and ending with a letter or digit, at most 63 characters. It is then one
   spelling everywhere it goes, as a Prometheus label value, a Kubernetes label value and a
   CSV cell, with no escaping. Anything else is refused, never normalised: ``Prod-EU``
@@ -21,7 +21,7 @@ is populated, and this module is that decision in code:
 
 The value records what the operator called the cluster, not a stable identity: two
 operators can name one cluster differently, and nothing detects that. Deriving one is
-``OQ-75``, deferred to Phase 6.
+an open question, deferred to Phase 6.
 """
 
 from __future__ import annotations

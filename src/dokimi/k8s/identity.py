@@ -1,13 +1,13 @@
 """Run identity and the ownership labels every created object carries.
 
-This is the one place the label keys and the ``managed-by`` value are spelled
-(ADR-05-02, renamed by ADR-01-10): ``app.kubernetes.io/managed-by: dokimi`` and
-``dokimi.io/run-id``. :mod:`dokimi.k8s.ownership` builds on the same constants.
+This is the one place the label keys and the ``managed-by`` value are spelled:
+``app.kubernetes.io/managed-by: dokimi`` and ``dokimi.io/run-id``.
+:mod:`dokimi.k8s.ownership` builds on the same constants.
 
 Run ids and namespace names each have exactly one implementation, and this module
 delegates to it rather than keeping a second copy:
 
-* the ``run_id`` format, ADR-02-08's ``YYYYMMDD-HHMMSS-xxxxxx``, is
+* the ``run_id`` format, ``YYYYMMDD-HHMMSS-xxxxxx``, is
   :mod:`dokimi.run_identity`;
 * the per-test-type namespace and its validation are :mod:`dokimi.k8s.namespaces`.
 
@@ -57,7 +57,7 @@ def validate_run_id(run_id: str) -> str:
     into a label selector, so it is checked here rather than trusted. A malformed one is
     a ``config_error``, not a failed lookup that looks like "your run has finished".
 
-    Validation is strict, as ADR-02-08 requires: the value must match the pattern *and*
+    Validation is strict: the value must match the pattern *and*
     encode a real calendar date and time. Surrounding whitespace is the only thing
     stripped; nothing else is normalised, so ``K3F9X2`` is refused rather than lowercased.
     """
@@ -72,7 +72,7 @@ def validate_run_id(run_id: str) -> str:
 
 
 def ownership_labels(run_id: str, component: str | None = None) -> dict[str, str]:
-    """The labels every object a run creates must carry (ADR-05-02)."""
+    """The labels every object a run creates must carry."""
     labels = {MANAGED_BY_LABEL: MANAGED_BY, RUN_ID_LABEL: run_id}
     if component is not None:
         labels[COMPONENT_LABEL] = component
@@ -83,14 +83,14 @@ def run_selector(run_id: str, component: str | None = None) -> str:
     """A label selector matching exactly one run's objects.
 
     Every delete and every lookup goes through a selector built here. That is the
-    mechanism behind ADR-05-02's rule that nothing unlabelled is ever touched: there is
+    mechanism behind the rule that nothing unlabelled is ever touched: there is
     no code path that addresses a run's resources by name alone.
     """
     return ",".join(f"{key}={value}" for key, value in ownership_labels(run_id, component).items())
 
 
 def default_namespace(test_type: TestType) -> str:
-    """The namespace a test type's runs share (ADR-05-02).
+    """The namespace a test type's runs share.
 
     Per test type, not per run: a namespace per run would need cluster-level permission
     to create one on every invocation and would make cleanup wait on namespace deletion.
