@@ -55,7 +55,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_run_images.py`](test_run_images.py) | The images a run deploys: chosen at submission, by run, installation or release default, and carried into the Job |
 | [`test_image_build.py`](test_image_build.py) | Both Dockerfiles and the release wiring keep their promises |
 | [`test_test_env.py`](test_test_env.py) | The test environment's configs, scripts, README and CI workflow agree with each other |
-| [`test_workflows.py`](test_workflows.py) | Every GitHub Action the workflows use is pinned to a commit |
+| [`test_workflows.py`](test_workflows.py) | Every GitHub Action the workflows use is pinned to a commit, and every runner to an Ubuntu release |
 | [`test_tests_readme.py`](test_tests_readme.py) | This README lists every test file, and only those |
 | [`test_rbac.py`](test_rbac.py) | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | The prescribed package layout exists and imports |
@@ -148,7 +148,9 @@ working while being wrong:
   is pinned to a 40-character commit SHA, with the version in a trailing comment. A tag such as
   `@v4` can be moved to different code by whoever controls that repository, and the release
   workflow runs with `packages: write` and `id-token: write`. A tag works just as well until
-  the day it is moved, so only a test notices it coming back.
+  the day it is moved, so only a test notices it coming back. It also checks that every job
+  names its Ubuntu release rather than `ubuntu-latest`, which GitHub moves to a new release,
+  and with it the versions of the shells and tools a job installs.
 - [`test_core_independence.py`](test_core_independence.py) imports every core module in a
   subprocess and fails if anything named `robot` appears in `sys.modules`. The subprocess
   is the point: the result must not be contaminated by whatever the rest of the session
