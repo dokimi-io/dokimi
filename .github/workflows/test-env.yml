@@ -6,7 +6,11 @@
 #
 # Not on every pull request: seven clusters cost minutes that a change outside test-env/
 # gains nothing from. It runs when the environment changes, weekly to catch drift in what
-# the pinned versions pull, and on demand. The acceptance run (M1-17) extends it.
+# the pinned versions pull, and on demand.
+#
+# The acceptance run (M1-17) runs on the default profile only, after its check: real runs
+# submitted through the CLI, with dokimi's own images built from this commit. The other
+# profiles prove the environment; one is enough to prove dokimi on it.
 
 name: Test environment
 
@@ -27,7 +31,7 @@ jobs:
   environment:
     name: ${{ matrix.profile }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +46,7 @@ jobs:
         include:
           - profile: kind-kindnet
             consecutive: true
+            acceptance: true
           - profile: k3d-flannel
             consecutive: true
           # flannel needs br_netfilter, which GitHub's Ubuntu runners do not load. The
@@ -61,6 +66,21 @@ jobs:
 
       - name: Check
         run: test-env/test-env.sh check
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        if: matrix.acceptance
+        with:
+          version: "0.12.18"
+          enable-cache: true
+
+      - name: Acceptance run
+        if: matrix.acceptance
+        run: |
+          uv sync --locked
+          export KUBECONFIG="$PWD/.test-env/kubeconfig"
+          out=$(test-env/test-env.sh images) && eval "$out"
+          kubectl apply -f deploy/rbac.yaml
+          uv run python test-env/acceptance.py
 
       - name: Tear down, and verify nothing remains
         run: test-env/test-env.sh down

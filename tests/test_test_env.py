@@ -9,14 +9,18 @@ script, the workflow and the README, and that the scripts still run on macOS's b
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import pathlib
 import re
 import subprocess
+import sys
 from typing import Any
 
 import pytest
 import yaml
+
+from dokimi.formats import parse_file
 
 REPOSITORY = pathlib.Path(__file__).resolve().parent.parent
 TEST_ENV = REPOSITORY / "test-env"
@@ -366,3 +370,113 @@ def test_the_help_shows_the_whole_header_comment() -> None:
     last_comment = next(i for i, line in enumerate(lines) if not line.startswith("#"))
     printed = re.search(r"sed -n '2,(\d+)p'", "\n".join(lines))
     assert printed and int(printed.group(1)) == last_comment
+
+
+# -- the acceptance run (M1-17) ---------------------------------------------------------
+
+
+def _acceptance() -> Any:
+    """``test-env/acceptance.py``, which lives outside the package, imported by path."""
+    spec = importlib.util.spec_from_file_location("acceptance", TEST_ENV / "acceptance.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered while it loads: its dataclasses look their module up by name.
+    sys.modules["acceptance"] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules["acceptance"]
+    return module
+
+
+def test_the_acceptance_run_follows_the_default_profiles_check() -> None:
+    job = _yaml(WORKFLOW)["jobs"]["environment"]
+    included = job["strategy"]["matrix"]["include"]
+    steps = [step.get("name", step.get("uses", "")) for step in job["steps"]]
+
+    assert [i["profile"] for i in included if i.get("acceptance")] == ["kind-kindnet"]
+    assert (
+        steps.index("Check")
+        < steps.index("Acceptance run")
+        < steps.index("Tear down, and verify nothing remains")
+    )
+
+
+@pytest.mark.parametrize(
+    ("criteria", "metrics"),
+    [
+        ("PASSING", ["throughput", "packetLoss"]),
+        ("FAILING", ["throughput"]),
+        ("NEVER_MEASURED", ["latency"]),
+    ],
+)
+def test_the_acceptance_definitions_are_valid(
+    criteria: str, metrics: list[str], tmp_path: pathlib.Path
+) -> None:
+    acceptance = _acceptance()
+    path = tmp_path / "test.yaml"
+    path.write_text(
+        acceptance.definition("a-test", "node-a", "node-b", getattr(acceptance, criteria))
+    )
+
+    definition = parse_file(path)
+
+    assert (definition.source_node, definition.target_node) == ("node-a", "node-b")
+    assert [c.metric.value for c in definition.criteria] == metrics
+
+
+def test_the_acceptance_isolates_only_the_test_servers() -> None:
+    policy = yaml.safe_load(_acceptance().ISOLATE_SERVERS)
+
+    # A policy on the whole namespace would also cut the run's Job and its Prometheus off,
+    # and the preflight would fail for a different reason than the one under test.
+    assert policy["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "iperf2",
+        "app.kubernetes.io/component": "server",
+    }
+    assert policy["spec"]["policyTypes"] == ["Ingress"]
+
+
+def test_the_acceptance_run_picks_only_workers_a_pair_can_run_on() -> None:
+    def node(name: str, *, ready: bool = True, taint: str = "", cordoned: bool = False) -> Any:
+        return {
+            "metadata": {"name": name},
+            "spec": {
+                "unschedulable": cordoned,
+                "taints": [{"key": "x", "effect": taint}] if taint else [],
+            },
+            "status": {"conditions": [{"type": "Ready", "status": str(ready)}]},
+        }
+
+    nodes = {
+        "items": [
+            node("worker-b"),
+            node("control-plane", taint="NoSchedule"),
+            node("draining", taint="NoExecute"),
+            node("cordoned", cordoned=True),
+            node("not-ready", ready=False),
+            node("worker-a"),
+            node("preferred-not", taint="PreferNoSchedule"),
+        ]
+    }
+
+    assert _acceptance().schedulable_workers(nodes) == ["preferred-not", "worker-a", "worker-b"]
+
+
+def test_the_acceptance_submitter_is_granted_nothing_beyond_its_namespace() -> None:
+    documents = list(yaml.safe_load_all(_acceptance().submitter_grant()))
+
+    assert [d["kind"] for d in documents] == ["ServiceAccount", "Role", "RoleBinding"]
+    assert {d["metadata"]["namespace"] for d in documents} == {"dokimi-iperf2"}
+    role = documents[1]
+    assert {(r["apiGroups"][0], r["resources"][0]): set(r["verbs"]) for r in role["rules"]} == {
+        ("", "configmaps"): {"create", "get", "delete"},
+        ("batch", "jobs"): {"create", "list", "delete"},
+        ("", "pods"): {"get", "list"},
+        ("", "pods/log"): {"get"},
+    }
+    assert documents[2]["roleRef"] == {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": role["metadata"]["name"],
+    }

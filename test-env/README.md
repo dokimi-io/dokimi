@@ -201,6 +201,40 @@ The worker names differ by tool: kind calls them `dokimi-worker`, `-worker2` and
 `-worker3`, and k3d calls them `k3d-dokimi-agent-0` to `-agent-2`. `nodes` prints
 whichever this cluster has.
 
+## The acceptance run
+
+`acceptance.py` is Milestone-01's end-to-end check (M1-17). It submits real runs through the
+CLI, as a user would, and checks what each one exits with, what reaches `results/<run-id>/`,
+and what it leaves in the cluster:
+
+```console
+$ test-env/test-env.sh up kind-kindnet
+$ out=$(test-env/test-env.sh images) && eval "$out"
+$ kubectl apply -f deploy/rbac.yaml
+$ export KUBECONFIG=.test-env/kubeconfig
+$ uv run python test-env/acceptance.py                # every scenario
+$ uv run python test-env/acceptance.py happy-path     # or some of them
+```
+
+| Scenario | What it checks |
+| --- | --- |
+| `happy-path` | A passing run exits `0`, brings back `output.xml`, `log.html`, `report.html`, the CSV and JSONL result files, `run.json` and `diagnostics.json`, and leaves only its Prometheus |
+| `unknown-node` | A node the cluster doesn't have stops the run in phase 3 with exit `3`, names the node, and leaves nothing in the cluster |
+| `preflight-failure` | With a NetworkPolicy isolating the test's servers, the preflight's probe can't connect: one `cluster not ready (connectivity)` error, exit `4`, no test results, and only the Prometheus left |
+| `failing-criterion` | A criterion no emulated cluster meets: exit `1`, the pair and its value named, and the test pods, owner and definition kept until `dokimi cleanup` |
+| `never-measured` | A latency criterion, which iperf2 never measures: `metrics_missing`, exit `2`, never a pass |
+| `reattach` | Ctrl-C while the test runs stops the CLI with `130`, not the run; `dokimi attach` follows it to its end, exits `0` and fetches every report |
+| `concurrent` | Two submissions at the same moment: one runs and exits `0`, the other is refused with `run_already_active`, exit `4`, names the run holding the cluster, and leaves nothing |
+| `namespaced-submitter` | A submitter with only the namespaced permissions the [installation guide](../docs/installation.md#cluster-credentials) lists for `submit`, through a kubeconfig of its own, runs and removes a passing run, with nothing forbidden |
+
+It uses the first two schedulable workers, or `--source` and `--target`. Its passing run asks
+for 1 megabit per second at a 10 megabit target and at most 10 percent loss: little enough that
+any cluster that runs the test at all meets it, since this environment's numbers say nothing
+about real hardware. The failing run asks for 100 gigabits per second, and the erroring one for a
+latency, which iperf2 doesn't measure. `preflight-failure` needs a CNI that enforces
+NetworkPolicy, which every profile but `kind-flannel` does. Every run it starts is removed again at the end, its Prometheus included,
+unless `--keep` is given. CI runs it on `kind-kindnet`, after `check`.
+
 ## Things that will catch you out
 
 - **Side-load an image you built, not a public image you re-tagged.** Re-tagging a pulled
