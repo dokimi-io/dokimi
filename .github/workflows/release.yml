@@ -124,8 +124,12 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
 
+      # GitHub stores build attestations only for public repositories on the org's plan.
+      # A publish started by hand while the repository is still private skips it, so its
+      # images can be tried before going public. A tag always attests: a release from a
+      # private repository fails here rather than shipping without provenance.
       - name: Attest build provenance
-        if: env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true' && (github.event_name == 'push' || !github.event.repository.private)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ matrix.image }}
