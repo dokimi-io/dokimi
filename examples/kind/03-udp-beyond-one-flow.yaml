@@ -1,0 +1,32 @@
+apiVersion: dokimi.io/v1alpha1
+kind: NetworkTest
+
+metadata:
+  name: udp-beyond-one-flow
+
+placement:
+  mode: explicit
+  source: dokimi-worker
+  target: dokimi-worker3
+
+test:
+  type: iperf2
+  protocol: udp
+  duration: 20s
+  targetBandwidth: 10G
+
+monitoring:
+  mode: managed
+
+validation:
+  - metric: throughput
+    comparison: atLeast
+    threshold: 9.5
+    unit: gigabits per second
+  - metric: packetLoss
+    comparison: atMost
+    threshold: 0.1
+    unit: percent
+
+results:
+  directory: ./results
