@@ -414,7 +414,7 @@ def test_a_tool_that_measured_nothing_fails_the_test() -> None:
 
 
 def test_a_spoofed_trigger_shows_up_here_and_nowhere_else() -> None:
-    # start() cannot tell (adrs#46); completion() can, and this is the path that uses it.
+    # start() cannot tell; completion() can, and this is the path that uses it.
     kubelet = owned(Kubelet())
 
     with pytest.raises(UnexpectedTargetError, match="measured against 10.9.9.9"):

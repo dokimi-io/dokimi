@@ -1,6 +1,6 @@
-"""The format plugins, against the acceptance criteria on adrs#38.
+"""The format plugins, against M1-03's acceptance criteria.
 
-The four criteria that issue names are each covered by a test below, named after the
+The four criteria it names are each covered by a test below, named after the
 property rather than the function, because the property is the thing that must not
 regress.
 """

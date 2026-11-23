@@ -2,7 +2,7 @@
 
 The exporter is a standalone script in the iperf2 image, standard library only, so it is
 loaded from its file here rather than imported from the package. The sample lines are
-iperf 2.2.1's ``-y C`` output from a run on kind (dokimi#35, adrs#45).
+iperf 2.2.1's ``-y C`` output from a run on kind (dokimi#35).
 """
 
 from __future__ import annotations

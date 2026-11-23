@@ -1,6 +1,6 @@
 """Run exclusivity: one active run per cluster, including when two start at once.
 
-M1-05's acceptance criteria and adrs#63's live here: a second run started while one is
+M1-05's acceptance criteria live here, with the race between two submissions: a second run started while one is
 active is refused with a message naming the active run; two simultaneous submissions
 start exactly one run — including through ``submit``, not only through the claim; and a
 refused, crashed or finished run does not block later runs indefinitely.
@@ -328,7 +328,7 @@ def test_two_simultaneous_claims_start_exactly_one_run(attempt: int) -> None:
 def test_two_simultaneous_submissions_through_submit_start_exactly_one_run(
     attempt: int,
 ) -> None:
-    """adrs#63: M1-04's submission and M1-05's claim together, not each in isolation.
+    """M1-04's submission and M1-05's claim together, not each in isolation.
 
     Both submissions create their owner, definition and Job first — exactly the objects
     that made both claims refuse each other while any run-labelled object counted as
