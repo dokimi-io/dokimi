@@ -1,6 +1,6 @@
 """The CLI: what each command does, and what it exits with.
 
-Exit codes are automation-facing from the first release (ADR-01-08), so they are asserted
+Exit codes are automation-facing from the first release, so they are asserted
 as values rather than as "non-zero".
 """
 
@@ -81,7 +81,7 @@ EXECUTE = [
 @pytest.fixture(autouse=True)
 def _released_build(monkeypatch: pytest.MonkeyPatch) -> None:
     """Most commands need images to submit and deploy; a checkout has none by design."""
-    # And a cluster name, which has no default either (ADR-02-07): on the submitter's side
+    # And a cluster name, which has no default either: on the submitter's side
     # as an installation override, and in the Job as what submit wrote.
     monkeypatch.setenv("DOKIMI_CLUSTER", "test-cluster")
     monkeypatch.setattr(images, "ORCHESTRATOR_IMAGE_DIGEST", DIGEST)
@@ -243,7 +243,7 @@ def test_dry_run_renders_the_matrix_and_the_manifests(
 
 def test_dry_run_touches_no_cluster(no_cluster: None) -> None:
     # The fixture's client raises on contact, so this passing is the assertion: not one
-    # call was made. ADR-01-06 requires --dry-run to stay fully local.
+    # call was made. --dry-run must stay fully local.
     assert main(["submit", str(EXAMPLE), "--dry-run"]) == ExitCode.PASS
 
 
@@ -258,7 +258,7 @@ def test_dry_run_rejects_invalid_input_before_anything_else(
 
 def test_invalid_input_never_reaches_the_cluster(no_cluster: None, tmp_path: Path) -> None:
     # Same client that raises on contact, but this time without --dry-run: validation
-    # must fail first (ADR-05-05's config_error, detected before deployment).
+    # must fail first (a config_error, detected before deployment).
     broken = tmp_path / "broken.yaml"
     broken.write_text("kind: NetworkTest\n")
 
@@ -314,7 +314,7 @@ def test_submit_honours_the_namespace_override(cluster: FakeCluster) -> None:
 def test_a_malformed_namespace_is_a_config_error(
     no_cluster: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # ADR-01-11: an invalid request exits 3 before anything is created, not 5.
+    # An invalid request exits 3 before anything is created, not 5.
     assert main(["submit", str(EXAMPLE), "--namespace", "Not_Valid"]) == ExitCode.CONFIG_ERROR
     assert "not a valid namespace name" in capsys.readouterr().err
 
@@ -401,7 +401,7 @@ def test_execute_parses_then_plans(
 def test_execute_marks_its_run_finished_so_the_next_one_can_start(
     job_cluster: FakeCluster,
 ) -> None:
-    # ADR-05-13: however a claimed run ends, it stops holding the cluster.
+    # However a claimed run ends, it stops holding the cluster.
     main(EXECUTE)
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
@@ -412,7 +412,7 @@ def test_execute_marks_its_run_finished_so_the_next_one_can_start(
 
 
 def test_execute_dates_its_claim_from_the_jobs_start(job_cluster: FakeCluster) -> None:
-    # ADR-05-13: the Job's start time plus its activeDeadlineSeconds, not the moment the
+    # The Job's start time plus its activeDeadlineSeconds, not the moment the
     # claim was written after phases 2 and 3.
     main(EXECUTE)
 
@@ -426,7 +426,7 @@ def test_execute_dates_its_claim_from_the_jobs_start(job_cluster: FakeCluster) -
 def test_execute_is_refused_with_4_while_another_run_is_active(
     job_cluster: FakeCluster, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # ADR-01-11: a refused claim is a run-level preflight failure, reason named.
+    # A refused claim is a run-level preflight failure, reason named.
     submitted(job_cluster, "20260101-090000-bbbbbb")
     claim_run(
         job_cluster.store,
@@ -447,7 +447,7 @@ def test_execute_is_refused_with_4_while_another_run_is_active(
 def test_execute_provisions_and_names_its_prometheus_before_any_workload(
     job_cluster: FakeCluster, prometheus: FakePrometheus, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # ADR-03-02: the selected mode and the resolved endpoint are logged prominently, and
+    # The selected mode and the resolved endpoint are logged prominently, and
     # query access is verified in phase 4.
     main(EXECUTE)
 
@@ -479,12 +479,12 @@ def test_an_unqueryable_prometheus_fails_phase_4_before_any_workload(
     assert "cluster not ready (prometheus_unreachable)" in err
     assert "connection refused" in err
     assert not [kind for kind, _ in job_cluster.store.created if kind is POD]
-    # However phase 4 ends, the run stops holding the cluster (ADR-05-13).
+    # However phase 4 ends, the run stops holding the cluster.
     owner = job_cluster.store.get(CONFIG_MAP, "dokimi-iperf2", owner_name(RunId(RUN_ID)))
     assert FINISHED_AT_ANNOTATION in owner["metadata"]["annotations"]
 
 
-# -- phase 4's cluster checks (ADR-05-07) ----------------------------------------------
+# -- phase 4's cluster checks ----------------------------------------------------------
 
 
 def test_execute_checks_the_cluster_with_the_first_pair_and_removes_it_before_phase_5(
@@ -815,7 +815,7 @@ def test_a_dry_run_with_a_kubeconfig_shows_the_resolved_plan(
 
 
 def test_a_dry_run_with_a_kubeconfig_only_reads(cluster: FakeCluster) -> None:
-    # ADR-01-06 allows a provided kubeconfig "for read-only cluster info". Read-only
+    # A dry run may use a provided kubeconfig, but for read-only cluster info only. Read-only
     # means the fake records not one write.
     main(["submit", str(EXAMPLE), "--dry-run", "--context", "kind-test"])
 
@@ -909,7 +909,7 @@ def test_version_reports_the_version(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_an_unknown_command_is_a_config_error() -> None:
-    # argparse would exit 2, which ADR-01-08 reserves for `error`: a typo on the command
+    # argparse would exit 2, which the exit codes reserve for `error`: a typo on the command
     # line would read to CI as a run that errored. It is an invalid request: 3.
     with pytest.raises(SystemExit) as exit_info:
         main(["teleport"])
@@ -997,7 +997,7 @@ def test_the_in_cluster_command_is_not_advertised(capsys: pytest.CaptureFixture[
     assert "SUPPRESS" not in listed
 
 
-# -- the images a run deploys (ADR-04-08) ---------------------------------------------
+# -- the images a run deploys ---------------------------------------------------------
 
 
 def test_a_dry_run_shows_the_images_the_run_deploys(
@@ -1076,7 +1076,7 @@ def test_execute_without_its_images_is_refused_before_it_claims(
     assert CLAIM_EXPIRES_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
 
 
-# -- the cluster's name (ADR-02-07) ------------------------------------------------------
+# -- the cluster's name ------------------------------------------------------------------
 
 
 def test_submit_without_a_cluster_name_creates_nothing(
@@ -1199,7 +1199,7 @@ def test_convert_touches_no_cluster(no_cluster: None) -> None:
     assert main(["convert", str(EXAMPLE)]) == ExitCode.PASS
 
 
-# -- the run's artifacts, back through its log (ADR-05-15, provisional) ---------------
+# -- the run's artifacts, back through its log ----------------------------------------
 
 
 def artifact_lines(tmp_path: Path, run_id: str) -> list[str]:
@@ -1610,7 +1610,7 @@ def test_a_cleanup_it_cant_carry_out_is_a_config_error(
     assert main(["cleanup", *arguments]) == ExitCode.CONFIG_ERROR
 
 
-# -- phase 11 starts: the run's test pods go before the claim does (ADR-05-13) ---------
+# -- phase 11 starts: the run's test pods go before the claim does ---------------------
 
 
 def left_pod(fake: FakeCluster, name: str, component: str = "client") -> None:

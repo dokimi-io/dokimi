@@ -40,7 +40,7 @@ from dokimi.testtypes.interface import WorkloadImage
 
 RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
-#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+#: The images a run deploys, as ``submit`` resolves them.
 RUN_IMAGES = {
     "iperf2": WorkloadImage(
         "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
@@ -110,14 +110,14 @@ def test_everything_but_the_owner_points_at_the_owner(manifests: list[dict[str, 
         reference = manifest["metadata"]["ownerReferences"][0]
         assert reference["name"] == owner["metadata"]["name"]
         assert reference["kind"] == "ConfigMap"
-        # ADR-05-13: unset, so deleting the owner never needs rights on its finalizers.
+        # Unset, so deleting the owner never needs rights on its finalizers.
         assert "blockOwnerDeletion" not in reference
 
 
 def test_the_owner_is_named_after_the_run_and_carries_its_identity(
     manifests: list[dict[str, Any]],
 ) -> None:
-    # ADR-05-13: one owner, `run-<id>-owner`, with the run's id and creation time.
+    # One owner, `run-<id>-owner`, with the run's id and creation time.
     owner = manifests[0]
 
     assert owner["metadata"]["name"] == f"run-{RUN_ID}-owner"
@@ -129,7 +129,7 @@ def test_a_submission_is_never_evidence_of_an_active_run(
     manifests: list[dict[str, Any]],
 ) -> None:
     # The claim is written by the Job in phase 4, never at submission, so two submissions
-    # made at once cannot refuse each other (ADR-05-10).
+    # made at once cannot refuse each other.
     owner = manifests[0]
 
     assert CLAIMED_AT_ANNOTATION not in (owner["metadata"].get("annotations") or {})
@@ -151,8 +151,8 @@ def test_the_owner_uid_is_bound_after_creation(manifests: list[dict[str, Any]]) 
 
 
 def test_the_job_never_retries(manifests: list[dict[str, Any]]) -> None:
-    # ADR-01-08: the exit code is the verdict. A retry would re-run the whole matrix on
-    # a plain `fail`, against ADR-05-05's rule that a fail is never re-rolled.
+    # The exit code is the verdict. A retry would re-run the whole matrix on
+    # a plain `fail`, against the rule that a fail is never re-rolled.
     job = _job(manifests)
 
     assert job["spec"]["backoffLimit"] == 0
@@ -162,7 +162,7 @@ def test_the_job_never_retries(manifests: list[dict[str, Any]]) -> None:
 def test_the_job_carries_a_self_limiting_deadline(
     manifests: list[dict[str, Any]], definition: TestDefinition
 ) -> None:
-    # ADR-05-02: labels make cleanup possible, deadlines make it unnecessary.
+    # Labels make cleanup possible, deadlines make it unnecessary.
     job = _job(manifests)
 
     assert job["spec"]["activeDeadlineSeconds"] == job_deadline_seconds(definition)
@@ -194,7 +194,7 @@ def test_the_submitter_chooses_when_the_run_keeps_its_evidence(definition: TestD
 
 
 def test_the_job_outlives_any_workload_it_runs(definition: TestDefinition) -> None:
-    # ADR-05-13: the Job deadline is also when the claim expires, which is only safe
+    # The Job deadline is also when the claim expires, which is only safe
     # because by then every workload has hit its own, shorter deadline.
     workload = workload_budget_for(definition)
 
@@ -305,7 +305,7 @@ def test_the_image_is_submitted_exactly_as_resolved(manifests: list[dict[str, An
 
 
 def test_the_job_is_given_the_images_the_run_deploys(manifests: list[dict[str, Any]]) -> None:
-    # Resolved on the submitter's side, whose environment the Job never sees (ADR-04-08).
+    # Resolved on the submitter's side, whose environment the Job never sees.
     env = {entry["name"]: entry["value"] for entry in _container(manifests)["env"]}
 
     assert env["DOKIMI_IPERF2_IMAGE"] == RUN_IMAGES["iperf2"].reference
@@ -313,7 +313,7 @@ def test_the_job_is_given_the_images_the_run_deploys(manifests: list[dict[str, A
 
 
 def test_the_job_is_given_the_clusters_name(manifests: list[dict[str, Any]]) -> None:
-    # ADR-02-07: given at submission, and the Job uses exactly that.
+    # Given at submission, and the Job uses exactly that.
     env = {entry["name"]: entry["value"] for entry in _container(manifests)["env"]}
 
     assert env["DOKIMI_CLUSTER"] == "test-cluster"
@@ -347,6 +347,6 @@ def test_a_service_account_is_only_set_when_asked_for(definition: TestDefinition
 
 
 def test_resource_names_use_the_run_id_verbatim() -> None:
-    # ADR-02-08's format is already a valid object-name segment, so an object name and a
+    # The run_id format is already a valid object-name segment, so an object name and a
     # label spell the same run the same way. The previous format needed lowercasing here.
     assert resource_name(RUN_ID) == f"run-{RUN_ID}"

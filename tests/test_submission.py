@@ -1,6 +1,6 @@
-"""Submitting, following and reattaching (ADR-01-06).
+"""Submitting, following and reattaching.
 
-The three properties ADR-01-06 asks for are all testable without a cluster, because all
+Submitting, following and reattaching are all testable without a cluster, because all
 three are statements about which calls happen and what they are given.
 """
 
@@ -44,7 +44,7 @@ from tests.fake_cluster import FakeCluster
 
 RUN_ID = "20260101-100000-4f2a9c"
 IMAGE = "ghcr.io/dokimi-io/orchestrator@sha256:" + "ab" * 32
-#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+#: The images a run deploys, as ``submit`` resolves them.
 RUN_IMAGES = {
     "iperf2": WorkloadImage(
         "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
@@ -120,7 +120,7 @@ def test_submit_creates_the_owner_first_and_binds_the_rest_to_it(
 
     submit(cluster, _plan(definition))
 
-    # A run never creates a namespace (ADR-05-13): only the owner, the definition, the Job.
+    # A run never creates a namespace: only the owner, the definition, the Job.
     assert cluster.created_kinds == ["ConfigMap", "ConfigMap", "Job"]
     for manifest in cluster.created[1:]:
         assert manifest["metadata"]["ownerReferences"][0]["uid"] == cluster.owner_uid
@@ -128,7 +128,7 @@ def test_submit_creates_the_owner_first_and_binds_the_rest_to_it(
 
 def test_submit_refuses_an_owner_without_a_uid(definition: TestDefinition) -> None:
     # Without a uid there is nothing for the garbage collector to cascade from, so the
-    # backstop ADR-05-02 relies on would silently not exist.
+    # cleanup backstop would silently not exist.
     cluster = FakeCluster(owner_uid="")
 
     with pytest.raises(ClusterError, match="without a uid"):
@@ -147,7 +147,7 @@ def test_following_streams_the_log_and_returns_the_containers_exit_code() -> Non
         sleep=_never_sleep,
     )
 
-    # ADR-01-08 makes the Job's exit status the verdict, so it is propagated, not
+    # The Job's exit status is the verdict, so it is propagated, not
     # reinterpreted: 1 means the run completed and something failed.
     assert code == 1
     assert written == ["phase 2", "phase 3"]
@@ -243,7 +243,7 @@ def test_submitting_does_not_change_the_submission(definition: TestDefinition) -
 
 def test_a_failed_submission_removes_its_owner(definition: TestDefinition) -> None:
     # The owner was created, the Job was refused. The owner is unclaimed, so it would not
-    # block later runs (ADR-05-13), but it is debris, removed by name and uid.
+    # block later runs, but it is debris, removed by name and uid.
     cluster = FakeCluster(fail_on_kind="Job")
 
     with pytest.raises(ClusterError, match="422"):
@@ -256,7 +256,7 @@ def test_a_failed_submission_removes_its_owner(definition: TestDefinition) -> No
 def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
     definition: TestDefinition,
 ) -> None:
-    # ADR-05-02: cleanup failures are reported with what remains, never swallowed. The
+    # Cleanup failures are reported with what remains, never swallowed. The
     # original error is still the one raised.
     cluster = FakeCluster(fail_on_kind="Job", fail_deleting=True)
 
@@ -269,7 +269,7 @@ def test_a_failed_cleanup_is_reported_with_the_command_to_finish_it(
 
 
 def test_every_run_outcome_matches_the_cli_table() -> None:
-    # Two modules name ADR-01-08's codes; this is what keeps them the same list.
+    # Two modules name the exit codes; this is what keeps them the same list.
     assert frozenset(code.value for code in ExitCode if code.value <= 5) == RUN_OUTCOMES
 
 
@@ -307,7 +307,7 @@ def test_an_exit_code_outside_the_table_is_not_passed_off_as_a_verdict(
     code: int, reason: str, expected: str
 ) -> None:
     # 137 passed straight through would reach CI as a number that means nothing in
-    # ADR-01-08's table. It is reported as what it is, and the CLI exits 5.
+    # the exit-code table. It is reported as what it is, and the CLI exits 5.
     cluster = FakeCluster(exit_code=code, termination_reason=reason)
 
     with pytest.raises(ClusterError, match=expected) as error:

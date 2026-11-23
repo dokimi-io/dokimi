@@ -1,7 +1,7 @@
 """The shipped examples must parse, and must agree with each other.
 
 Documentation that the parser rejects is worse than no documentation, and an example in
-two formats that quietly drift apart is exactly what ADR-04-05's peer-format rule exists
+two formats that quietly drift apart is exactly what treating the formats as equal peers exists
 to prevent. Both are cheap to check, so they are checked on every run.
 """
 

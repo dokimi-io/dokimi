@@ -1,7 +1,7 @@
 """The core library must import and pass its tests with Robot Framework absent.
 
-ADR-01-02 requires the orchestration library to stay usable without Robot Framework, and
-ADR-01-08 makes Robot a runtime dependency of a *run* rather than of the library. That is
+The orchestration library must stay usable without Robot Framework, and Robot is a
+runtime dependency of a *run* rather than of the library. That is
 easy to state and easy to break by accident — one stray import in a module everything
 else pulls in is enough.
 
@@ -70,5 +70,5 @@ def test_core_import_does_not_pull_in_robot_framework() -> None:
     leaked = [name for name in result.stdout.strip().split(",") if name]
     assert not leaked, (
         f"importing the core library pulled in Robot Framework modules: {leaked}. "
-        "The core must stay importable with Robot Framework not installed (ADR-01-02)."
+        "The core must stay importable with Robot Framework not installed."
     )

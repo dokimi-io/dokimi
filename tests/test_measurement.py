@@ -1,4 +1,4 @@
-"""Phase 7 (M1-12, ADR-03-01): the direct read, and Prometheus's confirmation of it."""
+"""Phase 7 (M1-12): the direct read, and Prometheus's confirmation of it."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def test_an_unreachable_exporter_is_metrics_missing() -> None:
 
 
 def test_a_series_without_a_required_label_is_exporter_parse() -> None:
-    # ADR-02-07: a missing required label is an exporter defect.
+    # A missing required label is an exporter defect.
     server_labels = labels("inbound", run_id=RUN_ID)
     del server_labels["cluster"]
     server = exposition(server_labels, results=INBOUND_RESULT)

@@ -2,20 +2,20 @@
 
 Dockerfiles for the images this project builds and publishes to
 `ghcr.io/dokimi-io/<image-name>`, pinned by digest and signed with provenance
-attestation (ADR-05-04, ADR-05-08).
+attestation.
 
 | Image | Base | Status |
 | --- | --- | --- |
 | [`orchestrator`](orchestrator/Dockerfile) | `python:3.14-slim`, built with `uv sync --locked` against the repository-root lockfile | M1-02 (adrs#37) |
 | [`iperf2`](iperf2/Dockerfile) | `alpine:3.24.2`, pinned by digest, with `iperf=2.2.1-r0` and `python3=3.14.10-r1` for its exporter | M1-09 (adrs#44); the exporter with M1-10 (adrs#45) |
 
-Version floors for the base image and the build toolchain are fixed by
-[ADR-01-09](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/01-09-implementation-dependency-version-floors.md),
-not here — this table records which image uses which base, not what the floor should be.
+Version floors for the base image and the build toolchain are fixed in `pyproject.toml`
+(`requires-python` and `[tool.uv] required-version`), not here — this table records which
+image uses which base, not what the floor should be.
 
 ## `orchestrator`
 
-The one-shot in-cluster Job a run is (ADR-01-06): phases 2 to 11 of a run happen inside
+The one-shot in-cluster Job a run is: phases 2 to 11 of a run happen inside
 this image, and the local CLI only submits it.
 
 ```console
@@ -29,16 +29,16 @@ is built from.
 
 Three properties worth stating, because each is a decision rather than a habit:
 
-- **`python:3.14-slim`, not Alpine.** A deliberate departure from ADR-05-04's base for
+- **`python:3.14-slim`, not Alpine.** A deliberate departure from the Alpine base of the
   test-workload images: Python wheels are predominantly built against glibc, and musl
-  means packages compiled from source or missing wheels entirely (ADR-05-08).
+  means packages compiled from source or missing wheels entirely.
 - **Installed with `uv sync --locked`,** which fails rather than re-resolving if the
   lockfile does not match `pyproject.toml`. "Reproducible" here means exactly that — one
   lockfile commit yields one dependency set, in the image and in the CLI distribution
   alike. It is not a claim of bit-identical layers.
 - **Robot Framework is installed,** via the `robot` extra, even though the core library
   must stay importable without it. Phase 6 of a run executes the rendered suite through
-  Robot's own runner *inside this Job* (ADR-01-08), so this is one of the two places
+  Robot's own runner *inside this Job*, so this is one of the two places
   Robot genuinely is a runtime dependency. The CLI distribution installs without it, and
   CI proves the library still works when it is absent.
 
@@ -47,7 +47,7 @@ Robot writes its per-pair `output.xml` before `rebot` merges them (phase 9a).
 
 ## `iperf2`
 
-The test workload for both roles of an `iperf2` pair (ADR-05-04): one image, because the
+The test workload for both roles of an `iperf2` pair: one image, because the
 client and the server are the same binary.
 
 ```console
@@ -62,7 +62,7 @@ both images; it admits the two role scripts and nothing else from `images/`.
   exporter parses, so the tool version is part of the measurement's identity, not a detail.
 - **The client is [`dokimi-iperf2-client.sh`](iperf2/dokimi-iperf2-client.sh).** It starts
   idle and listens on a trigger port, so both pods can pass the readiness gate before any
-  traffic is sent (ADR-05-07). `start()` connects and sends the server's pod IP, which must
+  traffic is sent. `start()` connects and sends the server's pod IP, which must
   be an IPv4 address. The client then runs the discarded warm-up pass from source port
   5103, runs the measurement with `-y C` from source port 5102, writes the final summary
   line to its termination message, and exits with `iperf`'s status. iperf2 exits `0` even
@@ -77,7 +77,7 @@ both images; it admits the two role scripts and nothing else from `images/`.
   to the trigger port would itself start the client. Once started, the client stays
   `Ready` on a marker file rather than turning NotReady for its whole measurement.
 - **Runs as uid 65532.** It uses the pod network only, so nothing needs a privileged port
-  or raw sockets (ADR-05-03).
+  or raw sockets.
 
 CI builds it, checks the uid and the tool version, and runs a real server and client on a
 Docker network with the same probe commands the pods use, so the whole pod contract is
@@ -89,7 +89,7 @@ exercised on every change without a cluster.
 `linux/amd64` and `linux/arm64`, signs each with keyless cosign, attests build provenance,
 and only then writes the digests it got back into `src/dokimi/_image_digest.py` and
 builds the distribution — so a released CLI always carries the digests of the images built
-from its own commit (ADR-05-08, ADR-05-04).
+from its own commit.
 
 `workflow_dispatch` with `publish` left off rehearses the build without pushing or
 signing anything.

@@ -1,4 +1,4 @@
-"""The images a run deploys: chosen at submission, carried into the Job (ADR-04-08)."""
+"""The images a run deploys: chosen at submission, carried into the Job."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def test_every_component_is_named_and_has_an_environment_variable() -> None:
     assert sorted(COMPONENTS) == ["iperf2", "node-exporter", "orchestrator", "prometheus"]
     assert COMPONENTS["iperf2"].env_var == "DOKIMI_IPERF2_IMAGE"
     assert COMPONENTS["iperf2"].source_env_var == "DOKIMI_IPERF2_IMAGE_SOURCE"
-    # ADR-04-08: the orchestrator is a component like the others; its earlier name stays.
+    # The orchestrator is a component like the others; its earlier name stays.
     assert COMPONENTS["orchestrator"].env_var == "DOKIMI_ORCHESTRATOR_IMAGE"
     assert COMPONENTS["orchestrator"].env_aliases == ("DOKIMI_IMAGE",)
 
@@ -77,7 +77,7 @@ def test_the_monitoring_images_are_pinned_upstream_digests_even_in_a_source_buil
 def test_the_monitoring_images_are_resolved_only_when_the_run_may_deploy_them(
     released: None,
 ) -> None:
-    # ADR-04-08: existing deploys neither, so neither is resolved, written or expected.
+    # The `existing` monitoring mode deploys neither, so neither is resolved, written or expected.
     images = resolve_run_images(env={}, monitoring=False)
     assert sorted(images) == ["iperf2", "orchestrator"]
     environment = {entry["name"]: entry["value"] for entry in job_environment(images)}

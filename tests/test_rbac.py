@@ -39,7 +39,7 @@ def objects() -> dict[Key, dict[str, Any]]:
     }
 
 
-#: The Job's identity. The file also creates the managed Prometheus's (ADR-03-02).
+#: The Job's identity. The file also creates the managed Prometheus's.
 JOB_ACCOUNT = "dokimi"
 PROMETHEUS_ACCOUNT = PROMETHEUS_SERVICE_ACCOUNT
 
@@ -54,7 +54,7 @@ def _only(objects: dict[Key, dict[str, Any]], kind: str, name: str = JOB_ACCOUNT
 
 
 def test_it_creates_both_namespaces_a_run_needs(objects: dict[Key, dict[str, Any]]) -> None:
-    # A run never creates a namespace (ADR-05-13): the run's and the lock's come from here.
+    # A run never creates a namespace: the run's and the lock's come from here.
     namespaces = {name for (kind, name, _) in objects if kind == "Namespace"}
 
     assert namespaces == {RUN_NAMESPACE, DEFAULT_LOCK_NAMESPACE}
@@ -99,9 +99,9 @@ def test_the_cluster_wide_grant_is_read_only(objects: dict[Key, dict[str, Any]])
 
     assert rules == [
         {"apiGroups": [""], "resources": ["nodes"], "verbs": ["get", "list"]},
-        # Phase 4: the exclusivity scan reads run owners in every namespace (ADR-05-10).
+        # Phase 4: the exclusivity scan reads run owners in every namespace.
         {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["list"]},
-        # Phase 4: a supporting exporter already present is reused (ADR-03-02).
+        # Phase 4: a supporting exporter already present is reused.
         {"apiGroups": [""], "resources": ["services"], "verbs": ["list"]},
     ]
 
@@ -151,10 +151,10 @@ def test_the_run_namespace_grant_is_the_claim_the_managed_prometheus_and_the_pai
     objects: dict[Key, dict[str, Any]],
 ) -> None:
     # Claiming and marking finished write annotations onto the run's own owner, and the
-    # claim's expiry is read from the Job's start time (ADR-05-13). Phase 4 creates the
-    # managed Prometheus and, when the cluster has none, a node-exporter (ADR-03-02).
+    # claim's expiry is read from the Job's start time. Phase 4 creates the
+    # managed Prometheus and, when the cluster has none, a node-exporter.
     # Phase 6 creates the pair's pods and reads them for the readiness gate and
-    # completion (ADR-05-07). Nothing is deleted: the Prometheus is kept by default, and
+    # completion. Nothing is deleted: the Prometheus is kept by default, and
     # cleanup is M1-16.
     role = objects[("Role", "dokimi", RUN_NAMESPACE)]
 

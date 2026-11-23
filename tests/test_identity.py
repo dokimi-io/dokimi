@@ -1,4 +1,4 @@
-"""Run identity and ownership labels (ADR-02-04, ADR-05-02)."""
+"""Run identity and ownership labels."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from dokimi.k8s.identity import (
 )
 from dokimi.model import ConfigError, TestType
 
-# -- the run_id format (ADR-02-08) ---------------------------------------------
+# -- the run_id format ---------------------------------------------------------
 #
 # These mirror M1-05's tests for the same format (#28) case for case, so the two
 # implementations are held to one definition until one of them replaces the other.
@@ -57,7 +57,7 @@ def test_the_timestamp_is_utc_whatever_the_callers_zone() -> None:
 
 def test_a_naive_datetime_is_refused_not_guessed_at() -> None:
     # The previous generator read a naive datetime as local time, silently, which is
-    # exactly what ADR-02-08 says must not happen.
+    # exactly what must not happen: a run_id's timestamp is UTC, and a naive value is refused.
     with pytest.raises(ValueError, match="timezone-aware"):
         new_run_id(datetime(2026, 9, 24, 14, 30, 12))
 

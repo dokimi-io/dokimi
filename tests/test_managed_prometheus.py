@@ -95,7 +95,7 @@ def test_managed_is_managed() -> None:
 
 
 def test_auto_falls_back_to_managed_and_says_why() -> None:
-    # ADR-03-02: auto's outcome is logged prominently, because the user did not choose it.
+    # Auto's outcome is logged prominently, because the user did not choose it.
     selection = select_monitoring(MonitoringMode.AUTO)
 
     assert selection.selected is MonitoringMode.MANAGED
@@ -133,7 +133,7 @@ def test_an_exporter_is_a_container_port_named_metrics() -> None:
 
 
 def test_the_exporters_labels_win_over_target_labels() -> None:
-    # The labels are the metric contract (ADR-02-04); Prometheus must not rewrite them.
+    # The labels are the metric contract; Prometheus must not rewrite them.
     assert job(EXPORTER_JOB)["honor_labels"] is True
 
 
@@ -142,7 +142,7 @@ def test_the_iperf2_exporter_names_its_port_the_way_the_scrape_looks_for_it() ->
 
 
 def test_the_scrape_interval_is_ours_and_recorded() -> None:
-    # ADR-03-01: in managed mode we set it, so it is known and goes in the run metadata.
+    # In managed mode we set it, so it is known and goes in the run metadata.
     interval = f"{SCRAPE_INTERVAL_SECONDS}s"
     assert config()["global"]["scrape_interval"] == interval
 
@@ -272,7 +272,7 @@ def test_the_endpoint_is_the_services_cluster_dns_name() -> None:
 
 def test_it_is_run_labelled_but_owned_by_nothing() -> None:
     # Labelled, so it stays attributable and removable by run_id; no ownerReference, so
-    # deleting the run's owner does not cascade to it (ADR-03-02, ADR-05-02's exception).
+    # deleting the run's owner does not cascade to it: it is kept by default, outliving the run.
     cluster = FakeResources()
     provisioned(cluster)
 
@@ -317,7 +317,7 @@ def test_the_removal_flag_removes_it() -> None:
 
 
 def test_a_kept_prometheus_does_not_block_the_next_run() -> None:
-    # ADR-05-13: exclusivity reads run owners only, and a Prometheus is not an owner.
+    # Exclusivity reads run owners only, and a Prometheus is not an owner.
     cluster = FakeResources()
     provisioned(cluster)
     delete_run_owned(cluster, RUN)

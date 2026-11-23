@@ -1,4 +1,4 @@
-"""Phase 3: discovery, explicit node resolution and the plan (ADR-04-01, ADR-04-04).
+"""Phase 3: discovery, explicit node resolution and the plan.
 
 Planning is a pure function of a definition and a node snapshot, so it is tested as one:
 build the snapshot, plan against it, look at what comes back. Nothing here touches a
@@ -74,7 +74,7 @@ def test_two_valid_node_names_produce_one_directed_pair(definition: TestDefiniti
 
 
 def test_direction_is_preserved(definition: TestDefinition) -> None:
-    # ADR-04-01: A->B and B->A are different tests, because asymmetric paths are exactly
+    # A->B and B->A are different tests, because asymmetric paths are exactly
     # what the tool exists to find. Planning must not normalise the order.
     reversed_definition = replace(definition, source_node="worker-02", target_node="worker-01")
 
@@ -196,7 +196,7 @@ def test_milestone_01_plans_sequentially(definition: TestDefinition) -> None:
 
 
 def test_an_empty_plan_is_refused() -> None:
-    # ADR-04-01: a selection yielding zero tests is an error, not a run that passes
+    # A selection yielding zero tests is an error, not a run that passes
     # having measured nothing.
     with pytest.raises(ConfigError, match="measure nothing"):
         Plan(waves=())
@@ -213,7 +213,7 @@ def test_test_ids_are_label_safe(definition: TestDefinition) -> None:
 
 
 def test_planning_is_deterministic(definition: TestDefinition) -> None:
-    # ADR-04-01: the matrix is a pure function of the selection and the mode, whatever
+    # The matrix is a pure function of the selection and the mode, whatever
     # order the API happened to return nodes in.
     forwards = inventory(node("worker-01"), node("worker-02"), node("worker-03"))
     backwards = inventory(node("worker-03"), node("worker-02"), node("worker-01"))
@@ -248,7 +248,7 @@ def test_the_plan_is_recorded_in_the_run_metadata(definition: TestDefinition) ->
 
 
 def test_discovery_reads_the_cluster_once() -> None:
-    # ADR-04-01: selection is resolved once and the matrix does not change if the
+    # Selection is resolved once and the matrix does not change if the
     # cluster does. One read is what makes that true rather than aspirational.
     cluster = FakeCluster()
 

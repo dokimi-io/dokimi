@@ -1,6 +1,6 @@
 """Shared test configuration.
 
-The core library must work with Robot Framework absent (ADR-01-02), and CI proves it by
+The core library must work with Robot Framework absent, and CI proves it by
 installing without the ``robot`` extra. The tests that exercise the *Robot plugin*
 obviously cannot run there, so they are marked and skipped rather than failing the job
 that exists to prove the opposite property.

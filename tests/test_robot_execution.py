@@ -1,7 +1,7 @@
 """What Robot Framework does with the rendered suite: phases 6 and 9a for real.
 
 Skipped where Robot Framework is not installed, as in CI's core-only job: the library
-must not need it (ADR-01-02), and ``test_execution.py`` covers everything that does not.
+must not need it, and ``test_execution.py`` covers everything that does not.
 
 The cluster-facing step, ``run_network_test``, is replaced in-process here, because
 that is the library's, tested in ``test_execution.py``. What is real is everything Robot

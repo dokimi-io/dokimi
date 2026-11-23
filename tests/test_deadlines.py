@@ -27,13 +27,13 @@ def budget(**overrides: float) -> DeadlineBudget:
 
 def test_deadline_covers_the_test_and_every_wait_after_it() -> None:
     # 10 s of test is not enough: the pods must survive the direct read and the scrape
-    # confirmation window too, or the deadline kills them during a wait (ADR-03-01).
+    # confirmation window too, or the deadline kills them during a wait.
     assert budget(safety_margin=0).active_deadline_seconds == 10 + 60 + 20 + 5 + 30
 
 
 def test_deadline_covers_the_warm_up_pass() -> None:
-    # ADR-04-04 runs a discarded warm-up pass by default. A deadline that ignored it
-    # could expire during warm-up, before the measurement even starts (ADR-05-13).
+    # A run makes a discarded warm-up pass by default. A deadline that ignored it
+    # could expire during warm-up, before the measurement even starts.
     assert (
         budget(warmup=20).active_deadline_seconds - budget(warmup=0).active_deadline_seconds == 20
     )

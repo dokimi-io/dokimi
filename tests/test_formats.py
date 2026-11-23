@@ -233,7 +233,7 @@ def test_the_model_itself_refuses_a_definition_with_no_criteria() -> None:
 
 # ------------------------------------------------------------------- the renderer
 def test_the_rendered_suite_matches_the_documented_keyword_surface() -> None:
-    """`<Statistic>? <Metric> Should Be <Comparison> <Value> <Unit>` (ADR-02-05).
+    """`<Statistic>? <Metric> Should Be <Comparison> <Value> <Unit>`.
 
     Whitespace is collapsed before comparing: the column alignment is cosmetic, and
     pinning it would make every future formatting tweak look like a broken contract.
@@ -246,7 +246,7 @@ def test_the_rendered_suite_matches_the_documented_keyword_surface() -> None:
 
 
 def test_the_rendered_criterion_columns_line_up() -> None:
-    # Cosmetic, but the suite is meant to be read by a person, and ADR-02-05 shows it
+    # Cosmetic, but the suite is meant to be read by a person, and the README shows it
     # aligned. Checked separately from the grammar so a formatting change breaks only
     # this test.
     criteria = [line for line in render_robot(_definition()).splitlines() if "Should Be" in line]

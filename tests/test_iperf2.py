@@ -96,7 +96,7 @@ def server_args(**overrides: str) -> dict[str, str]:
 
 
 def test_capabilities_answer_differently_for_tcp_and_udp() -> None:
-    # The acceptance criterion, and ADR-02-01's reason for keying on the parameter set:
+    # The acceptance criterion, and the reason capabilities are keyed on the parameter set:
     # jitter and packet loss exist only over UDP.
     plugin = Iperf2()
 
@@ -128,7 +128,7 @@ def test_the_schema_is_the_paper_design_plus_warm_up() -> None:
 
 
 def test_warm_up_runs_by_default() -> None:
-    # ADR-04-04: on unless disabled.
+    # On unless disabled.
     assert params().get("warmup", Duration).seconds > 0
 
 
@@ -205,7 +205,7 @@ def test_the_warm_up_the_metadata_records_is_the_one_the_client_runs() -> None:
 
 
 def test_the_run_metadata_attributes_the_result() -> None:
-    # ADR-05-04: the digest identifies what was measured. ADR-05-03: so does the mode.
+    # The digest identifies what was measured, and so does the connectivity mode.
     metadata = Iperf2(image=IMAGE).workload(params(), PLACEMENT).run_metadata
 
     assert metadata["workload_image"] == IMAGE
@@ -233,7 +233,7 @@ def test_the_client_sends_from_the_source_and_the_server_receives_on_the_target(
 
 def test_pods_go_through_the_scheduler() -> None:
     # nodeName would bypass it, and the readiness gate could never report the scheduling
-    # error ADR-05-07 asks for.
+    # error it is meant to report.
     for pod in Iperf2(image=IMAGE).workload(params(), PLACEMENT).pods.values():
         assert "nodeName" not in pod["spec"]
 
@@ -252,7 +252,7 @@ def test_pods_are_minimal_and_non_root() -> None:
         assert spec["securityContext"]["runAsNonRoot"] is True
         assert spec["automountServiceAccountToken"] is False
         assert spec["restartPolicy"] == "Never"
-        assert "hostNetwork" not in spec  # ADR-05-03: pod network only
+        assert "hostNetwork" not in spec  # pod network only
         for each in (container(pod), exporter(pod)):
             security = each["securityContext"]
             assert security["readOnlyRootFilesystem"] is True
@@ -287,7 +287,7 @@ def test_the_server_listens_on_the_measured_protocol(protocol: str) -> None:
 
 
 def test_the_server_writes_its_reports_where_the_exporter_reads_them() -> None:
-    # The server is the pod that sees loss and jitter (ADR-02-02): its reports must reach
+    # The server is the pod that sees loss and jitter: its reports must reach
     # the results volume, not only its log.
     assert server_args()["--results"] == Iperf2().exporter().results_directory
     assert client_args()["--results"] == Iperf2().exporter().results_directory
@@ -505,7 +505,7 @@ def test_the_tcp_trigger_gives_up_after_its_attempts() -> None:
     assert slept == [1.0, 1.0]
 
 
-# -- the probe (ADR-05-07) ---------------------------------------------------------------
+# -- the probe ---------------------------------------------------------------------------
 
 
 def test_iperf2_has_a_probe_mode() -> None:

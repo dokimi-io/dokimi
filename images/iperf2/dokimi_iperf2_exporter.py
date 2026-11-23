@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """dokimi's iperf2 exporter: one pod's own view of its test, as Prometheus metrics.
 
-It runs as the second container of each iperf2 pod (ADR-02-02), in the same image as the
+It runs as the second container of each iperf2 pod, in the same image as the
 tool, so the parser always matches the iperf2 version it parses. It reads what the role
 script and iperf2 write to the shared results directory, and serves ``/metrics`` from it:
 on every request, from the files, so it keeps serving the completed result after iperf2
-has exited, for as long as the pod exists (ADR-03-01).
+has exited, for as long as the pod exists.
 
-**Each pod exports its own view, labelled by direction** (ADR-02-02):
+**Each pod exports its own view, labelled by direction**:
 
 * the client (``direction="outbound"``) reports what it sent: its throughput;
 * the server (``direction="inbound"``) reports what it received: its throughput, and for
   UDP the packet loss and the jitter, which only the receiver can see.
 
-**The normalized set** (ADR-02-03, under ADR-01-10's ``dokimi_`` prefix) in base units,
+**The normalized set**, under the ``dokimi_`` prefix, in base units,
 converted here on write: bits per second, seconds, bytes. ``packet_loss_percent`` is the
 named exception. Results are gauges holding the completed value. Tool-specific values
 with no normalized equivalent go under ``dokimi_iperf2_``.
 
-**Every series carries the full required label set** (ADR-02-07): ``cluster``,
+**Every series carries the full required label set**: ``cluster``,
 ``run_id``, ``test_id``, ``repetition``, ``test_type``, ``source_node``/``target_node``,
 ``source_pod``/``target_pod``, ``source_ip``/``target_ip`` and ``protocol``, plus
 ``direction``. Everything but the IP addresses is fixed when the pod is created and comes
