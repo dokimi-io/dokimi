@@ -87,8 +87,23 @@ IP inside the cluster, which it reached on every version tried.
 
 ## Installing
 
-The project is not published to PyPI. Install it from source, which is also what
-[Setup](setup.md) does for development:
+Install the CLI from the release, as a tool of its own:
+
+```console
+$ uv tool install https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi-0.1.0-py3-none-any.whl
+$ dokimi --version
+dokimi 0.1.0
+```
+
+A released CLI knows the images built with it, by digest: a run uses the orchestrator and
+`iperf2` images of its own release unless you choose others. The release page,
+[v0.1.0](https://github.com/dokimi-io/dokimi/releases/tag/v0.1.0), lists their references.
+dokimi is not on PyPI yet.
+
+### From source
+
+For development, or to run unreleased changes, install from a checkout, which is also what
+[Setup](setup.md) does:
 
 ```console
 $ git clone git@github.com:dokimi-io/dokimi.git
@@ -103,13 +118,9 @@ To get a `dokimi` command on your `PATH` rather than one behind `uv run`:
 $ uv tool install .
 ```
 
-Once releases are cut, a release will carry a built wheel you can install directly:
-
-```console
-$ uv tool install ./dokimi-<version>-py3-none-any.whl
-```
-
-[Building](building.md) covers producing that wheel yourself.
+A source checkout has no default images: it builds its own, as the
+[test environment](../test-env/README.md#running-a-test-against-it) shows.
+[Building](building.md) covers building the wheel and the images yourself.
 
 ## Installing `uv`
 
@@ -187,8 +198,9 @@ implement a precedence rule a later decision would have to overturn.
 A run is a reference to a container image, and a released CLI ships with the
 digest of the image built from its own commit.
 
-**No release has been cut yet, so a source checkout has no default image.** `submit` will
-tell you so rather than falling back to a tag that might mean something else tomorrow:
+**A source checkout has no default image**, since only a release knows which image it was built
+with. `submit` tells you so rather than falling back to a tag that might mean something else
+tomorrow:
 
 ```console
 $ dokimi submit test.yaml
@@ -196,8 +208,8 @@ dokimi: this is a development build with no published orchestrator image, so the
 default to run. Choose one with --image orchestrator=<reference> or DOKIMI_ORCHESTRATOR_IMAGE
 ```
 
-Until then — and afterwards, in an air-gapped or policy-constrained cluster — point it at
-an image yourself:
+There, and with a release in an air-gapped or policy-constrained cluster, point it at an image
+yourself:
 
 ```console
 $ export DOKIMI_ORCHESTRATOR_IMAGE=registry.internal/orchestrator@sha256:...
