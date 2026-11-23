@@ -24,8 +24,9 @@ issue.
 
 Every architectural decision is recorded as an architecture decision record (ADR): the context,
 the options considered, the decision and its consequences, and the people who made it. The
-maintainers keep these records. Code cites the decision it implements, as in `ADR-05-13`, so that
-a reader can tell a deliberate choice from an accident.
+maintainers keep these records. The code explains its reasons in its own words, in comments and
+docstrings, so that a reader can tell a deliberate choice from an accident without needing the
+records.
 
 - **Code follows the recorded decisions.** If your change needs a different decision, raise it in
   the issue. The maintainers record the outcome before the code changes.

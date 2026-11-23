@@ -254,7 +254,8 @@ def claim_expiry(
     if started_at is None or started_at.tzinfo is None:
         raise RunExclusivityError(
             f"Job {namespace}/{name} reports no readable start time ({started!r}), so its "
-            "claim cannot be given the expiry ADR-05-13 requires"
+            "claim cannot be given an expiry: a claim ends with its Job's deadline, counted "
+            "from that start"
         )
     return started_at.astimezone(UTC) + timedelta(seconds=deadline_seconds)
 

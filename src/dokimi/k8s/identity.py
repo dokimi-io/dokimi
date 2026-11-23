@@ -66,8 +66,7 @@ def validate_run_id(run_id: str) -> str:
     except run_identity.InvalidRunIdError:
         raise ConfigError(
             f"malformed run id {run_id!r}. Expected YYYYMMDD-HHMMSS-xxxxxx — a UTC "
-            f"timestamp, then six characters of [0-9a-z] — for example {_EXAMPLE!r} "
-            "(ADR-02-08)"
+            f"timestamp, then six characters of [0-9a-z] — for example {_EXAMPLE!r}"
         ) from None
 
 

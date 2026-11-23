@@ -155,7 +155,7 @@ _SCHEMA = ParameterSchema(
         Parameter(
             "warmup",
             _parse_warmup,
-            "The discarded warm-up pass before the measurement ([ADR-04-04]). '0s' disables it.",
+            "The discarded warm-up pass before the measurement. '0s' disables it.",
             default=f"{DEFAULT_WARMUP_SECONDS:g}s",
         ),
     ),

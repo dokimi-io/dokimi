@@ -254,8 +254,8 @@ def _read(model: Any) -> _Suite:
                     raise ConfigError(_unsupported(test, _describe(test)))
                 if suite.test_name is not None:
                     raise ConfigError(
-                        f"line {test.lineno}: a Milestone-01 suite holds exactly one test "
-                        "case, one directed pair (ADR-04-06)"
+                        f"line {test.lineno}: in this version a suite holds exactly one test "
+                        "case, one directed pair"
                     )
                 suite.test_name = test.name.strip()
                 for statement in _body(test):

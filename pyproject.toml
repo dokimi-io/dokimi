@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 license = { file = "LICENSE" }
 
 # The `kubernetes` distribution's major version tracks the Kubernetes minor it targets
-# (36.x targets 1.36), so "Kubernetes 1.35+" from ADR-01-02 is expressed as >=35.
+# (36.x targets 1.36), so the floor of Kubernetes 1.35 is expressed as >=35.
 # A literal ">=1.35" would be satisfied by every release ever published.
 dependencies = [
     "kubernetes>=35",
@@ -16,13 +16,13 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
-# Robot Framework is a runtime dependency of a *run* (ADR-01-08), not of the core
-# library (ADR-01-02). Keeping it an extra is what lets CI install without it and prove
+# Robot Framework is a runtime dependency of a *run*, not of the core
+# library. Keeping it an extra is what lets CI install without it and prove
 # the core still imports and passes its tests.
 #
 # 7.5 is the floor: the newest release at the time development started, chosen the same
 # way as the Python and kubernetes floors. uv.lock pins the exact version the CLI and the
-# orchestrator image are both built from (ADR-05-08), so this bound governs what a
+# orchestrator image are both built from, so this bound governs what a
 # consumer of the library may resolve, not what we ship.
 [project.optional-dependencies]
 robot = [
@@ -49,7 +49,7 @@ packages = ["src/dokimi"]
 
 [tool.uv]
 # 0.12.18 is the release that fixes GHSA-2cv4-cqwr-gwf7, a path-traversal weakness during
-# wheel installation on Windows. Unlike the other floors in ADR-01-09 this one is chosen on
+# wheel installation on Windows. Unlike the other version floors here, this one is chosen on
 # security grounds rather than recency, so it is enforced rather than merely documented.
 required-version = ">=0.12.18"
 

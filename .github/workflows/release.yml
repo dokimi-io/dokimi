@@ -1,11 +1,11 @@
 # Release: publish the images, then build the distribution that points at them.
 #
-# The order is the decision, not an implementation detail. ADR-05-08 requires a released
-# CLI to ship the digest of the orchestrator image built from its own commit, and
-# ADR-05-04 pins every test-workload image by digest the same way. So the images are
-# built and pushed first, their digests are written into the generated constants file,
-# and only then is the distribution built. They cannot be released independently — that
-# is a consequence ADR-05-08 accepts explicitly.
+# The order is the decision, not an implementation detail. A released CLI ships the
+# digest of the orchestrator image built from its own commit, and pins every test-workload
+# image by digest the same way, so it never runs an image other than the one it was
+# released with. So the images are built and pushed first, their digests are written into
+# the generated constants file, and only then is the distribution built. They cannot be
+# released independently: a cost accepted on purpose.
 #
 # Every image dokimi builds is one entry in the `images` matrix. Adding one is that entry
 # plus its `<NAME>_IMAGE_DIGEST` line in src/dokimi/_image_digest.py; the bake step below
@@ -29,7 +29,7 @@ permissions:
 
 env:
   # 0.12.18 fixes GHSA-2cv4-cqwr-gwf7 (Windows wheel-install path traversal) and is the
-  # floor ADR-01-09 sets and `[tool.uv] required-version` enforces.
+  # floor the project sets for uv, which `[tool.uv] required-version` enforces.
   UV_VERSION: "0.12.18"
 
 jobs:
@@ -216,9 +216,9 @@ jobs:
           path.write_text(source)
           PY
 
-      # ADR-05-08's requirement, checked rather than assumed: a released CLI resolves each
+      # The promise at the top, checked rather than assumed: a released CLI resolves each
       # default image to the digest of the image built from this same commit, the way
-      # `submit` resolves it with no override set (ADR-04-08).
+      # `submit` resolves it with no override set.
       - name: Verify the baked-in defaults resolve to those digests
         run: |
           uv sync --locked
