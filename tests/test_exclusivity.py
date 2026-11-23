@@ -1,9 +1,9 @@
 """Run exclusivity: one active run per cluster, including when two start at once.
 
-M1-05's acceptance criteria live here, with the race between two submissions: a second run started while one is
-active is refused with a message naming the active run; two simultaneous submissions
-start exactly one run — including through ``submit``, not only through the claim; and a
-refused, crashed or finished run does not block later runs indefinitely.
+M1-05's acceptance criteria live here, with the race between two submissions: a second run
+started while one is active is refused with a message naming the active run; two simultaneous
+submissions start exactly one run — including through ``submit``, not only through the claim;
+and a refused, crashed or finished run does not block later runs indefinitely.
 """
 
 from __future__ import annotations
