@@ -34,11 +34,11 @@ node-exporter's pods run on every node, also those no test used, so their state 
 recorded but never an anomaly.
 
 **An anomaly means the run's resources are retained**: the report says
-``"retain": true`` and why. Until M1-16 builds retain-on-failure, the test pods are still
-removed before the claim is released, as the 2026-10-07 sync decided, so that nothing of a
-run keeps sending; their state is in this snapshot. Nothing else of a run is deleted
-before M1-16, except the node-exporter it deployed (2026-10-07), and M1-16 honours
-``retain``.
+``"retain": true`` and why, and phase 11 keeps the run's evidence as it does for a run
+that didn't pass: its owner and definition, and the test pods that can no longer be
+sending, until ``dokimi cleanup``. A test pod that might still send is removed before
+the claim is released, so nothing of a run disturbs the next one; its state is in this
+snapshot. The node-exporter the run deployed always goes.
 
 **It never blocks cleanup.** It has its own timeout, :data:`SNAPSHOT_TIMEOUT_SECONDS`, well
 inside the Job's ``diagnostics`` budget term, and it never raises: each step that fails is
