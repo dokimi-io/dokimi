@@ -57,6 +57,7 @@ $ uv run pytest -x -vv                          # stop at the first failure, ver
 | [`test_test_env.py`](test_test_env.py) | The test environment's configs, scripts, README and CI workflow agree with each other, and the acceptance run's definitions and worker choice |
 | [`test_workflows.py`](test_workflows.py) | Every GitHub Action the workflows use is pinned to a commit, and every runner to an Ubuntu release |
 | [`test_tests_readme.py`](test_tests_readme.py) | This README lists every test file, and only those |
+| [`test_public_references.py`](test_public_references.py) | No file in the repository names a decision record, an open question or the private repository that holds them |
 | [`test_rbac.py`](test_rbac.py) | `deploy/rbac.yaml` grants what the Job needs, and stays in step with the code |
 | [`test_package_layout.py`](test_package_layout.py) | The prescribed package layout exists and imports |
 | [`test_core_independence.py`](test_core_independence.py) | The core library does not pull in Robot Framework |
