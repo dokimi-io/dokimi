@@ -1,8 +1,8 @@
-"""Robot Framework's runner and ``rebot``, as processes the library starts ([ADR-01-08]).
+"""Robot Framework's runner and ``rebot``, as processes the library starts.
 
 Robot is a runtime dependency of a run, in the orchestrator's image, but never a
 dependency of this library: nothing here imports it. The runner is a separate Python
-process, ``python -m robot``, which is also exactly what [ADR-01-08] asks for: **one
+process, ``python -m robot``, and a run starts **one
 Robot process per test pair**, merged by ``rebot`` into one ``log.html`` for the run.
 
 :class:`RobotRunner` is the seam. :class:`SubprocessRobotRunner` is the real one; the

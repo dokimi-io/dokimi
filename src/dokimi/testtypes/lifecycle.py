@@ -4,9 +4,9 @@ The test-type-independent half of phase 6. A plugin says *what* to run
 (:class:`~dokimi.testtypes.interface.WorkloadSpec`) and *how* to start and observe it;
 this module is where every test type is held to the same order:
 
-1. :func:`deploy` creates the pods, bounded by a deadline and run-owned ([ADR-05-02])
+1. :func:`deploy` creates the pods, bounded by a deadline and run-owned
    by construction, since it is the only path that creates them;
-2. :func:`await_ready` is the **per-test readiness gate** ([ADR-05-07]): both pods
+2. :func:`await_ready` is the **per-test readiness gate**: both pods
    ``Ready`` via the Kubernetes API, within an explicit timeout, or a
    :class:`ReadinessGateError` for that test;
 3. :func:`start_when_ready` calls ``start()`` only with what the gate returned, so
@@ -17,12 +17,11 @@ A pod that never becomes ``Ready`` is an error for that test — not absent data
 a network failure. A pod whose image failed to pull :data:`IMAGE_PULL_ATTEMPTS` times, or
 whose image reference no retry can fix, fails the gate then, rather than at its timeout.
 Which error is a machine-readable :class:`ErrorCategory`, not only
-text: a pod whose image cannot be pulled is ``image_pull``, ADR-05-05's own category,
-and anything else is ``scheduling``. "Unschedulable: node(s) had untolerated taint" and
-"ImagePullBackOff" point at different fixes, and ADR-05-07's preflight, which reuses
-this gate for the first pair, must keep them apart. ADR-05-07's per-test clause calls
-every pod that never becomes ``Ready`` a ``scheduling`` error; OQ-139 records the
-conflict, and settling it either way is a change to :data:`_IMAGE_PULL_REASONS`.
+text: a pod whose image cannot be pulled is ``image_pull``, and anything else is
+``scheduling``. "Unschedulable: node(s) had untolerated taint" and "ImagePullBackOff"
+point at different fixes, and the run-level preflight, which reuses this gate for the
+first pair, must keep them apart. :data:`_IMAGE_PULL_REASONS` is where the line between
+the two is drawn.
 """
 
 from __future__ import annotations
@@ -57,9 +56,9 @@ __all__ = [
 ]
 
 #: The gate's timeout. The workload deadline's startup term already budgets scheduling,
-#: image pull and this gate together ([ADR-05-13]), so the gate may use all of it and
+#: image pull and this gate together, so the gate may use all of it and
 #: never more: a gate that outlived the term would be waiting on pods the cluster is
-#: about to kill. Distinct from ADR-03-01's scrape-confirmation window, which is its own
+#: about to kill. Distinct from the scrape-confirmation window, which is its own
 #: term of the same budget.
 DEFAULT_READINESS_TIMEOUT_SECONDS = DEFAULT_STARTUP_SECONDS
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0

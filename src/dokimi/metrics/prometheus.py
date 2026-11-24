@@ -1,11 +1,10 @@
 """The Prometheus HTTP API, as much of it as a run needs, and the query-access check.
 
-[ADR-01-04] makes Prometheus the common query interface; [ADR-03-02] requires query
-access to be verified **before any workload is deployed**, so that a monitoring problem
+Prometheus is the common query interface, and query access is verified
+**before any workload is deployed**, so that a monitoring problem
 fails the run in phase 4 rather than after a full test cycle. :func:`verify_query_access`
 is that check. It fails with :class:`PrometheusUnreachableError`, a run-level preflight
-failure: the run exits ``4`` with one clear message, and nothing is measured
-([ADR-05-07], [ADR-01-11]).
+failure: the run exits ``4`` with one clear message, and nothing is measured.
 
 The HTTP client is the standard library's. Three read-only GET endpoints do not justify a
 dependency, and the transport is injected so every path here is testable without a
@@ -69,7 +68,7 @@ class PrometheusError(RuntimeError):
 class PrometheusUnreachableError(RuntimeError):
     """Prometheus could not be queried in phase 4: a run-level preflight failure.
 
-    ADR-05-05's ``prometheus_unreachable`` category. Raised before any workload exists,
+    The ``prometheus_unreachable`` category. Raised before any workload exists,
     so the run exits ``4`` with nothing to clean up but the Prometheus itself.
     """
 

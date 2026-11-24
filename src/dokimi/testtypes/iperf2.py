@@ -1,37 +1,37 @@
-"""``iperf2``, the first test type ([ADR-02-01], [ADR-02-06]).
+"""``iperf2``, the first test type.
 
-A client/server pod pair over the pod network, addressed by pod IP ([ADR-05-03]). The
+A client/server pod pair over the pod network, addressed by pod IP. The
 client runs on the source node and sends; the server runs on the target node and
 receives. Milestone-01 exercises UDP only, but the parameter schema accepts TCP too:
 that is where :meth:`Iperf2.capabilities` answers differently, which is the point of
 declaring capabilities per parameter set.
 
 **How a test starts without ``pods/exec``.** Both pods must be ``Ready`` before
-:meth:`Iperf2.start` ([ADR-05-07]), so the client cannot simply begin measuring when its
+:meth:`Iperf2.start`, so the client cannot simply begin measuring when its
 container starts. It starts idle instead, listening on a trigger port, and ``start()``
 connects to that port and sends the server's pod IP — known only once the server is
-``Ready`` ([ADR-05-03]). The alternative, ``exec`` into the client, would add
+``Ready``. The alternative, ``exec`` into the client, would add
 ``pods/exec`` to the Job's grant, and exec is a shell in every pod of the namespace. The
 trigger needs nothing the run does not already need: the orchestrator reaches pod IPs
-directly anyway, to read the exporter for the verdict ([ADR-03-01]).
+directly anyway, to read the exporter for the verdict.
 
 **Completion is process exit.** The client script runs the discarded warm-up pass, then
 the measurement with ``-y C``, writes the final CSV summary line — the completion marker —
 to the container's termination message, and exits with ``iperf``'s own status.
 :meth:`Iperf2.is_complete` reads that from the pod's status, again without ``exec``.
 
-**Each pod writes its own view** ([ADR-02-02]). The server is the one that sees packet
+**Each pod writes its own view**. The server is the one that sees packet
 loss and jitter, so it writes an ``iperf -y C`` line per connection to its results
 directory too. The warm-up and the measurement send from two fixed source ports, and
 both pods record the measurement's in an ``iperf2.meta`` file next to their output, so
 the exporter picks the measured connection by its port rather than by its position.
 
-**The warm-up pass runs by default** ([ADR-04-04]): same path, same parameters, output
+**The warm-up pass runs by default**: same path, same parameters, output
 discarded, for :data:`~dokimi.k8s.deadlines.DEFAULT_WARMUP_SECONDS`. It is never silent —
 ``warmup_duration_seconds`` is in the workload's run metadata, ``0`` when disabled — and
 the ``warmup`` parameter disables it per test.
 
-**The probe** ([ADR-05-07]) is the same pair with one argument more: the client, started
+**The probe** is the same pair with one argument more: the client, started
 by the same trigger, makes a one-second exchange with the server and resolves
 :data:`PROBE_DNS_NAME`, instead of warming up and measuring. The run-level preflight
 deploys it for the first planned pair (:mod:`dokimi.testtypes.probe`).
@@ -107,10 +107,10 @@ PROBE_DNS_NAME = "kubernetes.default.svc"
 _STARTED_MARKER = "/tmp/dokimi-started"
 #: The tool writes its native output here, and the exporter parses it from here.
 RESULTS_DIRECTORY = "/results"
-#: The uid the image runs as, shared with the orchestrator image ([ADR-05-04]).
+#: The uid the image runs as, shared with the orchestrator image.
 _UID = 65532
-#: Milestone-01 runs each pair once. ``repetition`` is a required label already
-#: ([ADR-02-07]); repetitions themselves arrive with Phase 4.
+#: Milestone-01 runs each pair once. ``repetition`` is a required label already;
+#: repetitions themselves arrive with a later milestone.
 REPETITION = 1
 
 #: Sends *payload* to ``host:port``. Injected so tests need no network.
@@ -207,9 +207,9 @@ class Iperf2:
     def __init__(
         self, *, image: WorkloadImage | str | None = None, trigger: Trigger | None = None
     ) -> None:
-        """*image* is the image to run instead of the release default ([ADR-05-04]).
+        """*image* is the image to run instead of the release default.
 
-        A run passes the :class:`WorkloadImage` it resolved at submission ([ADR-04-08]),
+        A run passes the :class:`WorkloadImage` it resolved at submission,
         which keeps where the reference came from. A plain reference is a library caller
         choosing one itself, and is recorded as a run override. Either way it is used
         exactly as given.
@@ -285,9 +285,10 @@ class Iperf2:
                 "protocol": protocol.value,
                 "target_bandwidth": params.written["targetBandwidth"],
                 "duration": params.written["duration"],
-                # ADR-04-04's field name. Never absent: 0 is how a disabled pass shows.
+                # The name README.md documents for it. Never absent: 0 is how a
+                # disabled pass shows.
                 "warmup_duration_seconds": _plain(warmup.seconds),
-                # ADR-05-03: the mechanism and the address family, recorded with the result
+                # The mechanism and the address family, recorded with the result
                 # from the first run. The family is the one DeployedWorkload.pod_ip() picks.
                 "connectivity_mode": "podNetwork",
                 "address_family": ADDRESS_FAMILY,
@@ -298,7 +299,7 @@ class Iperf2:
         )
 
     def probe(self, params: TestParameters, placement: Placement) -> WorkloadSpec:
-        """The pair's own workload, with its client in probe mode ([ADR-05-07]).
+        """The pair's own workload, with its client in probe mode.
 
         Built by :meth:`workload` and changed in two ways only, so the preflight schedules,
         pulls and connects exactly what the test will: the client gets one argument more,
@@ -396,7 +397,7 @@ class Iperf2:
             "spec": {
                 # Through the scheduler, not around it: nodeName would skip taints,
                 # resource checks and every reason a pod cannot land, and the gate could
-                # never report a scheduling error it was never given ([ADR-05-07]).
+                # never report a scheduling error it was never given.
                 "affinity": {
                     "nodeAffinity": {
                         "requiredDuringSchedulingIgnoredDuringExecution": {
@@ -448,16 +449,16 @@ class Iperf2:
     def _exporter_container(
         self, placement: Placement, image: str, protocol: Protocol
     ) -> dict[str, Any]:
-        """The exporter, next to the tool in every pod ([ADR-02-02]).
+        """The exporter, next to the tool in every pod.
 
         A regular container, not a native sidecar: Kubernetes stops a native sidecar once
         the pod's other containers have exited, and the exporter has to keep serving the
-        completed result after iperf2 has ([ADR-03-01]). So a finished client's pod stays
+        completed result after iperf2 has. So a finished client's pod stays
         ``Running`` until the run removes it. Completion is read from the ``iperf2``
         container's own status, which this does not change.
 
         Every required label but the two addresses is known now, and given in its
-        environment; the exporter refuses to start without them ([ADR-02-07]).
+        environment; the exporter refuses to start without them.
         """
         spec = self.exporter()
         labels = {
@@ -502,7 +503,7 @@ class Iperf2:
     # -- execution --------------------------------------------------------------------------
 
     def start(self, deployed: DeployedWorkload) -> None:
-        # A hard precondition ([ADR-05-07]). The gate establishes it, and this reads the
+        # A hard precondition. The gate establishes it, and this reads the
         # snapshot the gate returned, so the two cannot disagree. It guards against a
         # DeployedWorkload built some other way: start() sends traffic, so it must refuse.
         for role in (Role.SERVER, Role.CLIENT):

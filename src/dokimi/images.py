@@ -1,30 +1,29 @@
 """The orchestrator's own container image: what reference a run actually submits.
 
-[ADR-01-06] makes the orchestrator a one-shot in-cluster Job, so a run *is* a reference
-to an image. [ADR-05-08] decides what that reference is — ``ghcr.io/dokimi-io/
-orchestrator``, pinned by digest, the digest of the image built from the CLI's own
-commit, overridable for air-gapped or policy-constrained clusters, and recorded in the
-run metadata.
+The orchestrator is a one-shot in-cluster Job, so a run *is* a reference to an image.
+That reference is ``ghcr.io/dokimi-io/orchestrator``, pinned by digest, the digest of the
+image built from the CLI's own commit, overridable for air-gapped or policy-constrained
+clusters, and recorded in the run metadata.
 
-ADR-05-08 left two things as follow-up work. This module settles both:
+Two things about it are settled here:
 
 * **Release mechanism** — a generated constants file, :mod:`dokimi._image_digest`,
   rewritten by the release workflow between pushing the image and building the
   distribution. Chosen over a build-time template or a lockfile-adjacent manifest because
   it needs no packaging hook and is readable by the same import machinery as everything
   else.
-* **Override interface** — since [ADR-04-08], the orchestrator is one component among
+* **Override interface** — the orchestrator is one component among
   the images a run uses, chosen like the others in :mod:`dokimi.run_images`:
   ``--image orchestrator=<reference>`` for one run, ``DOKIMI_ORCHESTRATOR_IMAGE`` for
   one installation, the baked-in digest otherwise. ``--orchestrator-image`` and
   ``DOKIMI_IMAGE`` are kept as aliases. Two levels and no config file, deliberately:
-  [ADR-04-02] (configuration sources and precedence) is still ``proposed``.
+  configuration sources and their precedence are not decided yet.
 
 An override is honoured as given, including a tag rather than a digest — an air-gapped
 mirror may not expose digests the same way. What the run *cannot* do is stay quiet about
 it: :meth:`OrchestratorImage.run_metadata` records the reference, the digest if there is
 one, and where the reference came from, so a measurement is always attributable to a
-specific build ([ADR-05-04], [ADR-05-08]).
+specific build.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ __all__ = [
     "default_reference",
 ]
 
-#: Registry and repository, inherited from ADR-05-04 rather than decided again here.
+#: Registry and organisation are the test-workload images' own, not decided again here.
 IMAGE_REPOSITORY = "ghcr.io/dokimi-io/orchestrator"
 
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -84,7 +83,7 @@ class OrchestratorImage:
         """The run-metadata fields this image contributes.
 
         M1-05 (#40) merges these into the run's metadata and M1-14 (#49) writes them to
-        the result artifact, next to the test-workload digests ADR-05-04 already puts
+        the result artifact, next to the test-workload digests already recorded
         there. Keys are stable and always present — an empty digest is a fact worth
         recording, not a field to omit.
         """

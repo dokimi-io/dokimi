@@ -1,12 +1,12 @@
 """The canonical test definition: what one directed pair needs, and nothing more.
 
-ADR-04-06 scopes Milestone-01 to exactly this: two explicitly named nodes, one test type,
+Milestone-01 is scoped to exactly this: two explicitly named nodes, one test type,
 one protocol, a duration, a target bandwidth and the pass criteria. Selectors, matrix
-modes and anything producing more than one pair belong to ADR-04-01 and Milestone-02.
+modes and anything producing more than one pair belong to Milestone-02.
 
 Durations and bandwidths are parsed into typed values rather than kept as strings, so a
 malformed one is a ``config_error`` in phase 2 instead of a surprise in phase 6. Both
-render back to a canonical spelling, which is what the round-trip property in ADR-04-05
+render back to a canonical spelling, which is what the round-trip between the formats
 asks for — model equivalence, not byte equality of the source.
 """
 
@@ -48,7 +48,7 @@ class TestType(enum.Enum):
 
 
 class MonitoringMode(enum.Enum):
-    """Where the run's Prometheus comes from (ADR-03-02).
+    """Where the run's Prometheus comes from.
 
     ``auto`` is the default: prefer a compatible existing installation, fall back to
     deploying one for the run.
@@ -69,7 +69,7 @@ class MonitoringMode(enum.Enum):
         )
 
 
-#: Where the local result artifact lands when the document does not say (ADR-05-09).
+#: Where the local result artifact lands when the document does not say.
 DEFAULT_RESULTS_DIRECTORY = "./results"
 
 
@@ -137,8 +137,8 @@ _BANDWIDTH_BITS: dict[str, Decimal] = {
 class Bandwidth:
     """The rate the test aims at, held in bits per second.
 
-    Prefixes are decimal, 10³ per step, matching ADR-02-03's rule for throughput. A
-    reader may assume binary prefixes here, which is exactly why that ADR states it.
+    Prefixes are decimal, 10³ per step, as networking throughput is. A
+    reader may assume binary prefixes here, which is exactly why this says so.
     """
 
     bits_per_second: Decimal
@@ -180,10 +180,10 @@ class TestDefinition:
     criteria: tuple[Criterion, ...] = field(default=())
 
     #: Both sections below are part of a Milestone-01 run's configuration, and
-    #: ADR-04-06 makes the test document the only source of it. They carry defaults
-    #: because the decisions behind them already have one: ADR-03-02 makes ``auto`` the
-    #: default monitoring mode, and ADR-05-09 requires a result artifact unconditionally,
-    #: so a run with a silent document still has somewhere to write.
+    #: the test document is the only source of it. They carry defaults because the
+    #: decisions behind them already have one: ``auto`` is the default monitoring mode,
+    #: and a run always writes a result artifact, so a run with a silent document still
+    #: has somewhere to write.
     monitoring_mode: MonitoringMode = MonitoringMode.AUTO
     results_directory: str = DEFAULT_RESULTS_DIRECTORY
 

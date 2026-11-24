@@ -3,26 +3,24 @@
 Two different things live here, and the difference matters:
 
 * :func:`render_robot` is **pure text generation** and needs no Robot Framework at all.
-  It is phase 5 of every run (ADR-01-08) and the user-facing conversion command, and
-  ADR-04-05 requires those to be the same function — "phase 5 must never be a second,
-  drifting renderer".
+  It is phase 5 of every run and the user-facing conversion command, and those are the
+  same function so that phase 5 can never become a second, drifting renderer.
 * :func:`parse_robot` needs Robot's own parsing API. That import is **deferred into the
   function** so that importing this module, and therefore the core library, still works
-  with Robot Framework absent (ADR-01-02). Calling it without Robot installed fails with
+  with Robot Framework absent. Calling it without Robot installed fails with
   a message that says what to install.
 
 The suite this renders is deliberately thin: parameters and pass criteria only, with
-deployment, PromQL and cleanup behind the resource file (ADR-01-03, kept by ADR-04-05 as
-the Robot format's design).
+deployment, PromQL and cleanup behind the resource file.
 
 **The parser accepts exactly what the renderer emits, and rejects everything else.** The
 suite that executes is never the one the user wrote: it is ``render_robot()`` of the
-parsed model (ADR-04-06). So any construct the parser steps over — a criterion in an
+parsed model. So any construct the parser steps over — a criterion in an
 ``ELSE`` branch, a lowercased keyword, a ``[Teardown]``, a stray variable — is a construct
 that silently never runs, and a dropped criterion is a run that passes without checking
 it. Rejecting is the only safe answer that does not require interpreting Robot's
-semantics, and it is ADR-04-03's rule for YAML ("unknown fields are rejected, never
-ignored") applied to the other format.
+semantics, and it is the YAML format's rule (unknown fields are rejected, never
+ignored) applied to the other format.
 """
 
 from __future__ import annotations
@@ -69,7 +67,7 @@ _VARIABLES = {
 }
 
 #: Carried through the suite so a Robot-authored test can say the same things a YAML one
-#: can. Optional, because both have a decided default (ADR-03-02, ADR-05-09).
+#: can. Optional, because both have a decided default.
 _OPTIONAL_VARIABLES = ("MONITORING_MODE", "RESULTS_DIRECTORY")
 
 #: The arguments ``Run Network Test`` is rendered with. They reference the variables and
@@ -450,7 +448,7 @@ def _section_name(section: Any) -> str:
 def _criterion_columns(criterion: Criterion) -> tuple[str, str, str, str]:
     """The four columns of the documented surface, unpadded.
 
-    ``<Statistic>? <Metric> Should Be <Comparison> <Value> <Unit>`` (ADR-02-05). The
+    ``<Statistic>? <Metric> Should Be <Comparison> <Value> <Unit>``. The
     caller pads them so the columns line up; the grammar is what matters here.
     """
     subject = criterion.metric.robot_phrasing
@@ -498,8 +496,8 @@ def _parse_with_robot(source: str) -> Any:
     """Hand the suite to Robot's own parser.
 
     The import lives here rather than at module scope so that importing this module,
-    and therefore the core library, still works with Robot Framework absent
-    (ADR-01-02). Only this function needs it; rendering does not.
+    and therefore the core library, still works with Robot Framework absent.
+    Only this function needs it; rendering does not.
     """
     try:
         from robot.api import get_model  # noqa: PLC0415

@@ -1,9 +1,9 @@
 """Where a run's artifacts are written inside the Job: one directory per ``run_id``.
 
-[ADR-01-08] retains the rendered suite "in the run's artifact directory, keyed by
-``run_id``", next to one ``output.xml`` per pair and the merged ``log.html`` and
+A run retains the rendered suite in its artifact directory, keyed by
+``run_id``, next to one ``output.xml`` per pair and the merged ``log.html`` and
 ``report.html``. This is that directory's layout, and the only place that knows it, so
-the transport that returns it to the submitter ([ADR-05-15], provisional) and M1-14's
+the transport that returns it to the submitter and M1-14's
 result artifact write into the same place.
 
 Inside the Job it lives under ``/work``, the only writable volume of a container whose

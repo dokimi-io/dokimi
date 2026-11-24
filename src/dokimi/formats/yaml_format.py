@@ -1,12 +1,12 @@
 """The YAML authoring format.
 
-Shape follows ADR-04-03's Kubernetes-style conventions and ADR-02-05's criterion record.
-ADR-04-06 scopes Milestone-01 to the fields below; the versioned JSON Schema of ADR-04-03
-arrives in Milestone-02, so validation here is explicit rather than schema-driven.
+Shape follows Kubernetes-style conventions and the canonical criterion record
+(:mod:`dokimi.model.criterion`). Milestone-01 is scoped to the fields below; a versioned
+JSON Schema arrives in Milestone-02, so validation here is explicit rather than schema-driven.
 
-**Unknown fields are rejected, never ignored.** That is ADR-04-03's reasoning and it
-matters for a measurement tool: a silently ignored typo in ``targetBandwidth`` produces a
-test that ran at the wrong rate and reported success.
+**Unknown fields are rejected, never ignored.** It matters for a measurement tool: a
+silently ignored typo in ``targetBandwidth`` produces a test that ran at the wrong rate and
+reported success.
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ def render_yaml(definition: TestDefinition) -> str:
     """Render the canonical model back to a YAML document.
 
     Not required by Milestone-01, which only has to render Robot. It exists because
-    ADR-04-05 makes conversion a composition of an existing parse and an existing render,
+    conversion is a composition of an existing parse and an existing render,
     and because it is what makes the cross-format criterion property testable in both
     directions rather than only one.
 

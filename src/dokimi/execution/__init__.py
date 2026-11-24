@@ -1,4 +1,4 @@
-"""Executing a run's tests: phases 5, 6 and 9a (ADR-01-08).
+"""Executing a run's tests: phases 5, 6 and 9a.
 
 * :mod:`~dokimi.execution.phases` renders the suite, runs one Robot process per pair,
   and merges their reports;
@@ -9,7 +9,7 @@
 * :mod:`~dokimi.execution.artifacts` and :mod:`~dokimi.execution.context` are the run's
   artifact directory and what each Robot process is told about its run.
 
-Nothing in this package imports Robot Framework (ADR-01-02). Robot is a caller of it.
+Nothing in this package imports Robot Framework. Robot is a caller of it.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Generated at release time — do not edit by hand.
 
-ADR-05-08 requires the CLI to ship with the digest of the orchestrator image built from
-its own commit, and ADR-05-04 pins every test-workload image by digest the same way. The
+The CLI ships with the digest of the orchestrator image built from its own commit, and
+every test-workload image is pinned by digest the same way. The
 release workflow (``.github/workflows/release.yml``) builds and pushes the images,
 rewrites this file with the digests the registry returned, and only then builds the
 distribution — so a released CLI and the images it runs always come from one commit.

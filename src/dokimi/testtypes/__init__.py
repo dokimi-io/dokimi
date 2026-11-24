@@ -1,11 +1,10 @@
 """Test type plugins.
 
 Each test type declares its images, parameters, pod specs, capabilities for a given
-parameter set and environment, ``start()``, ``is_complete()`` and its exporter
-(ADR-02-01, designs/test-type-interface.md in the ADR repository). The interface is
-:class:`~dokimi.testtypes.interface.TestTypePlugin`; :func:`plugin_for` is how the
-rest of the library gets from a definition's :class:`~dokimi.model.TestType` to the
-code that runs it, and :func:`parameters_for` is how a definition becomes that
+parameter set and environment, ``start()``, ``is_complete()`` and its exporter. The
+interface is :class:`~dokimi.testtypes.interface.TestTypePlugin`; :func:`plugin_for` is
+how the rest of the library gets from a definition's :class:`~dokimi.model.TestType` to
+the code that runs it, and :func:`parameters_for` is how a definition becomes that
 plugin's parameters.
 """
 
@@ -28,9 +27,9 @@ def plugin_for(test_type: TestType, *, image: WorkloadImage | str | None = None)
 def parameters_for(definition: TestDefinition) -> dict[str, str]:
     """*definition*'s test parameters, spelled as its plugin's schema accepts them.
 
-    The canonical model carries exactly the parameters ADR-04-06 scopes Milestone-01 to.
+    The canonical model carries exactly the parameters Milestone-01 is scoped to.
     A parameter the model does not carry — ``iperf2``'s ``warmup`` — takes the schema's
-    default, which is where ADR-04-04 wants the warm-up pass: on unless disabled.
+    default, which is where the warm-up pass belongs: on unless disabled.
     """
     return {
         "protocol": definition.protocol.value,

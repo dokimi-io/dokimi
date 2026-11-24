@@ -1,8 +1,8 @@
-"""The images a run uses, chosen at submission and passed into the Job ([ADR-04-08]).
+"""The images a run uses, chosen at submission and passed into the Job.
 
 A run uses images the CLI does not build into itself: the orchestrator's own, which the
-Job runs, and the test type's workload image. [ADR-04-08] decides how a user chooses
-them, and this module is that decision in code:
+Job runs, and the test type's workload image. How a user chooses them
+follows these rules, and this module is where they become code:
 
 * **Two override levels and the release default**, for every component alike:
   ``--image <component>=<reference>`` for one run, ``DOKIMI_<COMPONENT>_IMAGE`` for one
@@ -70,7 +70,7 @@ class Component:
     #: Earlier names for :attr:`env_var`, still read on the submitter's side.
     env_aliases: tuple[str, ...] = ()
     #: Part of the run's own monitoring: resolved only when the run may deploy it, for
-    #: ``managed`` and ``auto`` and not for ``existing`` (ADR-04-08).
+    #: ``managed`` and ``auto`` and not for ``existing``.
     monitoring: bool = False
 
     @property

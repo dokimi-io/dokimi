@@ -1,10 +1,10 @@
-"""Post-run diagnostic snapshot: phase 10 (ADR-05-07, M1-15).
+"""Post-run diagnostic snapshot: phase 10 (M1-15).
 
 Captured once per run, after the last test and **before** cleanup, while everything the
 run created still exists. Outside Robot's reports by construction, since the Robot process
-has already exited (ADR-01-08), so it has a reporting surface of its own:
+has already exited, so it has a reporting surface of its own:
 ``diagnostics.json`` in the run's artifact directory, next to ``log.html``, which reaches
-the submitter with the other artifacts (ADR-05-15), and a summary in the Job's log.
+the submitter with the other artifacts, and a summary in the Job's log.
 
 **What it records:**
 
@@ -16,8 +16,8 @@ the submitter with the other artifacts (ADR-05-15), and a summary in the Job's l
   report is one place to look without copying what has a source of truth elsewhere;
 * whether the run namespace and its Prometheus were still reachable.
 
-**What counts as an anomaly** (ADR-05-07's follow-up, decided 2026-10-13, scoped on
-2026-10-15): something no single test's error category was in flight to catch.
+**What counts as an anomaly:** something no single test's error category was in flight
+to catch.
 
 * a pod of a pair whose pods were deployed, and that no longer exists;
 * a test pod or the Prometheus pod evicted, or stopped by its deadline;
@@ -33,12 +33,12 @@ whose pod stays ``Running`` because its exporter keeps serving is how it should 
 node-exporter's pods run on every node, also those no test used, so their state is
 recorded but never an anomaly.
 
-**An anomaly means the run's resources are retained** (ADR-05-07): the report says
-``"retain": true`` and why. Until M1-16 builds retain-on-failure, the test pods are still
-removed before the claim is released, as the 2026-10-07 sync decided, so that nothing of a
-run keeps sending; their state is in this snapshot. Nothing else of a run is deleted
-before M1-16, except the node-exporter it deployed (2026-10-07), and M1-16 honours
-``retain``.
+**An anomaly makes the run an ``error``**, so phase 11 keeps its evidence as for any run
+that didn't pass (unless it was submitted with ``--retain never``): the report says
+``"retain": true`` and why, and the run's owner and definition stay, with the test pods
+that can no longer be sending, until ``dokimi cleanup``. A test pod that might still send
+is removed before the claim is released, so nothing of a run disturbs the next one; its
+state is in this snapshot. The node-exporter the run deployed always goes.
 
 **It never blocks cleanup.** It has its own timeout, :data:`SNAPSHOT_TIMEOUT_SECONDS`, well
 inside the Job's ``diagnostics`` budget term, and it never raises: each step that fails is
@@ -195,7 +195,7 @@ class Diagnostics:
 
     @property
     def retain(self) -> bool:
-        """Whether the run's resources are retained: any anomaly at all (ADR-05-07)."""
+        """Whether the run's resources are retained: any anomaly at all."""
         return bool(self.anomalies)
 
     def to_json(self) -> str:

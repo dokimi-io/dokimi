@@ -1,8 +1,8 @@
 """Run-level cluster checks, before any test workload is deployed.
 
-Phase 4, inside the Job, after planning and before suite rendering ([ADR-01-08],
-[ADR-05-07]). Blocking, and in this order, after the run-exclusivity claim and the
-Prometheus query check that open the phase:
+Phase 4, inside the Job, after planning and before suite rendering. Blocking, and in
+this order, after the run-exclusivity claim and the Prometheus query check that open the
+phase:
 
 1. **node count**: every node the planned matrix needs is still there and still accepts
    a test pod. Phase 3 checked the same nodes against the same facts, so this catches a
@@ -11,24 +11,24 @@ Prometheus query check that open the phase:
 2. **scheduling** and **image pull**: the first planned pair is deployed with its own
    spec, on its own nodes and from its own image, and must pass the per-test readiness
    gate. :class:`~dokimi.testtypes.lifecycle.ReadinessGateError` keeps the two apart, as
-   it does for a test ([ADR-05-14]).
+   it does for a test.
 3. **connectivity** and **DNS**: the pair's client runs in its probe mode
    (:mod:`dokimi.testtypes.probe`). It exchanges one second of traffic with the server
    and resolves a cluster name, the two checks only a pod can make.
 
 A failed check is a :class:`ClusterNotReadyError` that names it: ``cluster not ready
 (<check>)``, the same form the Prometheus check already reports
-(:class:`~dokimi.metrics.prometheus.PrometheusUnreachableError`), and exit ``4``
-([ADR-01-11]). Nothing in the matrix runs.
+(:class:`~dokimi.metrics.prometheus.PrometheusUnreachableError`), and exit ``4``.
+Nothing in the matrix runs.
 
 The probe's pods are this module's to create and the caller's to remove: ``dokimi
 execute`` removes every test pod of the run before it renders the suite, and again on
-every way out, so a failed check leaves nothing running ([ADR-05-07]). The standalone
+every way out, so a failed check leaves nothing running. The standalone
 ``dokimi preflight`` is the same function, called by the same ``execute``, which stops
 after this phase.
 
 A preflight that passes is a floor, not a guarantee: one pair under no load says nothing
-about the full matrix's concurrency ([ADR-05-07]).
+about the full matrix's concurrency.
 """
 
 from __future__ import annotations
@@ -87,11 +87,11 @@ PROBE_TEST_ID_SUFFIX = "-preflight"
 
 
 class Check(enum.Enum):
-    """The run-level preflight's checks, as a failure names them ([ADR-05-07]).
+    """The run-level preflight's checks, as a failure names them.
 
     One run-level category, ``cluster not ready``, and these as its reason, the way a
-    refused claim is the reason ``run_already_active`` ([ADR-01-11]). ``scheduling`` and
-    ``image_pull`` are spelled as ADR-05-05's per-test categories are, because the
+    refused claim is the reason ``run_already_active``. ``scheduling`` and
+    ``image_pull`` are spelled as the per-test categories are, because the
     preflight finds them with the per-test gate. They stay run-level here: the run has
     no test yet.
     """
@@ -214,7 +214,7 @@ def probe_first_pair(
     if plugin is None:
         image = images.get(kind.value)
         if image is None:
-            # submit resolves every image (ADR-04-08); the Job resolving one here would run
+            # submit resolves every image; the Job resolving one here would run
             # an image nobody chose. A bug, not a finding about the cluster.
             raise RuntimeError(f"this run has no image for {kind.value}")
         candidate = plugin_for(kind, image=image)
@@ -288,8 +288,8 @@ class _ProbeEnded:
 def node_exporter_reachability(client: PrometheusClient, job: str) -> str | None:
     """Why Prometheus does not scrape every node-exporter target, or ``None`` if it does.
 
-    A warning, never a failure: node metrics explain a result, they never decide one
-    ([ADR-03-02]). A target not scraped yet is not reported; the check runs once, late in
+    A warning, never a failure: node metrics explain a result, they never decide one.
+    A target not scraped yet is not reported; the check runs once, late in
     phase 4, and a first scrape still pending then is no finding.
     """
     try:

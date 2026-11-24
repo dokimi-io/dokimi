@@ -1,12 +1,12 @@
 """Run exclusivity: at most one run active in a cluster, even when two start at once.
 
-[ADR-05-02] preconditions every run on no other run being active anywhere in the cluster,
-regardless of test type or namespace. [ADR-05-13] defines *active*: a run's owner carries
-a claim that is not finished and not expired. [ADR-05-10] is the mechanism, and this
-module is that mechanism.
+A run starts only when no other run is active anywhere in the cluster, regardless of
+test type or namespace. A run is *active* while its owner carries a claim that is not
+finished and not expired. Claims are taken under a run-start lock, and this module is
+that mechanism.
 
 The claim is made inside the Job, as the first check of phase 4 — never by the CLI, whose
-credentials stay namespaced ([ADR-01-06]). What ``submit`` created in phase 1 (the owner,
+credentials stay namespaced. What ``submit`` created in phase 1 (the owner,
 the definition, the Job) carries no claim, so it is not evidence of an active run, and two
 simultaneous submissions cannot refuse each other.
 
@@ -90,14 +90,14 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 #: Where the lock lives. An installation prerequisite (``deploy/rbac.yaml``); one lock
-#: per cluster, whatever namespace a run uses ([ADR-05-10], OQ-108).
+#: per cluster, whatever namespace a run uses.
 DEFAULT_LOCK_NAMESPACE = "dokimi"
 LOCK_NAME = "dokimi-run-lock"
 LOCK_COMPONENT = "run-lock"
 #: Only has to cover one scan and one update, not the run.
 DEFAULT_LOCK_SECONDS = 60
 #: The reason a refused claim reports within the run-level preflight category
-#: ([ADR-01-11]). A caller that retries "busy" but not "broken" tells them apart by it.
+#: (exit 4). A caller that retries "busy" but not "broken" tells them apart by it.
 REFUSAL_REASON = "run_already_active"
 
 _ACQUIRE_ATTEMPTS = 3
@@ -112,7 +112,7 @@ _OWNER_SELECTOR = (
 class RunExclusivityError(RuntimeError):
     """The exclusivity check itself could not be carried out.
 
-    It carries no reason: only a refusal is "busy" ([ADR-01-11]). A missing lock
+    It carries no reason: only a refusal is "busy". A missing lock
     namespace, a missing owner or retries running out mean the cluster is broken.
     """
 
@@ -144,7 +144,7 @@ class ActiveRun:
 
 
 class RunAlreadyActiveError(RunExclusivityError):
-    """Another run is active, or is starting, in this cluster. Exits 4 ([ADR-01-11])."""
+    """Another run is active, or is starting, in this cluster. Exits 4."""
 
     reason = REFUSAL_REASON
 
@@ -227,7 +227,7 @@ def claim_expiry(
     namespace: str,
     deadline_seconds: int,
 ) -> datetime:
-    """When *run_id*'s claim expires: its Job's start time plus its deadline ([ADR-05-13]).
+    """When *run_id*'s claim expires: its Job's start time plus its deadline.
 
     The start time is read from the Job's status, so it is the API server's clock that
     dates the claim, and the claim expires exactly when the cluster kills the Job.
@@ -275,7 +275,7 @@ def claim_run(
 
     *namespace* is where the run's owner lives — the namespace the Job runs in. ``submit``
     created the owner there; the claim never creates one, and the Job's role could not.
-    *expires_at* is the orchestrator Job's own deadline ([ADR-05-13]), from
+    *expires_at* is the orchestrator Job's own deadline, from
     :func:`claim_expiry`.
 
     Returns the :class:`RunOwnership` through which every later object must be created.

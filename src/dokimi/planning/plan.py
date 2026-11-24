@@ -7,10 +7,10 @@ wrong.
 **Too little.** A plan that is only ``(source, target)`` would have to be reshaped the
 moment a second pair exists. So a :class:`Plan` is already a sequence of *waves*, each a
 tuple of pairs that may run together. Sequential execution is one pair per wave; bounded
-concurrency (ADR-04-04) is more than one. The shape does not change, only the scheduler
+concurrency is more than one. The shape does not change, only the scheduler
 that fills it.
 
-**Too much.** ADR-04-01's other matrix modes, label and topology selectors and concurrent
+**Too much.** The other matrix modes, label and topology selectors and concurrent
 waves are Milestone-02. Nothing here names them: there is no ``PlacementMode`` enum with
 three members that raise ``NotImplementedError``, because a concept the code carries is a
 concept someone will start depending on.
@@ -35,7 +35,7 @@ __all__ = [
     "resolve_node",
 ]
 
-#: The only placement mode Milestone-01 has (ADR-04-06). A string, not an enum member:
+#: The only placement mode Milestone-01 has. A string, not an enum member:
 #: see the module docstring.
 PLACEMENT_MODE = "explicit"
 
@@ -44,9 +44,9 @@ _LISTED_NODES = 10
 
 
 class Concurrency(enum.Enum):
-    """The execution strategy the plan was built for (ADR-04-04).
+    """The execution strategy the plan was built for.
 
-    Milestone-01 fixes this to sequential. The ADR's default, bounded concurrency with
+    Milestone-01 fixes this to sequential. The default, bounded concurrency with
     node exclusivity, arrives with the matrices that make it matter.
     """
 
@@ -67,7 +67,7 @@ class Plan:
     """What the run will execute, and in what order.
 
     ``waves`` run one after another; the pairs within a wave run together. A plan is
-    never empty — ADR-04-01 makes a selection that yields zero tests an error, not a run
+    never empty — a selection that yields zero tests is an error, not a run
     that passes having measured nothing.
     """
 
@@ -90,7 +90,7 @@ class Plan:
     def run_metadata(self) -> dict[str, Any]:
         """The fields the plan contributes to the run's metadata.
 
-        ADR-04-01 records the resolved selection and ADR-04-04 the effective concurrency,
+        The resolved selection and the effective concurrency are both recorded,
         because a result is not interpretable without either. M1-14 (#49) writes these to
         the artifact, next to the image fields M1-02 contributes.
         """
@@ -115,7 +115,7 @@ class Plan:
 def plan_run(definition: TestDefinition, inventory: NodeInventory) -> Plan:
     """Resolve the definition's nodes against the inventory and plan the run.
 
-    Every failure here is a ``config_error`` (ADR-05-05): the request names nodes the
+    Every failure here is a ``config_error``: the request names nodes the
     cluster cannot give it, and that is known before anything is deployed.
     """
     source = resolve_node(inventory, definition.source_node, role="source")
@@ -136,9 +136,9 @@ def resolve_node(inventory: NodeInventory, name: str, *, role: str) -> NodeFacts
 
 
 def _test_id(index: int) -> str:
-    """A test's identifier within its run (ADR-02-07's ``test_id``).
+    """A test's identifier within its run (its ``test_id`` label).
 
-    Positional, which is only meaningful because ADR-04-01 makes the order deterministic:
+    Positional, which is only meaningful because the order is deterministic:
     the same selection and mode always yield the same numbering. Zero-padded so the ids
     sort as the plan does, and short enough to sit in a label value however long the
     node names are.

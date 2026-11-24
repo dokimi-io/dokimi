@@ -1,6 +1,6 @@
 """Run ownership: labels, the placeholder owner object, and label-scoped deletion.
 
-[ADR-05-02] decides three rules, and this module is where each becomes code:
+Run ownership follows three rules, and this module is where each becomes code:
 
 * **Every created object carries run-ownership labels** — ``app.kubernetes.io/managed-by:
   dokimi`` and ``dokimi.io/run-id: <run_id>``, plus
@@ -8,7 +8,7 @@
   path by which the library creates objects, and it cannot create one without them.
 * **Every created object carries an ownerReference** to a placeholder owner, so deleting
   the owner lets the cluster's garbage collector remove the rest even if our own cleanup
-  never runs. There is no CRD in Phase 1, so the owner is a ``ConfigMap`` — see
+  never runs. dokimi defines no CRD, so the owner is a ``ConfigMap`` — see
   :func:`owner_manifest` for its shape. Garbage collection does not cross namespaces, so
   a run gets one owner **per namespace it creates objects in**, each created before
   anything else in that namespace.
@@ -18,20 +18,19 @@
   the meantime can widen what it touches.
 
 The orchestrator's own Job is labelled with its ``run_id`` too, so the CLI can find it to
-reattach ([ADR-01-06]), but it carries ``app.kubernetes.io/component: orchestrator`` and
+reattach, but it carries ``app.kubernetes.io/component: orchestrator`` and
 is excluded from deletion — it is the thing running the run, not a resource the run
 created, and a cleanup that deleted it would kill itself.
 
-**One documented exception: a kept managed Prometheus** ([ADR-03-02]). It is kept after
+**One documented exception: a kept managed Prometheus**. It is kept after
 the run by default, so it cannot be a child of an owner that cleanup deletes: it carries
 the ownership labels, so that it stays attributable to its run and removable by
 ``run_id``, but no ownerReference, and :func:`delete_run_owned` leaves it alone unless
 asked to remove it. :meth:`RunOwnership.create_kept` is the one path that creates such an
-object. ADR-05-02 foresaw the exception ("deliberately outlives the run") and required it
-documented; this is where. It never blocks a later run: exclusivity reads owners only
-([ADR-05-13]).
+object. An object that deliberately outlives its run has to be documented as an exception;
+this is where. It never blocks a later run: exclusivity reads owners only.
 
-The owner also carries the run's **claim** ([ADR-05-13]): three annotations that say
+The owner also carries the run's **claim**: three annotations that say
 whether the run is active. :func:`claim_of` reads them and :meth:`Claim.is_active` is
 the one predicate the exclusivity scan applies. No other object is evidence of an active
 run — not a workload, not retained evidence, not a kept managed Prometheus.
@@ -98,7 +97,7 @@ __all__ = [
 
 TEST_ID_LABEL = "dokimi.io/test-id"
 
-#: The claim, written on the owner under the run-start lock ([ADR-05-10], [ADR-05-13]).
+#: The claim, written on the owner under the run-start lock.
 CLAIMED_AT_ANNOTATION = "dokimi.io/claimed-at"
 #: When the claim stops counting: the orchestrator Job's own deadline.
 CLAIM_EXPIRES_AT_ANNOTATION = "dokimi.io/claim-expires-at"
@@ -114,7 +113,7 @@ OWNER_COMPONENT = "run-owner"
 ORCHESTRATOR_COMPONENT = "orchestrator"
 #: A managed Prometheus: run-owned, but kept after the run unless removal is asked for.
 PROMETHEUS_COMPONENT = "prometheus"
-#: Components :func:`delete_run_owned` keeps by default ([ADR-03-02]).
+#: Components :func:`delete_run_owned` keeps by default.
 _KEPT_COMPONENTS = frozenset({PROMETHEUS_COMPONENT})
 
 #: The kinds a run may create, and therefore the kinds label-scoped cleanup looks at. A
@@ -181,7 +180,7 @@ def is_run_owned(manifest: Manifest, run_id: RunId | None = None) -> bool:
 
 
 def owner_name(run_id: RunId | str) -> str:
-    """The placeholder owner's name, ``run-<run_id>-owner`` ([ADR-05-13]).
+    """The placeholder owner's name, ``run-<run_id>-owner``.
 
     Identical in every namespace the run touches, and free of the product name, so the
     Job and the definition ConfigMap that ``submit`` creates reference it unchanged.
@@ -234,7 +233,7 @@ def owner_manifest(
 
 @dataclass(frozen=True)
 class Claim:
-    """What an owner's annotations say about its run ([ADR-05-13])."""
+    """What an owner's annotations say about its run."""
 
     claimed_at: datetime | None
     expires_at: datetime | None
@@ -246,8 +245,8 @@ class Claim:
         """Claimed, not finished, and not yet expired.
 
         An owner that was never claimed — a refused submission, a Job that never
-        started — never counts. Neither does a claim without a readable expiry: ADR-05-13
-        counts a run as active only while its ``claim-expires-at`` is in the future, so
+        started — never counts. Neither does a claim without a readable expiry: a run
+        counts as active only while its ``claim-expires-at`` is in the future, so
         that a run can never block the cluster until someone deletes it by hand.
         """
         if self.claimed_at is None or self.finished_at is not None:
@@ -423,8 +422,8 @@ class RunOwnership:
         """Create *manifest* as a run-owned object. The only creation path to use.
 
         Pods and Jobs are refused without ``spec.activeDeadlineSeconds``: a run-owned
-        workload that can run forever is exactly what ADR-05-02 rules out. Apply one with
-        :func:`~dokimi.k8s.deadlines.bound_pod` or
+        workload that can run forever is exactly what run ownership rules out. Apply one
+        with :func:`~dokimi.k8s.deadlines.bound_pod` or
         :func:`~dokimi.k8s.deadlines.bound_job` first.
         """
         if kind in _SELF_LIMITING_KINDS and not manifest.get("spec", {}).get(
@@ -438,7 +437,7 @@ class RunOwnership:
         return self.cluster.create(kind, stamped["metadata"]["namespace"], stamped)
 
     def create_kept(self, kind: Kind, manifest: Manifest, *, component: str) -> Manifest:
-        """Create *manifest* run-labelled but unowned, to outlive the run ([ADR-03-02]).
+        """Create *manifest* run-labelled but unowned, to outlive the run.
 
         Only for a component cleanup keeps by default — today, a managed Prometheus — and
         never for a Pod or a Job: something kept must not be a workload that sends
@@ -527,7 +526,7 @@ def find_run_owned(
 
 @dataclass
 class DeletionReport:
-    """What a scoped delete did. Failures are listed, never swallowed ([ADR-05-02])."""
+    """What a scoped delete did. Failures are listed, never swallowed."""
 
     run_id: str
     deleted: list[OwnedObject] = field(default_factory=list)
@@ -558,7 +557,7 @@ def delete_run_owned(
     by the garbage collector cascading from its owner.
 
     A kept component — a managed Prometheus — is listed in the report's ``kept`` and left
-    alone, unless *remove_kept* is set: ADR-03-02 keeps it by default and removes it only
+    alone, unless *remove_kept* is set: it is kept by default and removed only
     on an explicit flag.
     """
     objects = find_run_owned(
