@@ -1,10 +1,10 @@
 # Exporters
 
 One dedicated exporter per test type, running as a sidecar alongside the test workload,
-one per test pod (ADR-02-02).
+one per test pod.
 
 An exporter parses its tool's native output, exposes the normalized metric set with the
-required labels (ADR-02-03, ADR-02-07), may expose tool-specific metrics under a clearly
+required labels, may expose tool-specific metrics under a clearly
 separated prefix, and reports completion state explicitly via
 `dokimi_test_completed` so that "test failed", "test never ran" and "metric
 absent" stay distinguishable.
@@ -22,7 +22,7 @@ It is Python, standard library only, and ships in the iperf2 image as
 
 **It is a regular container, not a native sidecar.** Kubernetes stops a native sidecar
 once the pod's other containers have exited, and the exporter has to keep serving the
-completed result after iperf2 has (ADR-03-01). It reads the files on every request, so it
+completed result after iperf2 has. It reads the files on every request, so it
 serves the result for as long as the pod exists. A finished client's pod therefore stays
 `Running` until the run removes it. The exporter exits at once on SIGTERM, so removing the
 pod doesn't wait out its grace period.
@@ -42,7 +42,7 @@ pod doesn't wait out its grace period.
 
 Results appear once `completed` is 1, as gauges in base units.
 
-**Every series carries the full required label set** (ADR-02-07), plus `direction`:
+**Every series carries the full required label set**, plus `direction`:
 - **from the pod's environment:** everything but the two addresses, set when the pod is
   created. The exporter refuses to start without them;
 - **the addresses are the pair's own:** the source is the client and the target the server,

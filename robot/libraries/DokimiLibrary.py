@@ -1,7 +1,7 @@
 """The Robot Framework keywords of a dokimi suite: a thin adapter over the library.
 
 This file lives outside ``src/`` deliberately. It is the Robot-facing surface, so it is
-allowed to know Robot exists; the library it wraps is not (ADR-01-02, ADR-01-08).
+allowed to know Robot exists; the library it wraps is not.
 
 Everything a keyword does is a call into :mod:`dokimi`. What this adapter adds is only
 what is Robot's: argument passing, the log, and how a failure reads in ``log.html``.
@@ -72,8 +72,8 @@ class CriterionError(AssertionError):
 class DokimiLibrary:
     """Robot library exposing the orchestration keywords.
 
-    ``GLOBAL`` scope, per ADR-01-03's open point closed as OQ-35: tests within one cluster
-    do not run in parallel, so run state and ``run_id`` are held once per Robot process.
+    ``GLOBAL`` scope, because tests within one cluster do not run in parallel: run state and
+    ``run_id`` are held once per Robot process.
     Robot's dynamic library API, because the criterion keywords are generated from the
     model's vocabulary rather than written out one by one.
     """

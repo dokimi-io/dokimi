@@ -93,7 +93,7 @@ class KubernetesCluster:
                 if error.status == _NOT_FOUND:
                     raise ClusterError(
                         f"namespace {namespace!r} does not exist. A run never creates a "
-                        "namespace (ADR-05-13): an administrator creates it once, with "
+                        "namespace: an administrator creates it once, with "
                         "deploy/rbac.yaml for the default one, and after that submitting "
                         "needs only namespaced permissions."
                     ) from error

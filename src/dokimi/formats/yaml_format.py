@@ -83,8 +83,8 @@ def parse_yaml(source: str) -> TestDefinition:
     mode = _require(placement, "mode", "placement")
     if mode != "explicit":
         raise ConfigError(
-            f"placement mode {mode!r} is not available in Milestone-01, which resolves "
-            "two explicitly named nodes. Selector-based modes arrive with ADR-04-01"
+            f"placement mode {mode!r} is not available in this version, which resolves "
+            "two explicitly named nodes. Other placement modes are planned"
         )
 
     test = _mapping(document, "test", "the document")

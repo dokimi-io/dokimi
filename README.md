@@ -374,8 +374,8 @@ Every framework metric carries:
 
 | Label | Meaning |
 | --- | --- |
-| `cluster` | What the operator called the cluster at submission, `--cluster` or `DOKIMI_CLUSTER`: a DNS label, required, never derived (ADR-02-07) |
-| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is `YYYYMMDD-HHMMSS-xxxxxx` — a UTC timestamp, then six characters of `[0-9a-z]` (ADR-02-08) — not a UUID: it stays readable in a log line, orders naturally in the result artifact, and is spelled the same way in every label, object name and row |
+| `cluster` | What the operator called the cluster at submission, `--cluster` or `DOKIMI_CLUSTER`: a DNS label, required, never derived |
+| `run_id` | Unique per run, generated at setup, stable for the whole run. Format is `YYYYMMDD-HHMMSS-xxxxxx` — a UTC timestamp, then six characters of `[0-9a-z]` — not a UUID: it stays readable in a log line, orders naturally in the result artifact, and is spelled the same way in every label, object name and row |
 | `test_id` | Unique per test within a run; one source/target/parameter combination. Stable across repetitions |
 | `repetition` | A separate label rather than folded into `test_id`, so aggregating a pair's repetitions is a plain `avg by (test_id)` |
 | `test_type` | `iperf2`, `iperf3`, `irtt`, … |
@@ -563,9 +563,8 @@ and the client runs the warm-up pass, then the measurement. Completion is the cl
 process exiting, and its final `-y C` summary line is read from the pod's termination
 message. Neither step needs `exec` into a pod. The warm-up pass defaults to 10 s, and its
 duration is recorded in the run metadata as `warmup_duration_seconds`, `0` when disabled.
-In Milestone-01 it can be disabled through the library, but not yet from a test document;
-see [ADR-04-06](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/04-06-milestone-01-test-definition-input.md)
-for the fields a document may carry.
+For now it can be disabled through the library, but not from a test document: a document has
+no warm-up field yet.
 
 ### Exporter
 
@@ -644,7 +643,7 @@ Prometheus produced their results.
   read-only discovery rights. The images are upstream `quay.io/prometheus/prometheus:v3.15.0`
   and `quay.io/prometheus/node-exporter:v1.12.1`, both pinned by digest, and chosen like every
   other image: `--image prometheus=…` or `DOKIMI_PROMETHEUS_IMAGE`, `--image node-exporter=…` or
-  `DOKIMI_NODE_EXPORTER_IMAGE` (ADR-04-08). Upstream does not sign
+  `DOKIMI_NODE_EXPORTER_IMAGE`. Upstream does not sign
   them, so the digest is what pins them to the images we reviewed.
 
 ### Execution strategy
@@ -722,7 +721,7 @@ all that offers — but the run metadata records whether what ran was actually p
 ### Choosing the images a run deploys
 
 The images a run deploys itself, today the `iperf2` test workload, follow the same precedence,
-per component (ADR-04-08):
+per component:
 
 | Source | How | Scope |
 | --- | --- | --- |
@@ -749,7 +748,7 @@ $ docker build -f images/orchestrator/Dockerfile -t orchestrator:dev .
 | Packaging | **`uv` 0.12.18+**, with a single `uv.lock` at the repository root as the one source of resolved versions |
 | Kubernetes client | the official `kubernetes` library, **35+** (its major tracks the Kubernetes minor it targets, so this is Kubernetes **1.35+**) |
 | Robot Framework | **7.5+**, an optional extra rather than a core dependency — see below |
-| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism ([ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md)) |
+| Test environment | [`test-env/`](test-env/README.md): one control plane and three workers on one machine, with kind or k3d and a choice of CNI. It validates orchestration correctness, **not** measurement realism: its numbers say nothing about real hardware |
 
 The orchestration logic is a library with **no Robot Framework imports in its core**. The Robot
 resource library, the CLI, a CI entry point and a future Operator are all thin adapters over the
@@ -830,7 +829,7 @@ Recorded here so they are not mistaken for oversights:
   warn, whether a strict mode makes them an error, and where secrets live — neither YAML in a
   repository nor Robot variables are acceptable homes for a Prometheus credential.
 - **How a stable cluster identifier would be derived.** `cluster` is a required label, given by the
-  operator at submission (ADR-02-07); it records what they called the cluster, not an identity.
+  operator at submission; it records what they called the cluster, not an identity.
   Context names are local to a kubeconfig and differ between engineers, so they are poor stable
   identity; the `kube-system` namespace UID is the common alternative.
 - **Multi-cluster connectivity strategy** — pod IP, Service, NodePort, LoadBalancer, host network,

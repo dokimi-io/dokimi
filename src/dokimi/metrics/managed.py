@@ -172,11 +172,11 @@ def select_monitoring(requested: MonitoringMode) -> MonitoringSelection:
             requested,
             MonitoringMode.MANAGED,
             "auto falls back to managed: detecting an existing Prometheus is not "
-            "available in this build",
+            "available in this version",
         )
     raise ConfigError(
-        "monitoring mode 'existing' is not available in this build; use 'managed' or "
-        "'auto'. Milestone-01 deploys its own Prometheus for the run (ADR-03-02)"
+        "monitoring mode 'existing' is not available in this version; use 'managed' or "
+        "'auto', which deploy a Prometheus for the run"
     )
 
 

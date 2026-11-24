@@ -2,7 +2,7 @@
 
 The CLI is phase 1 of a run and the only part that executes outside the cluster. It
 validates the definition, renders the manifests, submits the Job and streams its logs
-back. Everything after that happens in the cluster (ADR-01-06).
+back. Everything after that happens in the cluster.
 
 ```console
 $ dokimi validate test.yaml          # parse and check, no cluster involved
@@ -121,7 +121,7 @@ Six things to know about a run:
 - **Robot's report comes back to you.** `submit` and `attach` extract it into
   `<results.directory>/<run-id>/`: `log.html`, `report.html`, the merged `output.xml`, and
   `suite.robot`, the exact suite that ran. See [The run's reports](#the-runs-reports).
-- **Before anything is removed, the run records itself** (phase 10, ADR-05-07): which
+- **Before anything is removed, the run records itself** (phase 10): which
   node every pod ran on, how each pod and container ended, which pairs were down, and
   whether the namespace was still reachable. That's `diagnostics.json`, next to Robot's
   reports, on every run. Anything no test was in flight to notice is an anomaly: a test
@@ -187,7 +187,7 @@ dokimi.
 The grant widens as later phases land, one commented rule per phase.
 
 A test also needs three network paths inside `dokimi-iperf2`. If a NetworkPolicy applies
-there, it has to allow all three (ADR-05-03):
+there, it has to allow all three:
 
 - **the Job to each client pod on 5101/TCP.** That is how a test is started: the Job
   connects and sends the server's address, instead of running a command inside the pod;
@@ -217,7 +217,7 @@ cluster.
 ## One run at a time
 
 A cluster runs one run at a time, whatever its namespace or test type: two runs would
-contend for the same network they measure (ADR-05-02). The Job claims the cluster as the
+contend for the same network they measure. The Job claims the cluster as the
 first step of phase 4. A second run started meanwhile is refused and exits `4`:
 
 ```
@@ -227,7 +227,7 @@ Wait for it to finish, or for its claim to expire. If it is stale, because its J
   dokimi cleanup 20260924-200229-ca532a --namespace dokimi-iperf2 --force
 ```
 
-Only a run that has claimed the cluster counts (ADR-05-13). A run stops counting:
+Only a run that has claimed the cluster counts. A run stops counting:
 
 - **when it ends**, however it ends: once no test pod of it can still be sending, it marks
   itself finished, so a failed run whose objects are kept as evidence does not hold the
@@ -262,7 +262,7 @@ nothing, so it works without a cluster or credentials.
 
 Both authoring formats are accepted, chosen by file suffix: `.yaml`/`.yml` and `.robot`.
 They are peers, not a primary and a fallback — no criterion is expressible in one and not
-the other (ADR-04-05). See the [repository README](../README.md#authoring-a-test) for the
+the other. See the [repository README](../README.md#authoring-a-test) for the
 syntax of each.
 
 Both are strict, and for the same reason. What executes is never the file you wrote: it
@@ -307,7 +307,7 @@ $ dokimi convert suite.robot --to yaml # the YAML document
 ```
 
 `--to robot`, the default, prints exactly the suite a run executes: phase 5 of every run
-calls the same function (ADR-01-08), so what you see here is byte for byte what Robot
+calls the same function, so what you see here is byte for byte what Robot
 Framework runs in the cluster.
 
 ## submit
@@ -386,9 +386,9 @@ Both nodes exist and can accept a test pod.
 
 Without either flag it does not, and says so — `Planned matrix (1 test, sequential;
 nodes not checked)` — rather than implying the nodes were verified. The ambient
-`KUBECONFIG` is deliberately not enough: ADR-01-06 allows a dry run "a provided
-kubeconfig for read-only cluster info", and a plain `--dry-run` stays one that cannot
-contact anything. This is the way to check node names before submitting.
+`KUBECONFIG` is deliberately not enough: a dry run touches a cluster only through a
+kubeconfig or context you name, and then only reads, so a plain `--dry-run` stays one that
+cannot contact anything. This is the way to check node names before submitting.
 
 The rendered `ownerReferences` carry an empty `uid`, which is why the output is not
 directly appliable with `kubectl`. The API server assigns that uid when the owner object
@@ -429,7 +429,7 @@ $ dokimi preflight test.yaml --service-account dokimi
 
 Checks that the cluster can run the definition's tests, and runs none of them. It submits
 the same run `submit` would, whose Job stops after phase 4, so it checks exactly what a run
-checks, with the same code (ADR-05-07). It exits `0` if the cluster is ready and `4` if not,
+checks, with the same code. It exits `0` if the cluster is ready and `4` if not,
 with the check that failed:
 
 ```
@@ -479,7 +479,7 @@ access, and nothing else — no definition file, no state left behind by whoever
 it. That is deliberate: the run's objects are found through their ownership labels rather
 than through anything the submitting process remembered, so this works from a different
 machine, and works identically for a person reattaching and for CI re-checking a run it
-submitted earlier (ADR-01-06).
+submitted earlier.
 
 A run id that is not well formed is rejected before any lookup, so a typo comes back as
 "malformed run id" rather than as "no such run" — which would read like the run had
@@ -770,7 +770,7 @@ the test's own result, so it is not an anomaly, but its pair is down.
 ## Exit codes
 
 Automation-facing from the first release, so they are an interface rather than an
-implementation detail (ADR-01-08).
+implementation detail.
 
 | Code | Meaning |
 | --- | --- |
@@ -813,7 +813,7 @@ tests, which collides numerically with this table and means something entirely d
 ## How nodes are resolved
 
 Phase 3 reads the cluster's nodes **once**, at the start of the run, and plans against
-that snapshot. The plan does not change if the cluster does mid-run (ADR-04-01).
+that snapshot. The plan does not change if the cluster does mid-run.
 
 Each named node must exist, and must be able to take a test pod. A node cannot if it is:
 
@@ -864,8 +864,8 @@ Three objects, in this order:
 
 They live in a namespace derived from the test type — `dokimi-iperf2` — shared
 by every run of that type rather than created per run, which would need cluster-level
-permission on every invocation and make cleanup wait on namespace deletion (ADR-05-02).
-A run never creates the namespace (ADR-05-13): `deploy/rbac.yaml` does, once, so
+permission on every invocation and make cleanup wait on namespace deletion.
+A run never creates the namespace: `deploy/rbac.yaml` does, once, so
 submitting needs only namespaced permissions.
 
 If a later step of the submission fails — the Job is refused, say — what it created is
@@ -890,14 +890,14 @@ re-run the whole matrix on a plain failure. The deadline is what stops an orphan
 its own — labels make cleanup possible, deadlines make it unnecessary.
 
 Run ids are `YYYYMMDD-HHMMSS-xxxxxx` — the UTC start time to the second, then six characters
-of `[0-9a-z]` — for example `20260924-143012-k3f9x2` (ADR-02-08). Fixed width, so they sort
+of `[0-9a-z]` — for example `20260924-143012-k3f9x2`. Fixed width, so they sort
 by start time in a log, a label and a CSV alike. Lowercase, digits and hyphens only, so a
 run is spelled the same way in its labels, its object names, Prometheus and the result
 artifact. `attach` refuses anything else, including a run id in capitals.
 
 ## Choosing the orchestrator image
 
-The orchestrator is a component like the images a run deploys (ADR-04-08). Precedence,
+The orchestrator is a component like the images a run deploys. Precedence,
 highest first:
 
 | Source | How | Scope |
@@ -911,7 +911,7 @@ together with the new name, both have to name the same image, or `submit` refuse
 than pick one.
 
 A released CLI carries the digest of the image built from its own commit, so the two can
-never resolve different dependency versions (ADR-05-08). A source checkout has no default
+never resolve different dependency versions. A source checkout has no default
 at all — see [Installation](installation.md#the-orchestrator-image).
 
 An override is used exactly as given, including a plain tag, since an air-gapped mirror
@@ -923,7 +923,7 @@ came from.
 
 A run also deploys images of its own: the `iperf2` test workload, its managed `prometheus`,
 and a `node-exporter` when the cluster has none. Each one is chosen the same way as the
-orchestrator's, per component (ADR-04-08):
+orchestrator's, per component:
 
 | Source | How | Scope |
 | --- | --- | --- |
@@ -956,7 +956,7 @@ default to run. Choose one with --image iperf2=<reference> or DOKIMI_IPERF2_IMAG
 ## Naming the cluster
 
 Every result is labelled with the cluster it was measured on, so that history from two
-clusters is never mixed up (ADR-02-07). dokimi does not guess that name: not from the
+clusters is never mixed up. dokimi does not guess that name: not from the
 kubeconfig context, not from anything in the cluster. You give it, and there is no default:
 
 | Source | How | Scope |
@@ -970,7 +970,7 @@ Without either, `submit` and `preflight` refuse before creating anything, a dry 
 $ dokimi submit test.yaml
 dokimi: name the cluster this run executes against with --cluster <name> or DOKIMI_CLUSTER.
 It labels every result, and has no default, so that results from different clusters are
-never merged (ADR-02-07)
+never merged
 ```
 
 The name is a DNS label: lowercase letters, digits and hyphens, starting and ending with a

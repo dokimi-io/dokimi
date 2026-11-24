@@ -10,14 +10,10 @@ Four guides, in the order you are likely to need them, and the test environment'
 | [Test environment](../test-env/README.md) | The multi-node cluster: its profiles, what `check` verifies, and what its numbers do not mean |
 | [Building](building.md) | The distribution, the container image, and the release |
 
-Two documents sit outside this folder and are the ones to read first if you want to know
-*why* rather than *how*:
-
-- The [repository README](../README.md) — the execution model, the phases of a run, the
-  metric contract and the interfaces.
-- The [`dokimi-adrs`](https://github.com/dokimi-io/dokimi-adrs)
-  repository — every architectural decision, with the alternatives that were rejected and
-  the reasons. These guides cite ADRs by number; that is where to resolve one.
+The [repository README](../README.md), outside this folder, is the one to read first if you
+want to know *why* rather than *how*: the execution model, the phases of a run, the metric
+contract and the interfaces. These guides give the reason for a behaviour where they describe
+it.
 
 The [test suite's own README](../tests/README.md) explains what is tested and how to run
 a subset of it.

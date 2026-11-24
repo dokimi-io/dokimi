@@ -320,8 +320,8 @@ class DeployedWorkload:
                 return str(address)
         raise NoIPv4AddressError(
             f"the {role.value} pod {self.spec.pod_name(role)} has no IPv4 address, only "
-            f"{', '.join(addresses)}. Milestone-01 measures over IPv4 (ADR-05-03), so it "
-            "needs an IPv4 or dual-stack pod network"
+            f"{', '.join(addresses)}. This version measures over IPv4, so it needs an IPv4 or "
+            "dual-stack pod network"
         )
 
 

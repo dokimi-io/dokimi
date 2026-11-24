@@ -200,8 +200,8 @@ def test_an_unknown_apiversion_is_rejected() -> None:
 
 
 def test_a_selector_placement_mode_is_out_of_milestone_01_scope() -> None:
-    # ADR-04-06 scopes Milestone-01 to two explicitly named nodes.
-    with pytest.raises(ConfigError, match="Milestone-01"):
+    # This version resolves two explicitly named nodes; selector-based modes are planned.
+    with pytest.raises(ConfigError, match="not available in this version"):
         parse_yaml(YAML_SOURCE.replace("mode: explicit", "mode: allToAll"))
 
 

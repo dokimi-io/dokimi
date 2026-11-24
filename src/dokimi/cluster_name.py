@@ -61,7 +61,7 @@ def resolve_cluster(flag: str | None = None, *, env: Mapping[str, str] | None = 
     raise ConfigError(
         "name the cluster this run executes against with --cluster <name> or "
         f"{CLUSTER_ENV_VAR}. It labels every result, and has no default, so that results "
-        "from different clusters are never merged (ADR-02-07)"
+        "from different clusters are never merged"
     )
 
 

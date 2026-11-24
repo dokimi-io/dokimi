@@ -2,7 +2,7 @@
 
 Robot and YAML are peer authoring formats. Neither is consumed directly: both `parse()`
 into one canonical, in-memory test definition model, and the orchestration library
-consumes only that model (ADR-04-05, scoped for Milestone-01 by ADR-04-06).
+consumes only that model.
 
 The two files here are the **same test** in both formats — not two hand-written documents
 that happen to agree. Both are rendered from one model, and `tests/test_examples.py`

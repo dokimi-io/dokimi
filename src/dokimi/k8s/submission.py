@@ -352,8 +352,8 @@ def _deadline_exceeded(cluster: ClusterClient, namespace: str, run_id: str) -> b
 def _deadline_message(run_id: str) -> str:
     return (
         f"run {run_id!r} hit its activeDeadlineSeconds and was stopped before it could "
-        "report an outcome. The deadline exists so an orphaned run stops on its own "
-        "(ADR-05-02); a run that needs longer than its test duration plus the margin is "
+        "report an outcome. The deadline exists so an orphaned run stops on its own; "
+        "a run that needs longer than its test duration plus the margin is "
         "stuck somewhere, and its pods and events are the place to look."
     )
 

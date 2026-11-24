@@ -347,14 +347,14 @@ cmd_load() {
 }
 
 # Every image a run from a source checkout needs and cannot pull, because nothing of this
-# code is published (ADR-04-08, ADR-05-08): the tag, its Dockerfile, and the variable that
+# code is published: the tag, its Dockerfile, and the variable that
 # points dokimi at it. tests/test_test_env.py holds this list to the CLI's own registry.
 DEV_IMAGES=(
   "orchestrator:dev images/orchestrator/Dockerfile DOKIMI_ORCHESTRATOR_IMAGE"
   "iperf2:dev images/iperf2/Dockerfile DOKIMI_IPERF2_IMAGE"
 )
 
-# The cluster name `images` sets too: a DNS label, as submit requires (ADR-02-07).
+# The cluster name `images` sets too: a DNS label, as submit requires.
 DEV_CLUSTER_NAME=test-env
 
 # Build each of them from this checkout, load it into every node, and print the exports
@@ -470,7 +470,7 @@ cmd_check() {
     --restart Never --overrides "{\"spec\":{\"nodeName\":\"${workers[0]}\"}}" --command -- sh -c 'echo loaded' >/dev/null
   if kubectl -n "$CHECK_NAMESPACE" wait --for=jsonpath='{.status.phase}'=Succeeded pod/sideload --timeout=90s >/dev/null 2>&1; then ok "a side-loaded image runs without a registry"; else bad "a side-loaded image did not run"; fi
 
-  # 6. Image-pull failure, reproducibly: preflight treats it as its own signal (ADR-05-07).
+  # 6. Image-pull failure, reproducibly: preflight treats it as its own signal.
   kubectl -n "$CHECK_NAMESPACE" run pull-failure --image registry.invalid/test-env/absent:1 --restart Never >/dev/null
   local reason=""
   for _ in $(seq 1 45); do
@@ -512,14 +512,14 @@ finish_check() {
   echo
   echo "  profile: $1   Kubernetes: $version"
   echo "  This environment validates orchestration correctness, not measurement realism:"
-  echo "  every node shares one host's network stack (ADR-05-11). Throughput, loss and"
+  echo "  every node shares one host's network stack. Throughput, loss and"
   echo "  jitter measured here say nothing about real hardware."
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
       echo "### Test environment \`$1\` — $([[ $failures == 0 ]] && echo passed || echo "$failures check(s) failed")"
       echo
       echo "> **Not representative.** This environment validates orchestration correctness, not measurement realism."
-      echo "> Every node shares one host's network stack, so throughput, loss and jitter measured here say nothing about real hardware (ADR-05-11)."
+      echo "> Every node shares one host's network stack, so throughput, loss and jitter measured here say nothing about real hardware."
     } >> "$GITHUB_STEP_SUMMARY"
   fi
   if [[ "$failures" -gt 0 ]]; then die "$failures check(s) failed for $1"; fi

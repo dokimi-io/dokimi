@@ -169,7 +169,7 @@ def labels_from_environment(env: Mapping[str, str]) -> Labels:
     if missing:
         raise ExporterConfigError(
             "the pod was created without " + ", ".join(missing) + ": every series must carry "
-            "the full required label set (ADR-02-07), so the exporter does not start"
+            "the full required label set, so the exporter does not start"
         )
     return Labels(
         fixed={label: env[name].strip() for label, name in LABEL_ENVIRONMENT.items()},

@@ -12,8 +12,7 @@ Job, and you never install that — the CLI submits it.
 | A container registry | only if your cluster cannot reach `ghcr.io` |
 
 Robot Framework is **not** required to install or run the CLI. It is a runtime dependency
-of a run's execution phase, which happens inside the cluster, in an image that has it
-(ADR-01-02, ADR-01-08).
+of a run's execution phase, which happens inside the cluster, in an image that has it.
 
 ## Supported platforms
 
@@ -144,7 +143,7 @@ installation, as in `export DOKIMI_CLUSTER=lab-fra-1` next to the credentials a 
 with. See [Naming the cluster](usage.md#naming-the-cluster).
 
 Submitting needs only namespaced permissions in the run's namespace: **a run never creates
-a namespace** (ADR-05-13). An administrator creates the namespaces once, and after that
+a namespace**. An administrator creates the namespaces once, and after that
 nobody needs the cluster-wide right to create one. Submitting to a namespace that does not
 exist fails with a message saying so. What each command needs in that namespace:
 
@@ -164,10 +163,10 @@ cluster:
 
 - it reads the cluster's **nodes** to plan (phase 3);
 - it **lists ConfigMaps in every namespace** to check that no other run is active, and
-  takes a `Lease` in the `dokimi` namespace while it claims the cluster (phase 4,
-  ADR-05-10). Kubernetes cannot restrict a `list` by label, so this grant can read every
-  ConfigMap in the cluster, including its data. It is the price of cluster-wide
-  exclusivity: one run at a time per cluster.
+  takes a `Lease` in the `dokimi` namespace while it claims the cluster (phase 4).
+  Kubernetes cannot restrict a `list` by label, so this grant can read every ConfigMap in
+  the cluster, including its data. It is the price of cluster-wide exclusivity: one run at
+  a time per cluster.
 
 `deploy/rbac.yaml` creates both namespaces (`dokimi-iperf2` for the runs, `dokimi` for the
 run-start lock), the service account, and exactly those grants, each commented with the
@@ -181,13 +180,13 @@ Runs then pass `--service-account dokimi`. See
 [before the first run](usage.md#before-the-first-run).
 
 There is deliberately no configuration file of our own in that chain. The
-configuration-sources decision (ADR-04-02) is still open, and Milestone-01 must not
+configuration-sources decision is still open, and Milestone-01 must not
 implement a precedence rule a later decision would have to overturn.
 
 ## The orchestrator image
 
-A run is a reference to a container image (ADR-01-06), and a released CLI ships with the
-digest of the image built from its own commit (ADR-05-08).
+A run is a reference to a container image, and a released CLI ships with the
+digest of the image built from its own commit.
 
 **No release has been cut yet, so a source checkout has no default image.** `submit` will
 tell you so rather than falling back to a tag that might mean something else tomorrow:

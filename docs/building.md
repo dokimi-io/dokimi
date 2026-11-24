@@ -35,14 +35,14 @@ Three properties, each a decision rather than a habit:
 
 - **`python:3.14-slim`, not Alpine.** A deliberate departure from the Alpine base used for
   test-workload images: Python wheels are predominantly built against glibc, and musl means
-  packages compiled from source or missing wheels entirely (ADR-05-08).
+  packages compiled from source or missing wheels entirely.
 - **Installed with `uv sync --locked`**, which fails rather than re-resolving if the
   lockfile does not match `pyproject.toml`. "Reproducible" means exactly that — one
   lockfile commit yields one dependency set, in the image and in the distribution alike.
   It is not a claim of bit-identical layers.
 - **Robot Framework is installed**, via the `robot` extra, even though the core library
   must stay importable without it. The run's execution phase drives Robot's own runner
-  *inside this Job* (ADR-01-08), so this is one of the two places Robot genuinely is a
+  *inside this Job*, so this is one of the two places Robot genuinely is a
   runtime dependency.
 
 The image runs as uid 65532 with `/work` as a writable working directory, which is where
@@ -75,7 +75,7 @@ Adding an image dokimi builds is one entry in the matrix, with its name, Dockerf
 registry path, plus its line in `src/dokimi/_image_digest.py`.
 
 The image comes first because a released CLI must ship the digest of the image built from
-its own commit (ADR-05-08). The consequence, accepted explicitly by that ADR, is that the
+its own commit. The consequence, accepted on purpose, is that the
 CLI and the image cannot be released independently.
 
 ```console

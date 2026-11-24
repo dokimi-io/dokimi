@@ -17,7 +17,7 @@ has none, creates `.venv/` and installs the exact dependency set recorded in `uv
 is the flag to use everywhere, including CI and the container build, because it is what
 makes "the same lockfile commit" mean the same dependency set.
 
-`--all-extras` adds Robot Framework. The core library must work without it (ADR-01-02), so
+`--all-extras` adds Robot Framework. The core library must work without it, so
 if you want an environment that proves that, sync without extras instead:
 
 ```console
@@ -155,9 +155,8 @@ Worth trying once, to see the errors a first run can hit: point the definition a
 traffic between them is bounded by host CPU and memory bandwidth rather than by a NIC or a real
 CNI datapath. It validates **orchestration correctness**, not **measurement realism**:
 throughput, loss and jitter measured here say nothing about real hardware, and a threshold
-that means something on real hardware means nothing here. That boundary is a recorded decision,
-[ADR-05-11](https://github.com/dokimi-io/dokimi-adrs/blob/main/adrs/05-11-emulated-test-environment-validates-orchestration-not-measurement.md),
-not a caveat.
+that means something on real hardware means nothing here. That boundary is a decision, not a
+caveat: a green run here proves the orchestration, never the network.
 
 Tearing down — and proving nothing was left behind:
 
@@ -192,7 +191,7 @@ docs/               these guides
 ```
 
 Several of those packages are documented placeholders today; the docstring in each names
-the phase of a run it owns and the ADRs behind it.
+the phase of a run it owns and why it is shaped the way it is.
 
 The rule that shapes this layout: **the core library has no Robot Framework imports.**
 Robot is a runtime dependency of a run's execution phase, not of the library, and the CLI,
