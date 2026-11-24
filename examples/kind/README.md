@@ -12,7 +12,7 @@ here are chosen so the verdicts come out the same on most machines. See
 | File | What it shows | Verdict | Exit |
 | --- | --- | --- | --- |
 | [`01-tcp-baseline.yaml`](01-tcp-baseline.yaml) | TCP between two nodes, at least 1 Gbit/s | pass | `0` |
-| [`02-udp-voice-sla.robot`](02-udp-voice-sla.robot) | 50 Mbit/s of UDP with loss ≤ 0.1 % and jitter ≤ 1 ms, written in Robot Framework | pass | `0` |
+| [`02-udp-voice-sla.robot`](02-udp-voice-sla.robot) | Sends 50 Mbit/s of UDP and expects at least 49 Mbit/s, loss ≤ 0.1 % and jitter ≤ 1 ms, written in Robot Framework | pass | `0` |
 | [`03-udp-beyond-one-flow.yaml`](03-udp-beyond-one-flow.yaml) | 10 Gbit/s of UDP in one flow, more than one host can carry | fail | `1` |
 | A NetworkPolicy, below | The test's servers isolated: the preflight finds it before measuring | cluster not ready | `4` |
 
@@ -129,3 +129,6 @@ A run that didn't pass keeps its pods for you to look at, and every run keeps it
 $ uv run dokimi cleanup --older-than 1m --prometheus
 $ test-env/test-env.sh down
 ```
+
+`--older-than 1m` removes every run in the namespace that is older than a minute, not only
+these examples. To remove one run, name it: `uv run dokimi cleanup <run-id> --prometheus`.
