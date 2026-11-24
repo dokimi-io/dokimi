@@ -10,8 +10,9 @@ attestation.
 | [`iperf2`](iperf2/Dockerfile) | `alpine:3.24.2`, pinned by digest, with `iperf=2.2.1-r0` and `python3=3.14.10-r1` for its exporter | M1-09; the exporter with M1-10 |
 
 Version floors for the base image and the build toolchain are fixed in `pyproject.toml`
-(`requires-python` and `[tool.uv] required-version`), not here — this table records which
-image uses which base, not what the floor should be.
+(`requires-python` and `[tool.uv] required-version`), as are the dependency floors
+(`robotframework>=7.5`, `kubernetes>=35`), not here — this table records which image uses
+which base, not what the floor should be.
 
 ## `orchestrator`
 

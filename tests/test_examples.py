@@ -1,8 +1,8 @@
 """The shipped examples must parse, and must agree with each other.
 
-Documentation that the parser rejects is worse than no documentation, and an example in
-two formats that quietly drift apart is exactly what treating the formats as equal peers exists
-to prevent. Both are cheap to check, so they are checked on every run.
+Documentation that the parser rejects is worse than no documentation, and the two formats
+are peers, so an example that reads differently in each is exactly the drift that must not
+happen. Both are cheap to check, so they are checked on every run.
 """
 
 from __future__ import annotations

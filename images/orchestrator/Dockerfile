@@ -55,7 +55,7 @@ LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
 
 # Non-root, as every image this project publishes must be. The orchestrator
 # talks to the API server and reads exporter endpoints; it has no reason to be root, and
-# the host-network exception is for test workloads, not for this.
+# host networking, which only a test workload may ever be allowed, is not for this.
 RUN groupadd --gid 65532 orchestrator \
  && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin orchestrator
 

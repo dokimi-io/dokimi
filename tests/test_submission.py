@@ -1,7 +1,7 @@
 """Submitting, following and reattaching.
 
-Submitting, following and reattaching are all testable without a cluster, because all
-three are statements about which calls happen and what they are given.
+All three are testable without a cluster, because all three are statements about which
+calls happen and what they are given.
 """
 
 from __future__ import annotations

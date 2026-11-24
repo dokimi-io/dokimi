@@ -461,7 +461,7 @@ def test_an_earlier_runs_node_exporter_is_reused_never_duplicated() -> None:
 
 
 def test_a_run_removes_the_node_exporter_it_deployed() -> None:
-    # The 2026-10-07 decision: a run cleans up what it created.
+    # A run cleans up what it created.
     cluster = FakeResources()
     exporter = provide_node_exporter(owned(cluster), NAMESPACE)
     assert exporter is not None

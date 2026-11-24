@@ -715,7 +715,7 @@ def test_execute_deploys_a_node_exporter_when_the_cluster_has_none(
     ]
     assert f"node_exporter       deployed by this run (dokimi-iperf2/{name})" in out
     assert "node-exporter pods  pods not reported yet" in out
-    # The 2026-10-07 decision: removed at the end of the run that deployed it.
+    # Removed at the end of the run that deployed it.
     assert not job_cluster.store.exists(DAEMON_SET, "dokimi-iperf2", name)
     assert f"phase 11 (cleanup): removed node-exporter {name}" in out
 

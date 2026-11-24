@@ -154,8 +154,8 @@ def test_the_run_namespace_grant_is_the_claim_the_managed_prometheus_and_the_pai
     # claim's expiry is read from the Job's start time. Phase 4 creates the
     # managed Prometheus and, when the cluster has none, a node-exporter.
     # Phase 6 creates the pair's pods and reads them for the readiness gate and
-    # completion. Nothing is deleted: the Prometheus is kept by default, and
-    # cleanup is M1-16.
+    # completion. Phase 11 deletes the pair's pods and the node-exporter this run
+    # deployed; the Prometheus is kept by default.
     role = objects[("Role", "dokimi", RUN_NAMESPACE)]
 
     assert role["rules"] == [

@@ -1,4 +1,4 @@
-"""The manifests a submission creates carry the properties the ADRs require.
+"""The manifests a submission creates carry the properties a run relies on.
 
 Several of these are the kind of thing that keeps working while being wrong — a Job with
 a default `backoffLimit` runs fine and silently re-runs the matrix on a `fail`.
