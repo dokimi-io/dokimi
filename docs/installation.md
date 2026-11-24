@@ -90,17 +90,21 @@ IP inside the cluster, which it reached on every version tried.
 Install the CLI from PyPI, as a tool of its own:
 
 ```console
-$ uv tool install dokimi-io
+$ uv tool install --python 3.14 'dokimi-io[robot]'
 $ dokimi --version
 dokimi 0.1.0
 ```
 
 On PyPI it is called **`dokimi-io`**, because `dokimi` there is an unrelated project; the command
-it installs is `dokimi`. `pipx install dokimi-io` works too. Each release also carries the wheel
-itself, for an installation without PyPI:
+it installs is `dokimi`. `[robot]` adds Robot Framework, which reading a `.robot` test needs. A
+test written in YAML runs without it, so for YAML alone `dokimi-io` is enough. `--python 3.14`
+makes uv use, or download, a Python that dokimi runs on: without it, uv takes the first Python
+it finds, and refuses when that one is older. `pipx install --python python3.14
+'dokimi-io[robot]'` works too. Each release also carries the wheel itself, for an installation
+without PyPI:
 
 ```console
-$ uv tool install https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi_io-0.1.0-py3-none-any.whl
+$ uv tool install --python 3.14 'dokimi-io[robot] @ https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi_io-0.1.0-py3-none-any.whl'
 ```
 
 A released CLI knows the images built with it, by digest: a run uses the orchestrator and
@@ -115,14 +119,14 @@ For development, or to run unreleased changes, install from a checkout, which is
 ```console
 $ git clone git@github.com:dokimi-io/dokimi.git
 $ cd dokimi
-$ uv sync --locked
+$ uv sync --locked --extra robot
 $ uv run dokimi --version
 ```
 
 To get a `dokimi` command on your `PATH` rather than one behind `uv run`:
 
 ```console
-$ uv tool install .
+$ uv tool install '.[robot]'
 ```
 
 A source checkout has no default images: it builds its own, as the

@@ -504,8 +504,9 @@ def _parse_with_robot(source: str) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised by the no-Robot CI job
         raise ConfigError(
             "reading a .robot suite needs Robot Framework, which is not installed. "
-            "Install the 'robot' extra (uv sync --extra robot), or author the test as "
-            "YAML instead — both formats parse to the same model."
+            "Install dokimi with its 'robot' extra (uv tool install --python 3.14 "
+            "'dokimi-io[robot]', or uv sync --extra robot in a checkout), or author the "
+            "test as YAML instead — both formats parse to the same model."
         ) from exc
 
     # Robot's parser takes a path or a file-like object, never a bare string.

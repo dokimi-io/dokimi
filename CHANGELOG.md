@@ -48,8 +48,9 @@ can act on.
 
 **Installing**
 
-- On PyPI as `dokimi-io`: `uv tool install dokimi-io` gives the `dokimi` command. The release
-  also carries the wheel.
+- On PyPI as `dokimi-io`: `uv tool install --python 3.14 'dokimi-io[robot]'` gives the `dokimi`
+  command, with Robot Framework for `.robot` tests. Without `[robot]`, it reads tests written in
+  YAML. The release also carries the wheel.
 
 **Images**
 

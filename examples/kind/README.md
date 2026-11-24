@@ -30,9 +30,10 @@ $ kubectl apply -f deploy/rbac.yaml
 ```
 
 `images` builds the orchestrator and `iperf2` images from your checkout and loads them into the
-nodes. With a released CLI (`uv tool install dokimi-io`), leave it out, and set
-`DOKIMI_CLUSTER=test-env` yourself: the release uses its own published images. The examples name
-`dokimi-worker`, `dokimi-worker2` and `dokimi-worker3`, the workers every kind profile has.
+nodes. With a released CLI (`uv tool install --python 3.14 'dokimi-io[robot]'`), leave it out,
+and set `DOKIMI_CLUSTER=test-env` yourself: the release uses its own published images. The
+examples name `dokimi-worker`, `dokimi-worker2` and `dokimi-worker3`, the workers every kind
+profile has.
 
 Each run takes a little over a minute, preflight and warm-up included. Its reports come back to
 `./results/<run-id>/`.
