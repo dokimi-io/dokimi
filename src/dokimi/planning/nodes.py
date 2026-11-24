@@ -1,6 +1,6 @@
 """Cluster discovery: the nodes a run can choose from, read once.
 
-ADR-04-01 resolves selection **once, at the start of the run**, and the matrix does not
+Selection is resolved **once, at the start of the run**, and the matrix does not
 change if the cluster does. So discovery is a single read that produces an immutable
 :class:`NodeInventory`, and everything downstream plans against that snapshot rather than
 against the live cluster.
@@ -15,7 +15,7 @@ and nothing more:
 
 Whether the node has *room* for the pod is a different question with a different
 answer — it depends on requests, other workloads and timing — and it belongs to preflight
-(ADR-05-07, M1-07), which asks the scheduler rather than guessing on its behalf.
+(M1-07), which asks the scheduler rather than guessing on its behalf.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ class NodeFacts:
 class NodeInventory:
     """The cluster's nodes at the moment discovery ran, sorted by name.
 
-    Sorted because ADR-04-01 requires the matrix to be a pure function of the selection
+    Sorted because the matrix must be a pure function of the selection
     and the mode. The API returns nodes in whatever order it likes; nothing downstream
     should be able to observe that order.
     """

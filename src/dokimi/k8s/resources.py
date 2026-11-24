@@ -235,7 +235,7 @@ class KubernetesResources:
             result = method(**kwargs, _request_timeout=REQUEST_TIMEOUT_SECONDS)
         except TransportError as error:
             # Not an ApiException, and easy to miss: untranslated, it escapes as a
-            # traceback that Python exits 1 with, `fail` in ADR-01-08's table.
+            # traceback that Python exits 1 with, `fail` in the exit-code table.
             raise ClusterError(
                 f"lost contact with the Kubernetes API server ({type(error).__name__}: {error})"
             ) from error

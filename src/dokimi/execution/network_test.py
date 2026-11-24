@@ -1,17 +1,17 @@
-"""What ``Run Network Test`` does, in plain Python ([ADR-01-08] phase 6).
+"""What ``Run Network Test`` does, in plain Python (phase 6).
 
 The Robot keyword is a thin adapter over :func:`run_network_test`. Robot supplies the
 control flow of an already-declarative suite and the report. This function supplies
 everything else, so a caller of the library without Robot runs exactly the same steps:
 
-1. the test type's plugin, with the image ``submit`` resolved for it ([ADR-04-08]);
-2. its parameters, validated by its own schema ([ADR-02-01]);
-3. the pair's pods, created run-owned and bounded by a deadline ([ADR-05-02]);
-4. the per-test readiness gate, then ``start()`` ([ADR-05-07]);
+1. the test type's plugin, with the image ``submit`` resolved for it;
+2. its parameters, validated by its own schema;
+3. the pair's pods, created run-owned and bounded by a deadline;
+4. the per-test readiness gate, then ``start()``;
 5. waiting for completion through the plugin, never by reading a pod directly. For
    ``iperf2`` that is the only place a spoofed trigger shows (``UnexpectedTargetError``);
 6. a tool that ran but measured nothing fails the test here, rather than look complete;
-7. the measurement, read directly from both pods' exporters ([ADR-03-01], phase 7): the
+7. the measurement, read directly from both pods' exporters (phase 7): the
    receiver's view is the result, and a result not served is an error, never a pass.
 
 Evaluating it is phase 8, :mod:`dokimi.validation`. The pods stay until the run ends:
@@ -78,7 +78,7 @@ class NetworkTestResult:
 
     test_id: str
     pods: Mapping[Role, str]
-    #: The workload's run metadata: images, warm-up, connectivity ([ADR-04-04], [ADR-05-03]).
+    #: The workload's run metadata: images, warm-up, connectivity.
     run_metadata: Mapping[str, str]
     #: The tool's own summary of its run, if the plugin reports one.
     summary: str
@@ -122,7 +122,7 @@ def run_network_test(
         )
     kind = TestType.parse(test_type)
     if plugin is None:
-        # submit resolves every image and the Job passes it on (ADR-04-08). Resolving a
+        # submit resolves every image and the Job passes it on. Resolving a
         # default here instead would run an image nobody chose or saw.
         image = context.images.get(kind.value)
         if image is None:
@@ -133,7 +133,7 @@ def run_network_test(
         plugin = plugin_for(kind, image=image)
     if not isinstance(plugin, _ReportsCompletion):
         # Fail closed: without completion() nothing can tell a test that measured from one
-        # that measured nothing. ADR-02-01's interface gains it before a second test type.
+        # that measured nothing. The test-type interface gains it before a second test type.
         raise TypeError(f"the {kind.value} plugin cannot report how its test finished")
     params = plugin.parameter_schema().validate(
         {"protocol": protocol, "targetBandwidth": bandwidth, "duration": duration}
@@ -150,7 +150,7 @@ def run_network_test(
 
     resources = cluster if cluster is not None else KubernetesResources.from_environment()
     # deploy() is the one path that creates a test's pods, bounded and run-owned by
-    # construction (ADR-05-02).
+    # construction.
     deploy(RunOwnership(resources, RunId(context.run_id)), spec, budget)
     deployed = start_when_ready(plugin, resources, spec, clock=clock, sleep=sleep)
     wait_for_completion(

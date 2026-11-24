@@ -15,3 +15,9 @@ from pathlib import Path
 from dokimi.formats import parse_file
 print(parse_file(Path('examples/worker-01-to-worker-02-udp.yaml')))"
 ```
+
+## On a local cluster
+
+[`kind/`](kind/README.md) walks through more examples on the repository's kind test
+environment: a TCP baseline, an SLA with loss and jitter in Robot Framework, a failing run and
+how to find its cause in the run's own Prometheus, and a cluster that fails its preflight.

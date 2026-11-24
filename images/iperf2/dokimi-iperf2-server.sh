@@ -1,9 +1,9 @@
 #!/bin/sh
-# The iperf2 server role: receive, and write a report for every connection (ADR-02-01).
+# The iperf2 server role: receive, and write a report for every connection.
 #
 # The server is the pod that measures packet loss and jitter: a UDP client's own summary
 # carries neither. So its reports go to the results directory as `iperf -y C` lines, where
-# its exporter sidecar parses them (ADR-02-02), each pod exporting its own view.
+# its exporter sidecar parses them, each pod exporting its own view.
 #
 # It receives the warm-up pass as well as the measurement, one report each, plus a sum
 # line over both. The meta file says which source port the measurement comes from, so

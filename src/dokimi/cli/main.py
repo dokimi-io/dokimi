@@ -1,14 +1,14 @@
 """CLI entry point: parse arguments, dispatch, translate failures into exit codes.
 
-Phase 1 of a run and the only part that executes outside the cluster (ADR-01-06). The
+Phase 1 of a run and the only part that executes outside the cluster. The
 commands themselves live in :mod:`dokimi.cli.commands`; this module is the
 adapter between a command line and those functions, and the single place where an
 exception becomes an exit code.
 
-That translation is the reason the commands raise rather than return codes. ADR-05-05
-classifies a bad definition as ``config_error`` — detected before any resource is
-created — and ADR-01-08 numbers it 3. Having exactly one place that knows this is what
-keeps the numbering from drifting per command.
+That translation is the reason the commands raise rather than return codes. A bad
+definition is a ``config_error`` — detected before any resource is created — and its
+exit code is 3 (:mod:`dokimi.cli.exit_codes`). Having exactly one place that knows this
+is what keeps the numbering from drifting per command.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ touches nothing.
 class _Parser(argparse.ArgumentParser):
     """argparse, except that a usage error is a ``config_error``.
 
-    argparse exits 2 on a bad flag. In ADR-01-08's table 2 is ``error`` — part of the
+    argparse exits 2 on a bad flag. In the exit-code table 2 is ``error`` — part of the
     matrix was not validly measured — so a typo on the command line would read to CI as a
     run that errored. A malformed invocation is an invalid request detected before
     anything was created, which is exactly what 3 means. Subparsers inherit the class.
@@ -257,7 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # Not for people: this is what the submitted Job runs, and the CLI/Job contract is
-    # one decision (ADR-01-06) rather than two programs that must agree by convention.
+    # one decision rather than two programs that must agree by convention.
     # Passing no `help` is what keeps it out of the command list; `help=SUPPRESS` would
     # list it with "==SUPPRESS==" as its description.
     execute_parser = commands.add_parser("execute")
@@ -329,7 +329,7 @@ def _add_image_argument(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the CLI. Returns the process exit code (ADR-01-08's table)."""
+    """Run the CLI. Returns the process exit code (the table in :mod:`dokimi.cli.exit_codes`)."""
     parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     console = Console(out=sys.stdout, err=sys.stderr)
@@ -360,21 +360,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         PrometheusUnreachableError,
         ClusterNotReadyError,
     ) as error:
-        # ADR-01-11: another run holds the cluster, or an owner belongs to another run.
-        # ADR-03-02: the run's Prometheus cannot be queried. ADR-05-07: a cluster check
-        # failed. Each a run-level precondition checked before any test runs, so a
-        # preflight failure (4). Each message names its reason: `run_already_active`,
-        # or `cluster not ready (<check>)`.
+        # Another run holds the cluster, or an owner belongs to another run; the run's
+        # Prometheus cannot be queried; or a cluster check failed. Each a run-level
+        # precondition checked before any test runs, so a preflight failure (4). Each
+        # message names its reason: `run_already_active`, or `cluster not ready (<check>)`.
         console.fail(_with_notes(error))
         return ExitCode.PREFLIGHT_FAILURE
     except (ClusterError, RobotRunError) as error:
         # Robot Framework not being able to run at all is the orchestrator's failure,
-        # never a test outcome: no report from such a run can be trusted (ADR-01-08).
+        # never a test outcome: no report from such a run can be trusted.
         console.fail(_with_notes(error))
         return ExitCode.INTERNAL
     except Exception as error:  # noqa: BLE001 - the whole point is to catch everything
         # Anything not anticipated above is a bug here or in a dependency, never a
-        # verdict. Without this, Python exits 1 — `fail` in ADR-01-08's table — so CI
+        # verdict. Without this, Python exits 1 — `fail` in the exit-code table — so CI
         # would read a crash as a test that ran and did not pass.
         traceback.print_exc(file=sys.stderr)
         console.fail(

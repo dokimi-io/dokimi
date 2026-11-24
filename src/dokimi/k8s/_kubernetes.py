@@ -42,7 +42,7 @@ class KubernetesCluster:
     :class:`ClusterError`: an ``ApiException`` when the API server answered and refused,
     and a urllib3 error when it could not be reached or dropped the connection. The
     second kind is easy to miss — it is not an ``ApiException`` — and an untranslated one
-    escapes as a traceback, which Python exits with 1: ``fail`` in ADR-01-08's table, for
+    escapes as a traceback, which Python exits with 1: ``fail`` in the exit-code table, for
     a run that nobody measured.
     """
 

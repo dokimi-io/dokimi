@@ -1,7 +1,7 @@
 """Phase 1: submit the run, follow it, and find it again afterwards.
 
-The whole of ADR-01-06's client-side contract lives here. Three properties it asks for,
-and where each one comes from:
+The whole client-side contract of a run that executes as an in-cluster Job lives here.
+Three properties it has, and where each one comes from:
 
 * **The Job is unaffected when the submitter disconnects.** Nothing in this module holds
   the run together. Following a run is a read of a server-side resource; stopping the
@@ -13,8 +13,8 @@ and where each one comes from:
 * **A dry run touches nothing.** Rendering is :func:`plan_submission`, a pure function
   that never sees a client.
 
-The run's exit code is the container's exit code, unchanged. ADR-01-08 makes the Job's
-exit status the verdict, so translating it here would be inventing a second opinion.
+The run's exit code is the container's exit code, unchanged. The Job's
+exit status is the verdict, so translating it here would be inventing a second opinion.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ CONTAINER_NAME = "orchestrator"
 POD_APPEARANCE_TIMEOUT_SECONDS = 300.0
 
 
-#: The exit codes that are a run's outcome — ADR-01-08's table, 0 to 5. The CLI's
+#: The exit codes that are a run's outcome — the exit-code table, 0 to 5. The CLI's
 #: ``ExitCode`` enumerates the same values; ``tests/test_submission.py`` holds the two to
 #: each other. Anything else a container exits with is a signal or a crash, not a verdict.
 RUN_OUTCOMES = frozenset(range(6))
@@ -90,9 +90,9 @@ class Submission:
     run_id: str
     namespace: str
     image: str
-    #: The images the run deploys, by component (ADR-04-08).
+    #: The images the run deploys, by component.
     images: Mapping[str, WorkloadImage]
-    #: What the operator called the cluster, for every result's ``cluster`` label (ADR-02-07).
+    #: What the operator called the cluster, for every result's ``cluster`` label.
     cluster: str
     manifests: tuple[dict[str, Any], ...]
 
@@ -124,7 +124,7 @@ def plan_submission(
     # every object name and a term in the selectors that find the run again, so a bad one
     # breaks all three — and a dry run would print manifests that cannot be applied.
     resolved_run_id = validate_run_id(run_id) if run_id is not None else new_run_id()
-    # Validated like the default: a malformed --namespace is a config_error (ADR-01-11),
+    # Validated like the default: a malformed --namespace is a config_error,
     # not an API server refusal after the owner has already been created.
     resolved_namespace = namespace_for(definition.test_type.value, namespace)
     manifests = render_manifests(
@@ -158,7 +158,7 @@ def submit(cluster: ClusterClient, submission: Submission) -> None:
     happens there is nothing for the garbage collector to cascade from, which is why the
     owner is created first and alone.
 
-    The namespace must already exist: a run never creates one (ADR-05-13).
+    The namespace must already exist: a run never creates one.
     """
     owner, *rest = submission.manifests
     created_owner = cluster.create(owner)
@@ -180,9 +180,9 @@ def submit(cluster: ClusterClient, submission: Submission) -> None:
 def _abandon(cluster: ClusterClient, submission: Submission, error: ClusterError) -> None:
     """Remove a submission that failed after its owner was created.
 
-    This is not ADR-05-02's retain-on-failure, which keeps a failed *run's* evidence: a
+    This is not retain-on-failure, which keeps a failed *run's* evidence: a
     Job that was never created left no evidence, only an unclaimed owner. That owner
-    would not block later runs (ADR-05-13), but it is debris all the same.
+    would not block later runs, but it is debris all the same.
 
     :func:`~dokimi.k8s.ownership.delete_run_owned` re-checks the labels on what it
     selected and deletes each object by name and uid, so a broken selector cannot widen
@@ -198,7 +198,7 @@ def _abandon(cluster: ClusterClient, submission: Submission, error: ClusterError
             kinds=(CONFIG_MAP, JOB),
         )
     except ClusterError as cleanup_error:
-        # ADR-05-02: cleanup failures are reported with what remains and how to remove
+        # Cleanup failures are reported with what remains and how to remove
         # it, never swallowed. The original error is still the one that is raised.
         error.add_note(
             f"Removing the partial submission failed too ({cleanup_error}). Remove it with: "
@@ -230,7 +230,7 @@ def follow(
     The code returned is always one of :data:`RUN_OUTCOMES`. A container that exits with
     anything else — a signal, a crash, a deadline — raises :class:`ClusterError` saying
     which, because passing 137 through would hand CI a number that means nothing in
-    ADR-01-08's table and everything to a shell.
+    the exit-code table and everything to a shell.
     """
     pod = _await_pod(cluster, namespace, run_id, timeout=timeout, sleep=sleep, clock=clock)
     pod_name = pod["metadata"]["name"]

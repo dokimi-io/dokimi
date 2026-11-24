@@ -1,7 +1,7 @@
 """The Robot parser reads every criterion, or refuses the suite. Nothing in between.
 
 The suite that executes is never the one the user wrote: it is ``render_robot()`` of
-the parsed model (ADR-04-06). So a construct the parser steps over is a construct that
+the parsed model. So a construct the parser steps over is a construct that
 silently never runs — and when that construct is a criterion, the run passes without
 checking it. That is the false PASS raised in review of #26, and every test here is one
 way it could happen.

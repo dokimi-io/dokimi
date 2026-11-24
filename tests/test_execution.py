@@ -192,7 +192,7 @@ def test_failed_tests_are_not_the_runners_business(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int
 ) -> None:
     # Robot's exit code counts failed tests. The results say which, so it is never read
-    # here, and never propagated as the run's (ADR-01-08).
+    # here, and never propagated as the run's.
     monkeypatch.setattr(subprocess, "run", Recorded(code))
 
     SubprocessRobotRunner().merge(
@@ -414,7 +414,7 @@ def test_a_tool_that_measured_nothing_fails_the_test() -> None:
 
 
 def test_a_spoofed_trigger_shows_up_here_and_nowhere_else() -> None:
-    # start() cannot tell (adrs#46); completion() can, and this is the path that uses it.
+    # start() cannot tell; completion() can, and this is the path that uses it.
     kubelet = owned(Kubelet())
 
     with pytest.raises(UnexpectedTargetError, match="measured against 10.9.9.9"):
@@ -440,7 +440,7 @@ def test_a_suite_cannot_run_another_pair_than_the_planned_one() -> None:
 
 
 def test_a_run_without_an_image_for_its_test_type_resolves_none_of_its_own() -> None:
-    # submit resolves every image (ADR-04-08); a default chosen here nobody would have seen.
+    # submit resolves every image; a default chosen here nobody would have seen.
     kubelet = owned(Kubelet())
     context = RunContext(
         RUN_ID, NAMESPACE, "pair-001", "worker-01", "worker-02", "test-cluster", {}

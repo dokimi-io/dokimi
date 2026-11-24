@@ -1,9 +1,9 @@
 """Canonical test definition model.
 
 The only representation the orchestration library consumes: parameters and pass criteria
-together (ADR-04-05). Phase 2 produces it; every later phase reads it.
+together. Phase 2 produces it; every later phase reads it.
 
-Milestone-01's subset is scoped by ADR-04-06 — one directed pair between two explicitly
+Milestone-01's subset is scoped to one directed pair between two explicitly
 named nodes. Nothing here knows how a definition was authored, which is the point: the
 formats depend on this package, never the reverse.
 """

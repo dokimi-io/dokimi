@@ -1,8 +1,8 @@
 """The shipped examples must parse, and must agree with each other.
 
-Documentation that the parser rejects is worse than no documentation, and an example in
-two formats that quietly drift apart is exactly what ADR-04-05's peer-format rule exists
-to prevent. Both are cheap to check, so they are checked on every run.
+Documentation that the parser rejects is worse than no documentation, and the two formats
+are peers, so an example that reads differently in each is exactly the drift that must not
+happen. Both are cheap to check, so they are checked on every run.
 """
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ REPOSITORY = EXAMPLES.parent
 DOCUMENTS = [
     REPOSITORY / "README.md",
     EXAMPLES / "README.md",
+    EXAMPLES / "kind" / "README.md",
     *sorted((REPOSITORY / "docs").glob("*.md")),
 ]
 _FENCED = re.compile(r"```[a-z]*\n(.*?)```", re.S)
@@ -101,3 +102,40 @@ def test_the_readme_shows_the_shipped_examples_verbatim(path: Path) -> None:
     blocks = [match.group(1) for match in _FENCED.finditer((REPOSITORY / "README.md").read_text())]
 
     assert path.read_text() in blocks, f"README.md no longer shows {path.name} as it is"
+
+
+# -- examples/kind: a walk-through on the repository's test environment ----------------
+#
+# These are written for test-env's kind profiles, whose workers have fixed names. A file
+# that named any other node would parse, and then fail at planning for everyone who
+# followed the walk-through, so the names are checked here rather than discovered there.
+
+KIND_EXAMPLES = EXAMPLES / "kind"
+TEST_ENV_WORKERS = {"dokimi-worker", "dokimi-worker2", "dokimi-worker3"}
+
+
+def _kind_example_files() -> list[Path]:
+    return sorted(p for p in KIND_EXAMPLES.iterdir() if p.suffix.lower() in SUFFIXES)
+
+
+def test_there_are_kind_examples_in_both_formats() -> None:
+    suffixes = {p.suffix.lower() for p in _kind_example_files()}
+
+    assert ".yaml" in suffixes
+    assert ".robot" in suffixes
+
+
+@pytest.mark.parametrize("path", _kind_example_files(), ids=lambda p: f"kind/{p.name}")
+def test_every_kind_example_runs_between_test_env_workers(path: Path) -> None:
+    if path.suffix.lower() == ".robot" and not robot_framework_installed():
+        pytest.skip("needs the robot extra to read a .robot suite")
+
+    definition = parse_file(path)
+
+    assert {definition.source_node, definition.target_node} <= TEST_ENV_WORKERS
+    assert definition.source_node != definition.target_node
+
+
+@pytest.mark.parametrize("path", _kind_example_files(), ids=lambda p: f"kind/{p.name}")
+def test_the_kind_walkthrough_covers_every_kind_example(path: Path) -> None:
+    assert path.name in (KIND_EXAMPLES / "README.md").read_text()

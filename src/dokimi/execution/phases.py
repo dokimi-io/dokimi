@@ -1,7 +1,7 @@
-"""Phases 5, 6 and 9a: render the suite, run it per pair, merge the reports ([ADR-01-08]).
+"""Phases 5, 6 and 9a: render the suite, run it per pair, merge the reports.
 
 Each phase is its own function over the run's artifact directory, so that the phase
-boundaries stay an interface between resumable stages ([ADR-01-08], OQ-99) rather than
+boundaries stay an interface between resumable stages rather than
 seams inside one call: a later run could start at phase 6 from a retained suite.
 
 Nothing that must happen once per run lives inside Robot. Phase 6 starts one process
@@ -34,10 +34,10 @@ class PairExecution:
 
 
 def render_suite(definition: TestDefinition, artifacts: RunArtifacts) -> Path:
-    """Phase 5: write the suite that is executed, and keep it ([ADR-01-08], OQ-100).
+    """Phase 5: write the suite that is executed, and keep it.
 
     ``render_robot()`` is the same function the user-facing conversion command calls,
-    so what runs is byte for byte what ``dokimi convert`` shows ([ADR-04-05]).
+    so what runs is byte for byte what ``dokimi convert`` shows.
     """
     artifacts.create()
     artifacts.suite.write_text(render_robot(definition), encoding="utf-8")
@@ -61,7 +61,7 @@ def execute_pairs(
 
     Milestone-01's plan is one pair, so this runs once. It is still the general shape:
     the matrix growing past one pair is Milestone-02, and concurrency within a wave is
-    the scheduler's to add here (ADR-04-04), not Robot's.
+    the scheduler's to add here, not Robot's.
 
     *on_pair* is called before a pair's process starts, *after_pair* once it has ended,
     however it ended: phase 10 asks then whether the pair's pods were deployed.
@@ -104,7 +104,7 @@ def merge_reports(
     """Phase 9a: every pair's ``output.xml``, merged into the run's one report.
 
     With one pair the merge is a pass-through, and it runs anyway: building the one-pair
-    case as if it were the only case would make the n-pair one a retrofit ([ADR-01-08]).
+    case as if it were the only case would make the n-pair one a retrofit.
     """
     runner.merge(
         [execution.output for execution in executions],

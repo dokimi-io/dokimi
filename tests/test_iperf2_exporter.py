@@ -1,8 +1,8 @@
-"""The iperf2 exporter: one pod's own view, every label, in base units (M1-10, ADR-02-02).
+"""The iperf2 exporter: one pod's own view, every label, in base units (M1-10).
 
 The exporter is a standalone script in the iperf2 image, standard library only, so it is
 loaded from its file here rather than imported from the package. The sample lines are
-iperf 2.2.1's ``-y C`` output from a run on kind (dokimi#35, adrs#45).
+iperf 2.2.1's ``-y C`` output from a run on kind (dokimi#35).
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ ENV = {
     "DOKIMI_TARGET_POD": "run-20261002-194700-pd9yru-pair-001-server",
     "DOKIMI_PROTOCOL": "udp",
 }
-#: ADR-02-07's required set, plus ADR-02-02's direction.
+#: The required label set, plus ``direction``.
 REQUIRED = {
     "cluster",
     "run_id",
@@ -154,7 +154,7 @@ def test_the_server_reports_the_measured_connection_and_nothing_else(tmp_path: P
 
 
 def test_units_are_converted_to_base_units_on_write(tmp_path: Path) -> None:
-    # ADR-02-03: seconds, not milliseconds; percent is the named exception.
+    # Seconds, not milliseconds; percent is the named exception.
     series = scrape(results(tmp_path, "server", LOSSY_LINE), "server")
 
     assert value(series, "dokimi_jitter_seconds") == pytest.approx(0.000348)
@@ -434,7 +434,7 @@ def test_the_exporter_serves_where_prometheus_and_the_verdict_look() -> None:
         container = sidecar(pod)
         (port,) = container["ports"]
 
-        # The managed Prometheus scrapes exactly the ports named this way (ADR-03-02).
+        # The managed Prometheus scrapes exactly the ports named this way.
         assert port == {"name": EXPORTER_PORT_NAME, "containerPort": spec.port, "protocol": "TCP"}
         assert container["args"] == ["--results", spec.results_directory, "--port", str(spec.port)]
         assert container["readinessProbe"]["httpGet"]["path"] == spec.path

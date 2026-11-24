@@ -1,10 +1,9 @@
 """The manifests a submission creates: an owner object, the definition, and the Job.
 
-Three objects, in this order, because the order is what makes cleanup survive a crash
-(ADR-05-02):
+Three objects, in this order, because the order is what makes cleanup survive a crash:
 
 1. A **placeholder owner object** — a ConfigMap acting as a tombstone, since no CRD
-   exists yet, named ``run-<run_id>-owner`` ([ADR-05-13]). It is created first and owns
+   exists yet, named ``run-<run_id>-owner``. It is created first and owns
    everything else. It carries no claim: the Job writes that in phase 4, so what a
    submission creates is never evidence of an active run.
 2. A **ConfigMap carrying the test definition** exactly as authored, mounted into the
@@ -15,10 +14,10 @@ Three objects, in this order, because the order is what makes cleanup survive a 
 Deleting the owner cascades the cluster's own garbage collector through the other two,
 so a run's resources go away even if nothing the framework wrote ever executes.
 
-``restartPolicy: Never`` and ``backoffLimit: 0`` are not preferences. ADR-01-08 makes the
-Job's exit code carry the run's verdict, so a Job controller that retries on non-zero
-would re-run the whole matrix on a plain ``fail`` — an uncontrolled retry of everything,
-against ADR-05-05's rule that a ``fail`` is never re-rolled.
+``restartPolicy: Never`` and ``backoffLimit: 0`` are not preferences. The Job's exit code
+carries the run's verdict, so a Job controller that retries on non-zero would re-run the
+whole matrix on a plain ``fail`` — an uncontrolled retry of everything, and a ``fail``
+is never re-rolled.
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ JOB_TTL_SECONDS = 3600
 def resource_name(run_id: str, suffix: str = "") -> str:
     """A DNS-1123 object name for a run: ``run-<run_id><suffix>``.
 
-    The run id is used verbatim. ADR-02-08's format is lowercase letters, digits and
+    The run id is used verbatim. Its format is lowercase letters, digits and
     hyphens precisely so that an object name and a label spell the same run the same way.
     """
     return f"run-{run_id}{suffix}"
@@ -81,7 +80,7 @@ def definition_file_name(source_suffix: str) -> str:
 
 
 def job_deadline_seconds(definition: TestDefinition) -> int:
-    """``activeDeadlineSeconds`` for the run's Job: its :class:`JobBudget` (ADR-05-13)."""
+    """``activeDeadlineSeconds`` for the run's Job: its :class:`JobBudget`."""
     return job_budget_for(definition).active_deadline_seconds
 
 
@@ -102,8 +101,8 @@ def render_manifests(
     """Render the objects a submission creates, in the order they must be created.
 
     *image* is the orchestrator's own; *images* are the ones the run deploys, resolved at
-    submission and handed to the Job in its environment (ADR-04-08), like *cluster*, the
-    name the operator gave the cluster (ADR-02-07). *preflight_only* is ``dokimi preflight``:
+    submission and handed to the Job in its environment, like *cluster*, the
+    name the operator gave the cluster. *preflight_only* is ``dokimi preflight``:
     the same objects, and a Job that stops after phase 4. *retention* says when the run
     keeps its evidence; without it, the Job's own default applies.
     """
@@ -144,7 +143,7 @@ def _owner_reference(owner: dict[str, Any]) -> dict[str, Any]:
     The uid is not known until the API server has created it, so this carries a
     placeholder that :func:`bind_owner` replaces.
 
-    ``blockOwnerDeletion`` is deliberately unset (ADR-05-13): setting it needs permission
+    ``blockOwnerDeletion`` is deliberately unset: setting it needs permission
     on the owner's finalizers, and nothing needs deleting the owner to wait.
     """
     return {
@@ -220,7 +219,7 @@ def _job_manifest(
                 "name": "orchestrator",
                 "image": image,
                 # The namespace and deadline let phase 4 find its owner and its Job,
-                # and date its claim's expiry from the Job's start (ADR-05-13).
+                # and date its claim's expiry from the Job's start.
                 "args": [
                     "execute",
                     "--definition",
@@ -235,8 +234,7 @@ def _job_manifest(
                     *(["--preflight-only"] if preflight_only else []),
                 ],
                 # The images the run deploys and the cluster's name, resolved on the
-                # submitter's side, whose environment the Job never sees (ADR-04-08,
-                # ADR-02-07).
+                # submitter's side, whose environment the Job never sees.
                 "env": [
                     {"name": "DOKIMI_RUN_ID", "value": run_id},
                     {"name": CLUSTER_ENV_VAR, "value": cluster},
@@ -258,8 +256,8 @@ def _job_manifest(
                 "name": "definition",
                 "configMap": {"name": resource_name(run_id, "-definition")},
             },
-            # Robot writes output.xml per pair and rebot merges them (ADR-01-08 phase
-            # 9a), which a read-only root filesystem would otherwise prevent.
+            # Robot writes output.xml per pair and rebot merges them (phase 9a), which a
+            # read-only root filesystem would otherwise prevent.
             {"name": "work", "emptyDir": {}},
         ],
     }
@@ -276,7 +274,7 @@ def _job_manifest(
             "ownerReferences": [dict(owner_reference)],
         },
         "spec": {
-            # ADR-01-08: the exit code is the verdict, so the controller must never retry.
+            # The exit code is the verdict, so the controller must never retry.
             "backoffLimit": 0,
             "activeDeadlineSeconds": deadline,
             # Its artifacts can be fetched until then. Whoever fetches them deletes the

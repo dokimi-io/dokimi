@@ -1,8 +1,8 @@
-"""The Dockerfile and the release wiring must keep the promises ADR-05-08 makes.
+"""The Dockerfile and the release wiring must keep the promises images/README.md makes.
 
 These are text assertions, which is unusual, and deliberate. The base image choice, the
-lockfile-only install and the non-root user are *decisions* with reasons behind them
-([ADR-05-08], [ADR-05-04]); CI catches a broken build, but only something like this
+lockfile-only install and the non-root user are *decisions* with reasons behind them;
+CI catches a broken build, but only something like this
 catches a build that still works while having quietly changed its mind.
 
 The last test is the one that matters most: the release workflow rewrites a line in a
@@ -44,7 +44,7 @@ def test_base_image_is_debian_slim_not_alpine() -> None:
 
 def test_the_image_python_matches_the_declared_floor() -> None:
     # Derived rather than hard-coded: these drifted apart once already, when the floor
-    # moved to 3.14 and the Dockerfile kept building on 3.12 (ADR-01-09).
+    # moved to 3.14 and the Dockerfile kept building on 3.12.
     pyproject = PYPROJECT.read_text()
     floor = re.search(r'requires-python = ">=(\d+\.\d+)"', pyproject)
     assert floor, "pyproject.toml no longer declares requires-python"
@@ -185,7 +185,7 @@ def test_the_release_verification_runs_against_this_code(
 ) -> None:
     # It runs only in a release, after the images are pushed. An import it can no longer
     # make shows up there first, as a release with published images and no CLI. It did
-    # once: dokimi.images.resolve_image went away with ADR-04-08.
+    # once: dokimi.images.resolve_image went away when run images moved to submission.
     references = _digests(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -209,7 +209,7 @@ def _iperf2_instructions() -> str:
 
 
 def test_the_iperf2_image_is_alpine_pinned_by_digest() -> None:
-    # ADR-05-04: slim Alpine for test workloads, and a tag is a pointer that can move.
+    # Slim Alpine for test workloads, and a tag is a pointer that can move.
     dockerfile = IPERF2_DOCKERFILE.read_text()
 
     assert re.search(r"^ARG ALPINE_DIGEST=sha256:[0-9a-f]{64}$", dockerfile, re.M)
@@ -225,7 +225,7 @@ def test_the_iperf2_package_is_pinned_to_an_exact_version() -> None:
 
 
 def test_the_exporters_python_is_pinned_and_the_exporter_installed() -> None:
-    # The exporter ships in the tool's image (ADR-02-02), and runs on this Python only.
+    # The exporter ships in the tool's image, and runs on this Python only.
     dockerfile = IPERF2_DOCKERFILE.read_text()
     instructions = _iperf2_instructions()
 

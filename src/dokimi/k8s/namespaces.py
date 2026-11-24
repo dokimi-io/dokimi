@@ -1,13 +1,13 @@
 """Where a run's objects go: one namespace per test type, not per run.
 
-[ADR-05-02]: all ``iperf2`` runs share one namespace and all IRTT runs another. That
+All ``iperf2`` runs share one namespace and all IRTT runs another. That
 isolates unrelated test types from each other without a namespace per run, which would
 need cluster-level permission to create namespaces and would make every cleanup wait on
 slow namespace deletion. The default name is derived from the test type; configuration
 may override it.
 
 The namespace is shared across runs, so it is never run-owned: this module only names
-it. Creating it is an installation step, not something a run does ([ADR-05-13]):
+it. Creating it is an installation step, not something a run does:
 ``deploy/rbac.yaml`` creates the default one, and an override must already exist.
 """
 
@@ -31,7 +31,7 @@ _MAX_LENGTH = 63
 
 
 class InvalidNamespaceError(ConfigError, ValueError):
-    """A namespace name Kubernetes would reject. A ``config_error`` (exit 3, ADR-01-11)."""
+    """A namespace name Kubernetes would reject. A ``config_error`` (exit 3)."""
 
 
 def namespace_for(test_type: str, override: str | None = None) -> str:

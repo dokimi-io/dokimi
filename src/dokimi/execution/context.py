@@ -1,6 +1,6 @@
 """What one Robot process needs to know about the run it executes a pair of.
 
-Phase 6 runs one Robot process per pair ([ADR-01-08]). The suite says *what* to test,
+Phase 6 runs one Robot process per pair. The suite says *what* to test,
 the pair's parameters, and nothing about the run: no ``run_id``, no namespace, no image.
 Those come from the Job, through the process's environment, and this is the one place
 that names the variables and reads them back.
@@ -49,7 +49,7 @@ class RunContext:
     #: than one pair it cannot name each process's own, so the plan's are authoritative.
     source_node: str
     target_node: str
-    #: What the operator called the cluster, for every result's labels ([ADR-02-07]).
+    #: What the operator called the cluster, for every result's labels.
     cluster: str
     images: Mapping[str, WorkloadImage] = field(default_factory=dict)
 

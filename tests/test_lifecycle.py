@@ -1,7 +1,7 @@
 """Deployment, the per-test readiness gate, and completion, for any test type.
 
 The acceptance criterion that matters most here: ``start()`` is never called when a pod
-has not reached ``Ready`` (ADR-05-07). The plugin below records every call, so "never
+has not reached ``Ready``. The plugin below records every call, so "never
 called" is an assertion about what happened rather than about what the code intends.
 """
 
@@ -143,7 +143,7 @@ def test_deploy_creates_the_server_before_the_client(
 def test_deployed_pods_are_bounded_and_run_owned(
     cluster: FakeResources, spec: WorkloadSpec
 ) -> None:
-    # ADR-05-02: labels make cleanup possible, deadlines make it unnecessary.
+    # Labels make cleanup possible, deadlines make it unnecessary.
     deployed_to(cluster, spec)
 
     for role in Role:
@@ -179,7 +179,7 @@ def dual_stack(*ips: str) -> Manifest:
 def test_a_dual_stack_pod_is_addressed_over_ipv4_even_when_ipv6_is_primary(
     cluster: FakeResources, spec: WorkloadSpec
 ) -> None:
-    # ADR-05-03: IPv4 when both families are available. On an IPv6-primary cluster
+    # IPv4 when both families are available. On an IPv6-primary cluster
     # status.podIP is the IPv6 address, and the client script refuses it.
     deployed_to(cluster, spec)
     set_status(cluster, spec, Role.SERVER, dual_stack("fd00:10:244::7", "10.0.2.7"))
@@ -267,7 +267,7 @@ def test_an_image_pull_failure_is_its_own_category(
     cluster: FakeResources, spec: WorkloadSpec, reason: str
 ) -> None:
     # "Can't be placed" and "can't fetch its image" point at different fixes, and
-    # ADR-05-05 gives the second its own category. ADR-05-07's preflight reuses this gate
+    # the second has its own category. The run-level preflight reuses this gate
     # and must tell them apart from the category, not from the text.
     deployed_to(cluster, spec)
     set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))
@@ -327,7 +327,7 @@ def test_a_running_pod_is_not_ready_until_its_condition_says_so() -> None:
 
 def test_the_gate_fits_inside_the_workload_deadline() -> None:
     # The startup term budgets scheduling, image pull and this gate together; a longer
-    # gate would wait on pods the cluster is about to kill (ADR-05-13).
+    # gate would wait on pods the cluster is about to kill.
     assert DEFAULT_READINESS_TIMEOUT_SECONDS <= DEFAULT_STARTUP_SECONDS
 
 
@@ -337,7 +337,7 @@ def test_the_gate_fits_inside_the_workload_deadline() -> None:
 def test_start_is_never_called_when_a_pod_is_not_ready(
     cluster: FakeResources, spec: WorkloadSpec
 ) -> None:
-    # The acceptance criterion (ADR-05-07): a gate failure is a scheduling error and
+    # The acceptance criterion: a gate failure is a scheduling error and
     # start() is never reached.
     deployed_to(cluster, spec)
     set_status(cluster, spec, Role.SERVER, running("10.0.2.7"))

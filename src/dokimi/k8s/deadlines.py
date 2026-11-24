@@ -1,18 +1,18 @@
 """Self-limiting workloads: the ``activeDeadlineSeconds`` every run-owned Pod and Job carries.
 
-[ADR-05-02]: labels make cleanup *possible*, deadlines make it *unnecessary*. An
+Labels make cleanup *possible*, deadlines make it *unnecessary*. An
 abandoned ``iperf2`` client that keeps saturating a link is the failure this bounds.
 
 The deadline is derived from the test's own parameters, never a fixed constant — too
 tight kills a legitimately slow test, too loose stops bounding anything. And it must
 include every wait the workload has to survive after the test itself finishes:
-[ADR-03-01] keeps pods alive for the orchestrator's direct read of the exporter and for
+pods stay alive for the orchestrator's direct read of the exporter and for
 the scrape-confirmation window. A deadline that only knew the test duration would kill
 the pods during a wait it was never told about, so :class:`DeadlineBudget` makes each of
 those waits a required, named term rather than something folded into a margin — including
-the discarded warm-up pass that [ADR-04-04] runs by default, before the measurement.
+the discarded warm-up pass that runs by default, before the measurement.
 
-There are two budgets, of one kind ([ADR-05-13]):
+There are two budgets, of one kind:
 
 * :class:`DeadlineBudget` bounds a **workload**, one test pod or Job;
 * :class:`JobBudget` bounds the **orchestrator Job**: every workload budget it runs, plus
@@ -20,8 +20,8 @@ There are two budgets, of one kind ([ADR-05-13]):
   contains, and it is also when the run's exclusivity claim expires — by then the cluster
   has killed the Job and every workload of the run has hit its own, shorter deadline.
 
-For Jobs the same bound comes with ``backoffLimit: 0`` and ``restartPolicy: Never``
-([ADR-01-08] via the Milestone-01 plan): a failed one-shot is a finding, and a Job
+For Jobs the same bound comes with ``backoffLimit: 0`` and ``restartPolicy: Never``:
+a failed one-shot is a finding, and a Job
 controller that silently re-ran it would replace the finding with a second measurement.
 """
 
@@ -55,11 +55,11 @@ DEFAULT_SAFETY_MARGIN_SECONDS = 30.0
 # tight: these bounds exist to stop an orphaned run, not to enforce a schedule.
 #: Scheduling, image pull on a cold node and the readiness gate.
 DEFAULT_STARTUP_SECONDS = 300.0
-#: The discarded warm-up pass ([ADR-04-04]): ``iperf2``'s default ``warmup`` parameter
+#: The discarded warm-up pass: ``iperf2``'s default ``warmup`` parameter
 #: (:mod:`dokimi.testtypes.iperf2`), and what a budget reserves when not told otherwise.
 DEFAULT_WARMUP_SECONDS = 10.0
 DEFAULT_DIRECT_READ_SECONDS = 30.0
-#: A few scrape intervals at the common 15 to 30 s ([ADR-03-01]).
+#: A few scrape intervals at the common 15 to 30 s.
 DEFAULT_SCRAPE_CONFIRMATION_SECONDS = 120.0
 #: Phase 4, every wait in it at its longest: the Prometheus query check (180 s), the probe
 #: pair's startup (:data:`DEFAULT_STARTUP_SECONDS`), its start and exchange (90 s) and its
@@ -81,11 +81,11 @@ class DeadlineBudget:
     test_duration: float
     #: Scheduling, image pull and the readiness gate before the test starts.
     startup: float
-    #: The discarded warm-up pass before the measurement; ``0`` when disabled ([ADR-04-04]).
+    #: The discarded warm-up pass before the measurement; ``0`` when disabled.
     warmup: float
-    #: The orchestrator's direct read of the exporter's ``/metrics`` ([ADR-03-01]).
+    #: The orchestrator's direct read of the exporter's ``/metrics``.
     direct_read: float
-    #: The window in which the expected series must reach Prometheus ([ADR-03-01]).
+    #: The window in which the expected series must reach Prometheus.
     scrape_confirmation: float
     safety_margin: float = DEFAULT_SAFETY_MARGIN_SECONDS
 
@@ -116,7 +116,7 @@ class DeadlineBudget:
 
 @dataclass(frozen=True)
 class JobBudget:
-    """Everything the orchestrator Job must stay alive for, in seconds ([ADR-05-13])."""
+    """Everything the orchestrator Job must stay alive for, in seconds."""
 
     #: One workload budget per pair, in the order the concurrency plan runs them.
     workloads: Sequence[DeadlineBudget]
@@ -136,7 +136,7 @@ class JobBudget:
     @property
     def total(self) -> float:
         # Sequential execution in Milestone-01: pairs run one after another. Bounded
-        # concurrency (ADR-04-04) will sum per wave instead; see OQ-137.
+        # concurrency will sum per wave instead; how to bound that at submission is open.
         return (
             sum(workload.total for workload in self.workloads)
             + self.preflight
@@ -184,7 +184,7 @@ def job_budget_for(definition: TestDefinition) -> JobBudget:
 
     Computed at submission, before the Job plans anything. Milestone-01 has exactly one
     pair, so the plan follows from the definition; general matrices need an upper bound
-    on the plan instead (OQ-137).
+    on the plan instead.
     """
     return JobBudget(
         workloads=(workload_budget_for(definition),),

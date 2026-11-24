@@ -1,12 +1,12 @@
 """Test-workload images: which reference a test type's pods actually run.
 
-[ADR-05-04] decides the strategy: one image per test type, built from a Dockerfile in
-this repository, published to ``ghcr.io/dokimi-io/<image-name>`` ([ADR-01-10]), pinned by
+The strategy: one image per test type, built from a Dockerfile in this repository,
+published to ``ghcr.io/dokimi-io/<image-name>``, pinned by
 digest, overridable per test type, and recorded in the run metadata. This is the
 workload-image counterpart of :mod:`dokimi.images`, and it reuses that module's release
 mechanism: the release workflow writes each digest into :mod:`dokimi._image_digest`.
 
-Who chooses an override is [ADR-04-08]'s: :mod:`dokimi.run_images` resolves every image a
+Choosing an override is not this module's job: :mod:`dokimi.run_images` resolves every image a
 run deploys at submission, from ``--image`` and ``DOKIMI_<COMPONENT>_IMAGE`` on the
 submitter's side, and passes the result into the Job. A plugin is handed the resolved
 image. Nothing here reads the environment, because inside the Job the submitter's
@@ -27,7 +27,7 @@ __all__ = [
     "resolve_workload_image",
 ]
 
-#: The registry and organisation every workload image lives under ([ADR-01-10]).
+#: The registry and organisation every workload image lives under.
 WORKLOAD_REGISTRY = "ghcr.io/dokimi-io"
 
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")

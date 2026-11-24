@@ -1,13 +1,13 @@
 """Authoring format plugins: ``parse()`` and ``render()``.
 
-Robot and YAML are peer authoring formats, each a plugin against the canonical model
-(ADR-04-05). ADR-04-06 puts both in Milestone-01, because the property that makes them
+Robot and YAML are peer authoring formats, each a plugin against the canonical model.
+Both are in Milestone-01, because the property that makes them
 peers — no criterion expressible in one but not the other — is not a property a single
 format can have.
 
 Robot Framework's *parsing* API is imported inside
 :mod:`dokimi.formats.robot_suite` only, and only when parsing is actually
-called, so the core library stays importable without it (ADR-01-02, ADR-01-08 phase 2).
+called, so the core library stays importable without it.
 Rendering needs no Robot at all.
 
 Conversion between formats is a composition of two functions that already exist, rather

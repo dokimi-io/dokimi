@@ -1,4 +1,4 @@
-"""The run-level preflight (ADR-05-07): each check, and the name each failure carries.
+"""The run-level preflight: each check, and the name each failure carries.
 
 M1-07's first acceptance criterion is that every failure mode is its own named error,
 so each test here asserts the check a failure names, not only that it failed. The
@@ -183,7 +183,7 @@ def test_a_pod_that_cannot_be_placed_is_scheduling() -> None:
 
 
 def test_an_image_that_cannot_be_pulled_is_image_pull_not_scheduling() -> None:
-    # Its own signal (ADR-05-07): a different thing to fix than a node that cannot take
+    # Its own signal: a different thing to fix than a node that cannot take
     # the pod, read from the gate's category, never from its message.
     statuses = {role: pod_status(role, waiting="ImagePullBackOff") for role in Role}
 
@@ -305,7 +305,7 @@ def test_unreadable_targets_are_said_not_raised() -> None:
 
 
 def test_the_jobs_preflight_term_covers_every_wait_in_phase_4() -> None:
-    # The Job's deadline is also when its claim expires (ADR-05-13). A preflight that
+    # The Job's deadline is also when its claim expires. A preflight that
     # could outlast its term would eat into the time the tests were budgeted.
     trigger = 5 * (5.0 + 1.0)  # tcp_trigger's attempts, each a timeout and a pause
     waits = (
