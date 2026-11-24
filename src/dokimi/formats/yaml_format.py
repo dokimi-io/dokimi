@@ -84,7 +84,7 @@ def parse_yaml(source: str) -> TestDefinition:
     if mode != "explicit":
         raise ConfigError(
             f"placement mode {mode!r} is not available in this version, which resolves "
-            "two explicitly named nodes. Selector-based modes are planned"
+            "two explicitly named nodes. Other placement modes are planned"
         )
 
     test = _mapping(document, "test", "the document")

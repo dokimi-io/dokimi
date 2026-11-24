@@ -563,8 +563,8 @@ and the client runs the warm-up pass, then the measurement. Completion is the cl
 process exiting, and its final `-y C` summary line is read from the pod's termination
 message. Neither step needs `exec` into a pod. The warm-up pass defaults to 10 s, and its
 duration is recorded in the run metadata as `warmup_duration_seconds`, `0` when disabled.
-For now it can be disabled through the library, but not yet from a test document; see
-[Authoring a test](#authoring-a-test) for the fields a document may carry.
+For now it can be disabled through the library, but not from a test document: a document has
+no warm-up field yet.
 
 ### Exporter
 

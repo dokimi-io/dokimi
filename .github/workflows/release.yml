@@ -2,9 +2,9 @@
 #
 # The order is the decision, not an implementation detail. A released CLI ships the
 # digest of the orchestrator image built from its own commit, and pins every test-workload
-# image by digest the same way, so it never runs an image other than the one it was
-# released with. So the images are built and pushed first, their digests are written into
-# the generated constants file, and only then is the distribution built. They cannot be
+# image by digest the same way, so by default it runs exactly the images it was released
+# with. So the images are built and pushed first, their digests are written into the
+# generated constants file, and only then is the distribution built. They cannot be
 # released independently: a cost accepted on purpose.
 #
 # Every image dokimi builds is one entry in the `images` matrix. Adding one is that entry

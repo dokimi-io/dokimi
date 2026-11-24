@@ -386,9 +386,9 @@ Both nodes exist and can accept a test pod.
 
 Without either flag it does not, and says so — `Planned matrix (1 test, sequential;
 nodes not checked)` — rather than implying the nodes were verified. The ambient
-`KUBECONFIG` is deliberately not enough: a dry run reads the cluster only through a
-kubeconfig you name, and only to read, so a plain `--dry-run` stays one that cannot
-contact anything. This is the way to check node names before submitting.
+`KUBECONFIG` is deliberately not enough: a dry run touches a cluster only through a
+kubeconfig or context you name, and then only reads, so a plain `--dry-run` stays one that
+cannot contact anything. This is the way to check node names before submitting.
 
 The rendered `ownerReferences` carry an empty `uid`, which is why the output is not
 directly appliable with `kubectl`. The API server assigns that uid when the owner object

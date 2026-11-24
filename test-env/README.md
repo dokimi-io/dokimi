@@ -18,8 +18,8 @@ rather than by a NIC, a switch or a real CNI datapath. It validates **orchestrat
 correctness** — does a run deploy, measure, evaluate, report and clean up correctly — and
 **not measurement realism**. Throughput, loss and jitter measured here say nothing about real
 hardware, and a threshold that is meaningful on real hardware is not meaningful here. So a green
-run here proves that dokimi does what it should; whether a network is fast enough is a question
-only a real cluster answers.
+run here proves that dokimi orchestrates a run correctly; whether a network is fast enough is a
+question only a real cluster answers.
 
 It needs Docker and bash, and runs on macOS, Linux and Windows through WSL2. Which of those
 it has actually been tested on, and with which container runtime, is listed in
