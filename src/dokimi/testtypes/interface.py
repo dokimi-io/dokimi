@@ -193,9 +193,9 @@ class TestParameters:
 class ParameterSchema:
     """Every parameter a test type accepts. Unknown names are refused, not ignored.
 
-    Refusing rather than ignoring is the configuration schema's rule, and it matters more for a
-    measurement tool than for most: a silently ignored typo is a test that ran at the
-    wrong rate and reported success.
+    Refusing rather than ignoring is the rule the YAML format follows too, and it matters
+    more for a measurement tool than for most: a silently ignored typo is a test that ran
+    at the wrong rate and reported success.
     """
 
     test_type: str
@@ -359,8 +359,8 @@ class TestTypePlugin(Protocol):
     def workload(self, params: TestParameters, placement: Placement) -> WorkloadSpec:
         """Pod specs for client and server, built from validated parameters.
 
-        *placement* is where they go: the pair's nodes, namespace and identity. The paper
-        design passes only *params*; a pod spec cannot name its node without the rest,
+        *placement* is where they go: the pair's nodes, namespace and identity. *params*
+        alone would not be enough: a pod spec cannot name its node without the rest,
         and the plugin is the one place that knows which role goes where.
         """
         ...

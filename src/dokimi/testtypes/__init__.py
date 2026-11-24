@@ -1,11 +1,10 @@
 """Test type plugins.
 
 Each test type declares its images, parameters, pod specs, capabilities for a given
-parameter set and environment, ``start()``, ``is_complete()`` and its exporter.
-The interface is
-:class:`~dokimi.testtypes.interface.TestTypePlugin`; :func:`plugin_for` is how the
-rest of the library gets from a definition's :class:`~dokimi.model.TestType` to the
-code that runs it, and :func:`parameters_for` is how a definition becomes that
+parameter set and environment, ``start()``, ``is_complete()`` and its exporter. The
+interface is :class:`~dokimi.testtypes.interface.TestTypePlugin`; :func:`plugin_for` is
+how the rest of the library gets from a definition's :class:`~dokimi.model.TestType` to
+the code that runs it, and :func:`parameters_for` is how a definition becomes that
 plugin's parameters.
 """
 

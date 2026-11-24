@@ -16,7 +16,7 @@ so a run's resources go away even if nothing the framework wrote ever executes.
 
 ``restartPolicy: Never`` and ``backoffLimit: 0`` are not preferences. The Job's exit code
 carries the run's verdict, so a Job controller that retries on non-zero would re-run the
-whole matrix on a plain ``fail`` — an uncontrolled retry of everything, when a ``fail``
+whole matrix on a plain ``fail`` — an uncontrolled retry of everything, and a ``fail``
 is never re-rolled.
 """
 

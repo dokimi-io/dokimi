@@ -78,7 +78,7 @@ REQUIRED_LABELS = (
 AUTHORITATIVE_DIRECTION = "inbound"
 #: How far the direct read and Prometheus may differ before it is a diagnostic. Both read
 #: the gauge of a completed result from the same surface, so anything beyond a float's
-#: rounding is a bug or a race, and should show (decided 2026-10-18).
+#: rounding is a bug or a race, and should show.
 TOLERANCE = 1e-9
 
 COMPLETED = "dokimi_test_completed"

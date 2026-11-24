@@ -4,8 +4,7 @@
 Prometheus series, the Kubernetes resources and the result artifact rows. It is generated
 once at setup and stable for the whole run.
 
-The accepted format is "a sortable ``<timestamp>-<short-random>``, not a UUID". The exact
-spec was left as follow-up work; this module settles it::
+The format is a sortable ``<timestamp>-<short-random>``, not a UUID; its exact spec is::
 
     20260924-143012-k3f9x2
     ^^^^^^^^ ^^^^^^ ^^^^^^

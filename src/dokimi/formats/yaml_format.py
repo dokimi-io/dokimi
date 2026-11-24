@@ -4,9 +4,9 @@ Shape follows Kubernetes-style conventions and the canonical criterion record
 (:mod:`dokimi.model.criterion`). Milestone-01 is scoped to the fields below; a versioned
 JSON Schema arrives in Milestone-02, so validation here is explicit rather than schema-driven.
 
-**Unknown fields are rejected, never ignored.** That is the configuration schema's rule,
-and it matters for a measurement tool: a silently ignored typo in ``targetBandwidth`` produces a
-test that ran at the wrong rate and reported success.
+**Unknown fields are rejected, never ignored.** It matters for a measurement tool: a
+silently ignored typo in ``targetBandwidth`` produces a test that ran at the wrong rate and
+reported success.
 """
 
 from __future__ import annotations

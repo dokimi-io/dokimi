@@ -110,7 +110,7 @@ RESULTS_DIRECTORY = "/results"
 #: The uid the image runs as, shared with the orchestrator image.
 _UID = 65532
 #: Milestone-01 runs each pair once. ``repetition`` is a required label already;
-#: repetitions themselves arrive with Phase 4.
+#: repetitions themselves arrive with a later milestone.
 REPETITION = 1
 
 #: Sends *payload* to ``host:port``. Injected so tests need no network.
@@ -285,7 +285,8 @@ class Iperf2:
                 "protocol": protocol.value,
                 "target_bandwidth": params.written["targetBandwidth"],
                 "duration": params.written["duration"],
-                # Never absent: 0 is how a disabled pass shows.
+                # The name README.md documents for it. Never absent: 0 is how a
+                # disabled pass shows.
                 "warmup_duration_seconds": _plain(warmup.seconds),
                 # The mechanism and the address family, recorded with the result
                 # from the first run. The family is the one DeployedWorkload.pod_ip() picks.

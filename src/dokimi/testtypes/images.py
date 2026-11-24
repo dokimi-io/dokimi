@@ -6,7 +6,7 @@ digest, overridable per test type, and recorded in the run metadata. This is the
 workload-image counterpart of :mod:`dokimi.images`, and it reuses that module's release
 mechanism: the release workflow writes each digest into :mod:`dokimi._image_digest`.
 
-Who chooses an override is decided elsewhere: :mod:`dokimi.run_images` resolves every image a
+Choosing an override is not this module's job: :mod:`dokimi.run_images` resolves every image a
 run deploys at submission, from ``--image`` and ``DOKIMI_<COMPONENT>_IMAGE`` on the
 submitter's side, and passes the result into the Job. A plugin is handed the resolved
 image. Nothing here reads the environment, because inside the Job the submitter's

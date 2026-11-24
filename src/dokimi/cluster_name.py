@@ -21,7 +21,7 @@ is populated, and this module is where they become code:
 
 The value records what the operator called the cluster, not a stable identity: two
 operators can name one cluster differently, and nothing detects that. Deriving one is
-an open question, deferred to Phase 6.
+an open question, not yet scheduled.
 """
 
 from __future__ import annotations

@@ -16,8 +16,8 @@ the submitter with the other artifacts, and a summary in the Job's log.
   report is one place to look without copying what has a source of truth elsewhere;
 * whether the run namespace and its Prometheus were still reachable.
 
-**What counts as an anomaly** (decided 2026-10-13, scoped on
-2026-10-15): something no single test's error category was in flight to catch.
+**What counts as an anomaly:** something no single test's error category was in flight
+to catch.
 
 * a pod of a pair whose pods were deployed, and that no longer exists;
 * a test pod or the Prometheus pod evicted, or stopped by its deadline;
@@ -33,12 +33,12 @@ whose pod stays ``Running`` because its exporter keeps serving is how it should 
 node-exporter's pods run on every node, also those no test used, so their state is
 recorded but never an anomaly.
 
-**An anomaly means the run's resources are retained**: the report says
-``"retain": true`` and why, and phase 11 keeps the run's evidence as it does for a run
-that didn't pass: its owner and definition, and the test pods that can no longer be
-sending, until ``dokimi cleanup``. A test pod that might still send is removed before
-the claim is released, so nothing of a run disturbs the next one; its state is in this
-snapshot. The node-exporter the run deployed always goes.
+**An anomaly makes the run an ``error``**, so phase 11 keeps its evidence as for any run
+that didn't pass (unless it was submitted with ``--retain never``): the report says
+``"retain": true`` and why, and the run's owner and definition stay, with the test pods
+that can no longer be sending, until ``dokimi cleanup``. A test pod that might still send
+is removed before the claim is released, so nothing of a run disturbs the next one; its
+state is in this snapshot. The node-exporter the run deployed always goes.
 
 **It never blocks cleanup.** It has its own timeout, :data:`SNAPSHOT_TIMEOUT_SECONDS`, well
 inside the Job's ``diagnostics`` budget term, and it never raises: each step that fails is

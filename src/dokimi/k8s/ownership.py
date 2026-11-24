@@ -8,7 +8,7 @@ Run ownership follows three rules, and this module is where each becomes code:
   path by which the library creates objects, and it cannot create one without them.
 * **Every created object carries an ownerReference** to a placeholder owner, so deleting
   the owner lets the cluster's garbage collector remove the rest even if our own cleanup
-  never runs. There is no CRD in Phase 1, so the owner is a ``ConfigMap`` — see
+  never runs. dokimi defines no CRD, so the owner is a ``ConfigMap`` — see
   :func:`owner_manifest` for its shape. Garbage collection does not cross namespaces, so
   a run gets one owner **per namespace it creates objects in**, each created before
   anything else in that namespace.
@@ -422,8 +422,8 @@ class RunOwnership:
         """Create *manifest* as a run-owned object. The only creation path to use.
 
         Pods and Jobs are refused without ``spec.activeDeadlineSeconds``: a run-owned
-        workload that can run forever is exactly what deadlines rule out. Apply one with
-        :func:`~dokimi.k8s.deadlines.bound_pod` or
+        workload that can run forever is exactly what run ownership rules out. Apply one
+        with :func:`~dokimi.k8s.deadlines.bound_pod` or
         :func:`~dokimi.k8s.deadlines.bound_job` first.
         """
         if kind in _SELF_LIMITING_KINDS and not manifest.get("spec", {}).get(

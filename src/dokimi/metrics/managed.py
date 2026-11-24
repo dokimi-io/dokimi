@@ -86,10 +86,11 @@ __all__ = [
     "select_monitoring",
 ]
 
-#: Upstream Prometheus, pinned by digest like every workload image. Not an image this
-#: project builds: it is infrastructure, not a test workload, and upstream publishes it.
-#: Upstream does not sign it, so the digest is what makes it the image we reviewed. The
-#: digest is the multi-architecture index, identical on quay.io and Docker Hub.
+#: Upstream Prometheus, pinned by digest, the same rule as the test-workload images. Not
+#: an image this project builds: it is infrastructure, not a test workload, and upstream
+#: publishes it. Upstream does not sign it, so the digest is what makes it the image we
+#: reviewed. The digest is the multi-architecture index, identical on quay.io and Docker
+#: Hub.
 PROMETHEUS_IMAGE = (
     "quay.io/prometheus/prometheus:v3.15.0"
     "@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
