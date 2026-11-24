@@ -19,7 +19,8 @@ import pytest
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 
-# Spelled in pieces where the literal would match itself.
+# Spelled in pieces, here and in the samples below: this file is tracked too, so a literal
+# would match itself.
 _RECORDS = "dokimi" + "-adrs"
 FORBIDDEN = {
     "a decision record's id": re.compile(r"\bADR-\d{2}-\d{2}\b"),
@@ -58,10 +59,10 @@ def _references(path: Path) -> list[str]:
 def test_the_patterns_find_what_they_are_for() -> None:
     # A pattern that matches nothing would pass every repository, this one included.
     samples = {
-        "a decision record's id": "as ADR-05-04 decides",
-        "an open question's id": "see OQ-137",
+        "a decision record's id": "as " + "ADR" + "-05-04 decides",
+        "an open question's id": "see " + "OQ" + "-137",
         "the decision repository": f"https://github.com/dokimi-io/{_RECORDS}/blob/main/x.md",
-        "an issue or pull request in the decision repository": "M1-09 (adrs#44)",
+        "an issue or pull request in the decision repository": "M1-09 (" + "adrs" + "#44)",
     }
 
     for what, sample in samples.items():
