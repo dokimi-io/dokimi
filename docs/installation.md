@@ -181,9 +181,10 @@ cluster:
 
 - it reads the cluster's **nodes** to plan (phase 3);
 - it **lists ConfigMaps in every namespace** to check that no other run is active, and
-  takes a `Lease` in the `dokimi` namespace while it claims the cluster (phase 4). Kubernetes cannot restrict a `list` by label, so this grant can read every
-  ConfigMap in the cluster, including its data. It is the price of cluster-wide
-  exclusivity: one run at a time per cluster.
+  takes a `Lease` in the `dokimi` namespace while it claims the cluster (phase 4).
+  Kubernetes cannot restrict a `list` by label, so this grant can read every ConfigMap in
+  the cluster, including its data. It is the price of cluster-wide exclusivity: one run at
+  a time per cluster.
 
 `deploy/rbac.yaml` creates both namespaces (`dokimi-iperf2` for the runs, `dokimi` for the
 run-start lock), the service account, and exactly those grants, each commented with the
