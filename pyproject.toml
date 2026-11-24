@@ -9,8 +9,13 @@ license = { file = "LICENSE" }
 # The `kubernetes` distribution's major version tracks the Kubernetes minor it targets
 # (36.x targets 1.36), so the floor of Kubernetes 1.35 is expressed as >=35.
 # A literal ">=1.35" would be satisfied by every release ever published.
+#
+# The upper bound is there because a CLI installed from PyPI resolves its own dependencies:
+# uv.lock doesn't reach it. kubernetes 37 validates every call's arguments and refuses the
+# log stream's timeout of (connect, no read limit), so `submit` and `attach` crash while
+# following a run. Until dokimi runs against 37, the CLI stays below it.
 dependencies = [
-    "kubernetes>=35",
+    "kubernetes>=35,<37",
     # 6.0.3 is the floor, the newest release, chosen the same way as the Python,
     # kubernetes and Robot Framework floors below.
     "pyyaml>=6.0.3",
@@ -21,9 +26,9 @@ dependencies = [
 # the core still imports and passes its tests.
 #
 # 7.5 is the floor: the newest release at the time development started, chosen the same
-# way as the Python and kubernetes floors. uv.lock pins the exact version the CLI and the
-# orchestrator image are both built from, so this bound governs what a
-# consumer of the library may resolve, not what we ship.
+# way as the Python and kubernetes floors. uv.lock pins the exact version the orchestrator
+# image is built from and CI tests against. A CLI installed from PyPI doesn't read uv.lock:
+# it resolves within these bounds, so they govern what a user actually runs.
 [project.optional-dependencies]
 robot = [
     "robotframework>=7.5",
