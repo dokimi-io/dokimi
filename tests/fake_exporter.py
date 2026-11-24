@@ -1,7 +1,7 @@
 """What a pair's exporters serve, as text, for tests of the direct read (M1-12).
 
 The shape is the iperf2 exporter's (images/iperf2/dokimi_iperf2_exporter.py): every
-series with ADR-02-07's labels plus ``direction``, the receiver with UDP's loss and jitter.
+series with the required labels plus ``direction``, the receiver with UDP's loss and jitter.
 """
 
 from __future__ import annotations

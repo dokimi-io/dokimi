@@ -150,4 +150,4 @@ def test_an_unreachable_prometheus_is_a_named_preflight_failure() -> None:
     assert message.startswith("cluster not ready (prometheus_unreachable)")
     assert ENDPOINT in message
     assert "connection refused" in message
-    assert raised.value.reason == "prometheus_unreachable"  # ADR-05-05's category
+    assert raised.value.reason == "prometheus_unreachable"  # its failure category

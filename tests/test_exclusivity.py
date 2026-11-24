@@ -1,9 +1,9 @@
 """Run exclusivity: one active run per cluster, including when two start at once.
 
-M1-05's acceptance criteria and adrs#63's live here: a second run started while one is
-active is refused with a message naming the active run; two simultaneous submissions
-start exactly one run — including through ``submit``, not only through the claim; and a
-refused, crashed or finished run does not block later runs indefinitely (ADR-05-13).
+M1-05's acceptance criteria live here, with the race between two submissions: a second run
+started while one is active is refused with a message naming the active run; two simultaneous
+submissions start exactly one run — including through ``submit``, not only through the claim;
+and a refused, crashed or finished run does not block later runs indefinitely.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from dokimi.testtypes.interface import WorkloadImage
 from tests.fake_cluster import FakeCluster
 from tests.fake_resources import FakeResources
 
-#: The images a run deploys, as ``submit`` resolves them (ADR-04-08).
+#: The images a run deploys, as ``submit`` resolves them.
 RUN_IMAGES = {
     "iperf2": WorkloadImage(
         "ghcr.io/dokimi-io/iperf2@sha256:" + "cd" * 32, ImageSource.RELEASE_DEFAULT
@@ -162,7 +162,7 @@ def test_exclusivity_spans_every_namespace(cluster: FakeResources) -> None:
         claim(cluster, SECOND)
 
 
-# -- what does not count as an active run (ADR-05-13) ----------------------------------
+# -- what does not count as an active run ----------------------------------------------
 
 
 def test_an_unclaimed_owner_does_not_block(cluster: FakeResources) -> None:
@@ -216,7 +216,7 @@ def test_a_crashed_run_still_blocks_until_its_claim_expires(cluster: FakeResourc
 def test_a_claim_without_a_readable_expiry_does_not_block(
     cluster: FakeResources, expiry: str | None
 ) -> None:
-    # ADR-05-13: active only while claim-expires-at is in the future. Only a hand edit
+    # A run is active only while claim-expires-at is in the future. Only a hand edit
     # produces this, since the claim writes both annotations in one update, and it must
     # not block the cluster until someone deletes the owner.
     annotations = {CLAIMED_AT_ANNOTATION: format_timestamp(datetime.now(UTC))}
@@ -228,7 +228,7 @@ def test_a_claim_without_a_readable_expiry_does_not_block(
 
 
 def test_workloads_and_a_kept_prometheus_are_never_evidence(cluster: FakeResources) -> None:
-    # A stray workload, and a managed Prometheus ADR-03-02 keeps by default: both carry
+    # A stray workload, and a managed Prometheus that is kept by default: both carry
     # the run's labels, neither is an owner, so neither refuses the next run.
     cluster.put(POD, "default", {"metadata": {"name": "iperf2", "labels": ownership_labels(FIRST)}})
     cluster.put(
@@ -328,10 +328,11 @@ def test_two_simultaneous_claims_start_exactly_one_run(attempt: int) -> None:
 def test_two_simultaneous_submissions_through_submit_start_exactly_one_run(
     attempt: int,
 ) -> None:
-    """adrs#63: M1-04's submission and M1-05's claim together, not each in isolation.
+    """M1-04's submission and M1-05's claim together, not each in isolation.
 
     Both submissions create their owner, definition and Job first — exactly the objects
-    that made both claims refuse each other before ADR-05-13 — and then both Jobs claim.
+    that made both claims refuse each other while any run-labelled object counted as
+    an active run — and then both Jobs claim.
     """
     definition = parse_file(EXAMPLE)
     source = EXAMPLE.read_text(encoding="utf-8")
@@ -464,7 +465,7 @@ def test_a_missing_lock_namespace_is_a_clear_error() -> None:
     with pytest.raises(RunExclusivityError, match="'dokimi' does not exist") as broken:
         claim(cluster, FIRST)
 
-    # Broken, not busy: only a refusal carries the run_already_active reason (ADR-01-11).
+    # Broken, not busy: only a refusal carries the run_already_active reason.
     assert not isinstance(broken.value, RunAlreadyActiveError)
     assert broken.value.reason is None
 
@@ -492,7 +493,7 @@ def test_owners_are_selected_by_their_component(cluster: FakeResources) -> None:
     assert labels["app.kubernetes.io/component"] == OWNER_COMPONENT
 
 
-# -- the claim's expiry (ADR-05-13) -------------------------------------------------------
+# -- the claim's expiry -------------------------------------------------------------------
 
 
 def put_job(cluster: FakeResources, run_id: RunId, *, start_time: str | None) -> None:

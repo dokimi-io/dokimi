@@ -1,4 +1,4 @@
-"""Phase 10's post-run snapshot (M1-15, ADR-05-07): what it records, and what is an anomaly."""
+"""Phase 10's post-run snapshot (M1-15): what it records, and what is an anomaly."""
 
 from __future__ import annotations
 
@@ -413,7 +413,7 @@ def test_a_step_that_fails_is_recorded_and_the_others_still_run(tmp_path: Path) 
     (anomaly,) = diagnostics.anomalies
     assert (anomaly.kind, anomaly.subject) == (AnomalyKind.SNAPSHOT_INCOMPLETE, "nodes")
     assert "the API server went away" in anomaly.detail
-    # ADR-05-07's consolidated view survives: the pods, the Prometheus and the pairs.
+    # The consolidated view survives: the pods, the Prometheus and the pairs.
     assert len(diagnostics.pods) == 2
     assert diagnostics.prometheus_reachable is True
     assert [pair.test_id for pair in diagnostics.pairs] == ["pair-001"]

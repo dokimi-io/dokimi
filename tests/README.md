@@ -188,9 +188,8 @@ A few conventions the existing tests follow:
 
 - **Name the property, not the function.** `test_following_finds_the_pod_by_label_not_by_name`
   says what is at stake; `test_follow` does not.
-- **Say why in a comment when the reason is a decision.** Most tests here are guarding an
-  ADR, and the comment is where a future reader learns which one and what it protects
-  against. Do not comment what the code plainly says.
+- **Say why in a comment when the reason is a decision.** The comment is where a future
+  reader learns what the test protects against. Do not comment what the code plainly says.
 - **Prefer a fake over a mock.** The fakes record calls and answer from a script; nobody
   has to assert on call signatures.
 - **Test classes are not collected.** `pyproject.toml` sets `python_classes = []`, because

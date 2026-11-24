@@ -1,12 +1,12 @@
 """The orchestrator image reference: resolution, override precedence and metadata.
 
-ADR-05-08's requirements are easy to state and easy to lose: a released CLI submits the
+Its requirements are easy to state and easy to lose: a released CLI submits the
 digest of the image built from its own commit, an operator can override that reference,
 and whatever was used ends up in the run metadata. These are the tests that keep those
 three properties from quietly decaying into "whatever the default tag resolves to today".
 
-Since ADR-04-08 the orchestrator is resolved like every other component; these tests hold
-it to ADR-05-08 through that shared path, including its earlier names.
+The orchestrator is resolved at submission like every other component; these tests hold
+it to those requirements through that shared path, including its earlier names.
 """
 
 from __future__ import annotations

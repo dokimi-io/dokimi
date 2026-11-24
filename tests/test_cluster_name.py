@@ -1,4 +1,4 @@
-"""The cluster's name: given at submission, required, a DNS label, never derived (ADR-02-07)."""
+"""The cluster's name: given at submission, required, a DNS label, never derived."""
 
 from __future__ import annotations
 

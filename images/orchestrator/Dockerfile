@@ -1,17 +1,16 @@
 # syntax=docker/dockerfile:1
 
-# The orchestrator's own image: the one-shot in-cluster Job a run submits (ADR-01-06).
+# The orchestrator's own image: the one-shot in-cluster Job a run submits.
 #
-# Base is `python:3.14-slim`, deliberately not the Alpine base ADR-05-04 picks for
+# Base is `python:3.14-slim`, deliberately not the Alpine base used for
 # test-workload images: the Python ecosystem's wheels are predominantly built against
-# glibc, and musl means packages compiled from source or missing wheels entirely
-# (ADR-05-08).
+# glibc, and musl means packages compiled from source or missing wheels entirely.
 #
 # Everything is installed from the repository-root `uv.lock` with `uv sync --locked`,
 # which fails rather than re-resolving if the lockfile does not match `pyproject.toml`.
 # The same lockfile builds the CLI distribution, so the two cannot drift apart.
 
-# Both floors come from ADR-01-09. PYTHON_VERSION tracks `requires-python` in
+# Both are the project's version floors. PYTHON_VERSION tracks `requires-python` in
 # pyproject.toml, and UV_VERSION is the release fixing GHSA-2cv4-cqwr-gwf7, which
 # `[tool.uv] required-version` enforces — an older uv here fails the build rather than
 # silently installing with a vulnerable installer.
@@ -36,10 +35,10 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --extra robot --no-install-project
 
-# The `robot` extra above is not a contradiction of ADR-01-02's no-Robot rule. The core
+# The `robot` extra above is not a contradiction of the core's no-Robot rule. The core
 # library must stay importable without Robot Framework, and CI proves it does; but phase
-# 6 of a run executes the rendered suite through Robot's own runner inside this Job
-# (ADR-01-08), so this image is one of the places Robot genuinely is a runtime
+# 6 of a run executes the rendered suite through Robot's own runner inside this Job,
+# so this image is one of the places Robot genuinely is a runtime
 # dependency. The CLI distribution installs without it.
 
 COPY README.md LICENSE ./
@@ -54,22 +53,22 @@ LABEL org.opencontainers.image.source="https://github.com/dokimi-io/dokimi" \
       org.opencontainers.image.description="dokimi: one-shot in-cluster orchestrator Job" \
       org.opencontainers.image.licenses="MIT"
 
-# Non-root, as ADR-05-04 requires of every image this project publishes. The orchestrator
+# Non-root, as every image this project publishes must be. The orchestrator
 # talks to the API server and reads exporter endpoints; it has no reason to be root, and
-# the host-network exception ADR-05-03 carves out is for test workloads, not for this.
+# host networking, which only a test workload may ever be allowed, is not for this.
 RUN groupadd --gid 65532 orchestrator \
  && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin orchestrator
 
 COPY --from=build --chown=root:root /opt/orchestrator /opt/orchestrator
 
-# Phase 6 runs the rendered suite through Robot Framework (ADR-01-08), and the suite
+# Phase 6 runs the rendered suite through Robot Framework, and the suite
 # imports the resource file and the library adapter from here. They are not part of the
 # installed package, deliberately: they are the Robot-facing surface, and the library
-# never imports them (ADR-01-02).
+# never imports them.
 COPY --chown=root:root robot/resources /opt/dokimi/robot/resources
 COPY --chown=root:root robot/libraries /opt/dokimi/robot/libraries
 
-# Robot writes `output.xml` per pair and `rebot` merges them (ADR-01-08, phase 9a), so
+# Robot writes `output.xml` per pair and `rebot` merges them (phase 9a), so
 # the Job needs somewhere writable that is not the read-only application directory.
 RUN install -d -o 65532 -g 65532 /work
 

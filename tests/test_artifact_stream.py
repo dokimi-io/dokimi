@@ -1,4 +1,4 @@
-"""A run's artifacts, through the Job's log and back (ADR-05-15, provisional)."""
+"""A run's artifacts, through the Job's log and back."""
 
 from __future__ import annotations
 

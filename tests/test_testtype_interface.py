@@ -1,6 +1,6 @@
 """The test-type interface's own values: parameter schemas, capabilities, images.
 
-The interface is ADR-02-01's contract and designs/test-type-interface.md's shape. These
+The interface is the contract every test type implements. These
 tests hold the parts every test type shares; ``test_iperf2.py`` holds the first plugin
 to it.
 """
@@ -77,7 +77,7 @@ def test_a_schema_fills_in_defaults_and_records_what_was_used() -> None:
 
 
 def test_a_schema_refuses_unknown_parameters_rather_than_ignoring_them() -> None:
-    # ADR-04-03: an ignored typo is a test that ran at the wrong rate and passed.
+    # An ignored typo is a test that ran at the wrong rate and passed.
     with pytest.raises(ConfigError, match="does not accept the parameter.*rtae"):
         _schema().validate({"rate": "5", "rtae": "6"})
 
@@ -106,7 +106,7 @@ def test_a_parameter_value_of_the_wrong_type_is_a_bug_not_a_config_error() -> No
 
 def test_every_capability_backs_a_criterion_metric() -> None:
     # The Milestone-02 pre-deployment check compares criteria to capabilities. Spelling
-    # both the same makes that check a lookup, not a translation table (ADR-02-01).
+    # both the same makes that check a lookup, not a translation table.
     for capability in Capability:
         assert isinstance(capability.metric, Metric)
         assert capability.metric.value == capability.value
@@ -121,7 +121,7 @@ def test_a_release_default_image_is_pinned_by_digest() -> None:
 
 
 def test_the_workload_registry_is_the_renamed_organisation() -> None:
-    assert WORKLOAD_REGISTRY == "ghcr.io/dokimi-io"  # ADR-01-10, superseding ADR-05-04
+    assert WORKLOAD_REGISTRY == "ghcr.io/dokimi-io"
 
 
 def test_an_override_is_used_as_given_and_says_so() -> None:

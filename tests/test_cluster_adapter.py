@@ -86,7 +86,7 @@ def _api_error(status: int) -> ApiException:
 
 
 def test_the_adapter_never_creates_a_namespace() -> None:
-    # ADR-05-13: a run never creates one. Creating a namespace is cluster-wide, and the
+    # A run never creates one. Creating a namespace is cluster-wide, and the
     # point of per-test-type namespaces is that submitting needs only namespaced rights.
     assert not hasattr(KubernetesCluster, "ensure_namespace")
 

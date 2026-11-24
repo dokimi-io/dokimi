@@ -1,9 +1,9 @@
 #!/bin/sh
-# The iperf2 client role: wait to be started, warm up, measure, report (ADR-02-01).
+# The iperf2 client role: wait to be started, warm up, measure, report.
 #
 # The pod starts idle, listening on the trigger port, so that both pods can pass the
-# readiness gate before any traffic is sent (ADR-05-07). start() connects and sends the
-# server's pod IP, which is only known once the server is Ready (ADR-05-03). There is no
+# readiness gate before any traffic is sent. start() connects and sends the
+# server's pod IP, which is only known once the server is Ready. There is no
 # exec: this script is the whole contract between the orchestrator and the pod.
 #
 # The warm-up and the measurement each send from their own fixed source port. The server
@@ -14,9 +14,9 @@
 # Completion is this process exiting. The final `iperf -y C` summary line - the
 # completion marker - goes to the termination message, where the orchestrator reads it
 # from the pod's status, and the full output stays in the results directory for the
-# exporter sidecar to parse (ADR-02-02).
+# exporter sidecar to parse.
 #
-# With --probe-dns NAME the client is the run-level preflight's probe (ADR-05-07): the
+# With --probe-dns NAME the client is the run-level preflight's probe: the
 # same pod, started the same way, but instead of warming up and measuring it makes a
 # one-second exchange with the server and resolves NAME, the two checks only a pod can
 # make. It reports both as key=value lines in the termination message and exits 0 if both
@@ -135,7 +135,7 @@ if [ -n "$probe_dns" ]; then
     exit 0
 fi
 
-# The discarded warm-up pass (ADR-04-04): same path and parameters, output thrown away.
+# The discarded warm-up pass: same path and parameters, output thrown away.
 # Its failure is reported, not fatal - the measurement that follows is what counts.
 if [ "$warmup" != "0" ]; then
     echo "warm-up: ${warmup}s against $server, discarded" >&2

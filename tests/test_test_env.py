@@ -219,7 +219,7 @@ def test_the_scripts_are_executable() -> None:
 
 
 def test_the_realism_boundary_is_stated_where_a_ci_reader_looks() -> None:
-    # ADR-05-11: a green run must not be read as evidence of network performance.
+    # A green run must not be read as evidence of network performance.
     script = SCRIPT.read_text()
 
     assert "GITHUB_STEP_SUMMARY" in script

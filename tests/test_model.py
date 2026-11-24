@@ -1,4 +1,4 @@
-"""The canonical model enforces what ADR-02-05 decided, before anything is deployed."""
+"""The canonical model enforces the criterion rules, before anything is deployed."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from dokimi.model import (
 
 def test_a_unit_of_the_wrong_dimension_is_rejected() -> None:
     # "throughput in microseconds" is the mistake this check exists for: a unit that is
-    # spelled correctly but measures the wrong kind of thing (ADR-02-05).
+    # spelled correctly but measures the wrong kind of thing.
     with pytest.raises(ConfigError, match="does not measure throughput"):
         Criterion(
             metric=Metric.THROUGHPUT,
@@ -77,7 +77,7 @@ def test_malformed_durations_are_config_errors(written: str) -> None:
     [("1G", 10**9), ("950M", 950 * 10**6), ("1K", 1000), ("1000", 1000)],
 )
 def test_bandwidth_prefixes_are_decimal(written: str, bits: int) -> None:
-    # 10**3 per step, not 1024: networking throughput is decimal (ADR-02-03).
+    # 10**3 per step, not 1024: networking throughput is decimal.
     assert Bandwidth.parse(written).bits_per_second == Decimal(bits)
 
 
@@ -88,8 +88,8 @@ def test_bandwidth_renders_with_the_largest_exact_prefix() -> None:
 
 
 def test_the_reserved_scope_field_exists_but_stays_unset() -> None:
-    # OQ-32 deferred criterion scoping to Milestone-02. The field is present so the
-    # record does not change shape when it arrives.
+    # Scoping a criterion to part of the matrix is deferred to Milestone-02. The field
+    # is present so the record does not change shape when it arrives.
     criterion = Criterion(
         metric=Metric.PACKET_LOSS,
         comparison=Comparison.AT_MOST,
