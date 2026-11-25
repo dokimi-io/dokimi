@@ -20,7 +20,9 @@ a subset of it.
 
 ## Status
 
-Milestone-01 is in progress. A run goes from submission to its verdict: it checks the
-cluster, runs the test, measures it, evaluates the pass criteria, records where everything
-ran, writes its results as CSV and JSONL, cleans up, and exits with `0`, `1` or `2`.
+**0.1** is the first release, and the end of Milestone-01. A run goes from submission to its
+verdict: it checks the cluster, runs the test, measures it, evaluates the pass criteria, records
+where everything ran, writes its results as CSV and JSONL, cleans up, and exits with `0`, `1` or
+`2`. An end-to-end acceptance run checks that whole path on a multi-node test cluster in CI.
+[CHANGELOG.md](../CHANGELOG.md) lists what each release brings.
 [Usage](usage.md#what-a-run-does-today) says exactly what a run does.

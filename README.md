@@ -769,7 +769,8 @@ coding assistants: to draft, never to decide, with every change reviewed by a ma
 
 ### Milestone-01 — First end-to-end MVP
 
-The smallest usable measurement path, as a deliberately narrow vertical slice:
+**Released as 0.1.** The smallest usable measurement path, as a deliberately narrow vertical
+slice:
 
 - A local CLI validates input and submits the one-shot orchestration Job
 - The Job discovers one cluster and resolves two explicitly named nodes

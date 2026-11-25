@@ -271,7 +271,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dokimi"
+name = "dokimi-io"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

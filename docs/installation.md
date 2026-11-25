@@ -87,29 +87,51 @@ IP inside the cluster, which it reached on every version tried.
 
 ## Installing
 
-The project is not published to PyPI. Install it from source, which is also what
-[Setup](setup.md) does for development:
+Install the CLI from PyPI, as a tool of its own:
+
+```console
+$ uv tool install --python 3.14 'dokimi-io[robot]'
+$ dokimi --version
+dokimi 0.1.0
+```
+
+On PyPI it is called **`dokimi-io`**, because `dokimi` there is an unrelated project; the command
+it installs is `dokimi`. `[robot]` adds Robot Framework, which reading a `.robot` test needs. A
+test written in YAML runs without it, so for YAML alone `dokimi-io` is enough. `--python 3.14`
+makes uv use, or download, a Python that dokimi runs on: without it, uv takes the first Python
+it finds, and refuses when that one is older. `pipx install --python python3.14
+'dokimi-io[robot]'` works too. Each release also carries the wheel itself, for an installation
+without PyPI:
+
+```console
+$ uv tool install --python 3.14 'dokimi-io[robot] @ https://github.com/dokimi-io/dokimi/releases/download/v0.1.0/dokimi_io-0.1.0-py3-none-any.whl'
+```
+
+A released CLI knows the images built with it, by digest: a run uses the orchestrator and
+`iperf2` images of its own release unless you choose others. The release page,
+[v0.1.0](https://github.com/dokimi-io/dokimi/releases/tag/v0.1.0), lists their references.
+
+### From source
+
+For development, or to run unreleased changes, install from a checkout, which is also what
+[Setup](setup.md) does:
 
 ```console
 $ git clone git@github.com:dokimi-io/dokimi.git
 $ cd dokimi
-$ uv sync --locked
+$ uv sync --locked --extra robot
 $ uv run dokimi --version
 ```
 
 To get a `dokimi` command on your `PATH` rather than one behind `uv run`:
 
 ```console
-$ uv tool install .
+$ uv tool install '.[robot]'
 ```
 
-Once releases are cut, a release will carry a built wheel you can install directly:
-
-```console
-$ uv tool install ./dokimi-<version>-py3-none-any.whl
-```
-
-[Building](building.md) covers producing that wheel yourself.
+A source checkout has no default images: it builds its own, as the
+[test environment](../test-env/README.md#running-a-test-against-it) shows.
+[Building](building.md) covers building the wheel and the images yourself.
 
 ## Installing `uv`
 
@@ -188,8 +210,9 @@ implement a precedence rule a later decision would have to overturn.
 A run is a reference to a container image, and a released CLI ships with the
 digest of the image built from its own commit.
 
-**No release has been cut yet, so a source checkout has no default image.** `submit` will
-tell you so rather than falling back to a tag that might mean something else tomorrow:
+**A source checkout has no default image**, since only a release knows which image it was built
+with. `submit` tells you so rather than falling back to a tag that might mean something else
+tomorrow:
 
 ```console
 $ dokimi submit test.yaml
@@ -197,8 +220,8 @@ dokimi: this is a development build with no published orchestrator image, so the
 default to run. Choose one with --image orchestrator=<reference> or DOKIMI_ORCHESTRATOR_IMAGE
 ```
 
-Until then — and afterwards, in an air-gapped or policy-constrained cluster — point it at
-an image yourself:
+There, and with a release in an air-gapped or policy-constrained cluster, point it at an image
+yourself:
 
 ```console
 $ export DOKIMI_ORCHESTRATOR_IMAGE=registry.internal/orchestrator@sha256:...

@@ -11,15 +11,16 @@ they cannot resolve different dependency versions:
 ```console
 $ uv build
 $ ls dist/
-dokimi-0.1.0-py3-none-any.whl
-dokimi-0.1.0.tar.gz
+dokimi_io-0.1.0-py3-none-any.whl
+dokimi_io-0.1.0.tar.gz
 ```
 
-Hatchling builds it from `src/dokimi`. The wheel installs anywhere with Python
-3.14 or newer:
+Hatchling builds it from `src/dokimi`. The distribution is called `dokimi-io`, as on PyPI,
+where `dokimi` is another project; the package it installs and the command are both `dokimi`.
+The wheel installs anywhere with Python 3.14 or newer:
 
 ```console
-$ uv tool install dist/dokimi-0.1.0-py3-none-any.whl
+$ uv tool install dist/dokimi_io-0.1.0-py3-none-any.whl
 ```
 
 ## The orchestrator image
