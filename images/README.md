@@ -7,7 +7,7 @@ attestation.
 | Image | Base | Status |
 | --- | --- | --- |
 | [`orchestrator`](orchestrator/Dockerfile) | `python:3.14-slim`, built with `uv sync --locked` against the repository-root lockfile | M1-02 |
-| [`iperf2`](iperf2/Dockerfile) | `alpine:3.24.2`, pinned by digest, with `iperf=2.2.1-r0` and `python3=3.14.10-r1` for its exporter | M1-09; the exporter with M1-10 |
+| [`iperf2`](iperf2/Dockerfile) | `alpine:3.24.2`, pinned by digest, with `iperf=2.2.1-r0` and `python3=3.14.10-r2` for its exporter | M1-09; the exporter with M1-10 |
 
 Version floors for the base image and the build toolchain are fixed in `pyproject.toml`
 (`requires-python` and `[tool.uv] required-version`), as are the dependency floors
